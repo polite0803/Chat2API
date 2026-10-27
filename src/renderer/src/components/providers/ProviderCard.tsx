@@ -30,6 +30,7 @@ import kimiIcon from '@/assets/providers/kimi.svg'
 import minimaxIcon from '@/assets/providers/minimax.svg'
 import qwenIcon from '@/assets/providers/qwen.svg'
 import zaiIcon from '@/assets/providers/zai.svg'
+import opencodeIcon from '@/assets/providers/opencode.svg'
 import mimoIcon from '@/assets/providers/mimo.svg'
 
 const providerIcons: Record<string, string> = {
@@ -41,6 +42,7 @@ const providerIcons: Record<string, string> = {
   qwen: qwenIcon,
   'qwen-ai': qwenIcon,
   zai: zaiIcon,
+  opencode: opencodeIcon,
 }
 
 interface ProviderCardProps {
@@ -83,7 +85,9 @@ export function ProviderCard({
   const { t } = useTranslation()
   const isBuiltin = provider.type === 'builtin'
   const icon = providerIcons[provider.id]
-  const currentStatus = provider.status || status || 'unknown'
+  // 现场检查的结果优先：provider.status 是上次落库的那份快照，
+  // 否则第一次检查记下来的旧值会把后来的新结果一直盖住
+  const currentStatus = status || provider.status || 'unknown'
 
   const statusTexts: Record<ProviderStatus, string> = {
     online: t('providers.online'),

@@ -120,7 +120,8 @@ export class ProviderManager {
     }
     
     storeManager.addProvider(provider)
-    
+    storeManager.ensureLocalAccount(provider.id)
+
     storeManager.addLog('info', `Create provider: ${provider.name}`, {
       providerId: provider.id,
     })

@@ -19,6 +19,6 @@ export function syncBuiltinProvider(provider: Provider, config: BuiltinProviderC
     headers: config.headers,
     credentialFields: config.credentialFields,
     description: config.description,
-    supportsModelFetch: Boolean(config.modelsFetch),
+    supportsModelFetch: Boolean(config.modelsFetch) || config.runtimeModels === true,
   }
 }

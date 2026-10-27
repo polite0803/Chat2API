@@ -28,7 +28,9 @@ export function buildToolCallingRuntimePlan(input: {
     input.clientRequest.toolChoice.mode,
     profile.managedSupport,
   )
-  const mode = disabledReason ? 'disabled' : 'managed'
+  // 上游自己翻译工具调用时，托管层既不能注入提示、也不能解析响应：
+  // 两边都做就成了"解释两次"，工具会被改写或凭空多出来。
+  const mode = profile.handlesToolsItself ? 'disabled' : disabledReason ? 'disabled' : 'managed'
   const protocol = profile.preferredManagedProtocol
   const shouldInjectPrompt = mode === 'managed'
   const shouldParseResponse = mode === 'managed'
@@ -56,7 +58,9 @@ export function buildToolCallingRuntimePlan(input: {
       protocol,
       toolCount: allowedTools.length,
       injected: shouldInjectPrompt,
-      reason: disabledReason ?? `managed_${input.config.mode}`,
+      reason: profile.handlesToolsItself
+        ? 'provider_handles_tools'
+        : (disabledReason ?? `managed_${input.config.mode}`),
       toolChoiceMode: input.clientRequest.toolChoice.mode,
       forcedToolName: forcedName,
       allowedToolNames: [...allowedToolNames],

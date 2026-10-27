@@ -402,6 +402,9 @@ export function AddProviderDialog({
 
     return (
       <div className="space-y-4">
+        {credentialFields.length === 0 && (
+          <p className="text-sm text-muted-foreground">{t('providers.noCredentialsRequired')}</p>
+        )}
         {credentialFields.map((field) => {
           const getFieldTranslation = () => {
             const translations: Record<string, Record<string, { label: string; placeholder: string; helpText: string }>> = {
@@ -798,14 +801,14 @@ export function AddProviderDialog({
           </div>
         )}
 
-        {validationResult.valid && validationResult.userInfo && (
+        {validationResult.valid && (
           <div className="flex items-center gap-2 text-sm text-success bg-success-soft p-3 rounded-lg mt-4">
             <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
             <div>
               <span className="font-medium">{t('providers.validationSuccess')}</span>
-              {validationResult.userInfo.quota !== undefined && (
+              {validationResult.userInfo?.quota !== undefined && (
                 <span className="ml-2">
-                  {t('providers.quota')}: {validationResult.userInfo.used || 0} / {validationResult.userInfo.quota}
+                  {t('providers.quota')}: {validationResult.userInfo?.used || 0} / {validationResult.userInfo?.quota}
                 </span>
               )}
             </div>
@@ -852,7 +855,7 @@ export function AddProviderDialog({
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 {t('common.previous')}
               </Button>
-              {onValidateToken && (
+              {onValidateToken && (selectedProviderData?.credentialFields?.length ?? 0) > 0 && (
                 <Button
                   variant="outline"
                   onClick={handleValidate}

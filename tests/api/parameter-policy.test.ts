@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { findUnsupportedParameter } from '../../src/main/proxy/parameterPolicy.ts'
+import { findUnsupportedParameter, stripUnsupportedForBuiltin } from '../../src/main/proxy/parameterPolicy.ts'
 import { extractTextContent } from '../../src/main/proxy/utils/contentText.ts'
 import type { ChatCompletionRequest } from '../../src/main/proxy/types.ts'
 
@@ -13,20 +13,16 @@ function request(extra: Record<string, unknown> = {}): ChatCompletionRequest {
   return { model: 'm', messages: [{ role: 'user', content: 'hi' }], ...extra } as ChatCompletionRequest
 }
 
-test('shape-changing parameters are rejected for built-in providers', () => {
-  assert.equal(findUnsupportedParameter(request({ response_format: { type: 'json_object' } }), builtin), 'response_format')
-  assert.equal(findUnsupportedParameter(request({ stream_options: { include_usage: true } }), builtin), 'stream_options')
-  assert.equal(findUnsupportedParameter(request({ seed: 7 }), builtin), 'seed')
-  assert.equal(findUnsupportedParameter(request({ logit_bias: { '1': 1 } }), builtin), 'logit_bias')
+test('only multiple choices stay rejected for built-in providers', () => {
   assert.equal(findUnsupportedParameter(request({ n: 2 }), builtin), 'n')
+  assert.equal(findUnsupportedParameter(request({ response_format: { type: 'json_object' } }), builtin), null)
 })
 
-test('sampling knobs the adapters cannot honour are rejected instead of dropped', () => {
-  assert.equal(findUnsupportedParameter(request({ top_p: 0.9 }), builtin), 'top_p')
-  assert.equal(findUnsupportedParameter(request({ stop: ['x'] }), builtin), 'stop')
-  assert.equal(findUnsupportedParameter(request({ frequency_penalty: 0.5 }), builtin), 'frequency_penalty')
-  assert.equal(findUnsupportedParameter(request({ presence_penalty: 0.5 }), builtin), 'presence_penalty')
-  assert.equal(findUnsupportedParameter(request({ max_tokens: 256 }), builtin), 'max_tokens')
+test('sampling knobs stock clients send are accepted and stripped for built-in providers', () => {
+  const knobs = ['stream_options', 'response_format', 'top_p', 'stop', 'frequency_penalty', 'presence_penalty', 'max_tokens', 'seed', 'logit_bias']
+  for (const knob of knobs) {
+    assert.equal(findUnsupportedParameter(request({ [knob]: knob === 'top_p' ? 0.9 : {} }), builtin), null, knob)
+  }
 })
 
 test('text response_format and single choice stay accepted', () => {
@@ -37,6 +33,38 @@ test('text response_format and single choice stay accepted', () => {
 
 test('custom providers keep their existing pass-through behaviour', () => {
   assert.equal(findUnsupportedParameter(request({ response_format: { type: 'json_object' }, seed: 1 }), custom), null)
+})
+
+test('sampling knobs are stripped for built-in providers instead of rejected', () => {
+  const original = request({
+    stream_options: { include_usage: true },
+    response_format: { type: 'json_object' },
+    top_p: 0.9,
+    stop: ['x'],
+    frequency_penalty: 0.5,
+    presence_penalty: 0.5,
+    max_tokens: 256,
+    seed: 7,
+    logit_bias: { '1': 1 },
+    temperature: 0.2,
+  })
+
+  assert.equal(findUnsupportedParameter(original, builtin), null)
+
+  const stripped = stripUnsupportedForBuiltin(original, builtin) as ChatCompletionRequest & Record<string, unknown>
+  for (const knob of ['stream_options', 'response_format', 'top_p', 'stop', 'frequency_penalty', 'presence_penalty', 'max_tokens', 'seed', 'logit_bias']) {
+    assert.equal(stripped[knob], undefined, knob)
+  }
+  assert.equal(stripped.temperature, 0.2)
+  assert.equal(stripped.messages.length, original.messages.length)
+
+  // 不修改传入对象
+  assert.equal((original as Record<string, unknown>).top_p, 0.9)
+
+  // 自定义供应商原样透传
+  const kept = stripUnsupportedForBuiltin(original, custom) as ChatCompletionRequest & Record<string, unknown>
+  assert.equal(kept.top_p, 0.9)
+  assert.deepEqual(kept.stream_options, { include_usage: true })
 })
 
 test('array tool content is flattened to text instead of [object Object]', () => {

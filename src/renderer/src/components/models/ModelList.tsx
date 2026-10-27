@@ -22,7 +22,7 @@ import {
 import { useProvidersStore } from '@/stores/providersStore'
 import { useProxyStore } from '@/stores/proxyStore'
 import { useToast } from '@/hooks/use-toast'
-import { Search, Copy, CheckCircle2, XCircle, Cpu, Check, Square, Database, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Search, Copy, CheckCircle2, XCircle, Cpu, Check, Square, Database, ChevronLeft, ChevronRight, Loader2, Stethoscope } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Account, EffectiveModel } from '@/types/electron'
 import deepseekIcon from '@/assets/providers/deepseek.svg'
@@ -32,6 +32,7 @@ import minimaxIcon from '@/assets/providers/minimax.svg'
 import mimoIcon from '@/assets/providers/mimo.svg'
 import qwenIcon from '@/assets/providers/qwen.svg'
 import zaiIcon from '@/assets/providers/zai.svg'
+import opencodeIcon from '@/assets/providers/opencode.svg'
 import modelMappingIcon from '@/assets/providers/model-mapping.svg'
 
 const providerIcons: Record<string, string> = {
@@ -43,6 +44,7 @@ const providerIcons: Record<string, string> = {
   qwen: qwenIcon,
   'qwen-ai': qwenIcon,
   zai: zaiIcon,
+  opencode: opencodeIcon,
   mapping: modelMappingIcon,
 }
 
@@ -54,6 +56,8 @@ interface ModelInfo {
   accountId?: string
   accountName?: string
   status: 'available' | 'unavailable'
+  /** OpenCode：该模型能不能按信封产出工具调用 */
+  capability?: { status: string; reason: string; checkedAt: number }
 }
 
 interface ModelRowProps {
@@ -100,6 +104,16 @@ const ModelRow = memo(({ model, isSelected, onSelect, t }: ModelRowProps) => {
             <Database className="h-4 w-4 text-muted-foreground" />
           )}
           <Badge variant="outline">{model.providerName}</Badge>
+          {model.capability && (
+            <Badge
+              variant={model.capability.status === 'tool-capable' ? 'secondary' : 'outline'}
+              title={model.capability.reason}
+            >
+              {model.capability.status === 'tool-capable'
+                ? t('models.toolCapable')
+                : t('models.chatOnly')}
+            </Badge>
+          )}
         </div>
       </TableCell>
       <TableCell>
@@ -142,6 +156,8 @@ export function ModelList() {
   const [selectAll, setSelectAll] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [effectiveModelsMap, setEffectiveModelsMap] = useState<Record<string, EffectiveModel[]>>({})
+  const [capabilities, setCapabilities] = useState<Record<string, { status: string; reason: string; checkedAt: number }>>({})
+  const [probing, setProbing] = useState(false)
   
   const loadEffectiveModels = useCallback(async () => {
     try {
@@ -167,6 +183,40 @@ export function ModelList() {
   useEffect(() => {
     loadEffectiveModels()
   }, [loadEffectiveModels, modelsLastUpdated])
+
+  const hasOpencode = providers.some(p => p.id === 'opencode')
+
+  const loadCapabilities = useCallback(async () => {
+    if (!window.electronAPI?.opencode) return
+    try {
+      const result = await window.electronAPI.opencode.getCapabilities()
+      setCapabilities(result ?? {})
+    } catch (error) {
+      console.error('Failed to load OpenCode capabilities:', error)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadCapabilities()
+  }, [loadCapabilities, modelsLastUpdated])
+
+  const runProbe = async () => {
+    if (!window.electronAPI?.opencode) return
+    setProbing(true)
+    try {
+      const result = await window.electronAPI.opencode.probeModels()
+      if (result.success) {
+        setCapabilities(result.capabilities ?? {})
+        toast({ title: t('models.probeDone'), description: t('models.probeDoneDesc') })
+      } else {
+        toast({ title: t('models.probeFailed'), description: result.detail })
+      }
+    } catch (error) {
+      toast({ title: t('models.probeFailed'), description: String(error) })
+    } finally {
+      setProbing(false)
+    }
+  }
   
   const modelList = useMemo(() => {
     const models: ModelInfo[] = []
@@ -210,6 +260,7 @@ export function ModelList() {
           accountId: providerAccounts[0]?.id,
           accountName: providerAccounts[0]?.name,
           status,
+          capability: provider.id === 'opencode' ? capabilities[model.actualModelId] : undefined,
         })
       }
     }
@@ -231,7 +282,7 @@ export function ModelList() {
     }
     
     return models
-  }, [providers, accounts, modelMappings, effectiveModelsMap, t])
+  }, [providers, accounts, modelMappings, effectiveModelsMap, capabilities, t])
   
   const filteredModels = useMemo(() => {
     let filtered = modelList
@@ -456,6 +507,21 @@ export function ModelList() {
           </div>
           
           <div className="flex items-center gap-2">
+            {hasOpencode && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={runProbe}
+                disabled={probing}
+              >
+                {probing ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Stethoscope className="h-4 w-4 mr-2" />
+                )}
+                {t('models.probeModels')}
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"

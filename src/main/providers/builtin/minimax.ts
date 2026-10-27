@@ -32,10 +32,14 @@ export const minimaxConfig: BuiltinProviderConfig = {
     headers: { Origin: 'https://agent.minimax.cn', Referer: 'https://agent.minimax.cn/' },
   },
   supportedModels: [
-    'MiniMax-M2.7',
+    'M3.1-Flash',
+    'M3',
   ],
   modelMappings: {
-    'MiniMax-M2.7': 'MiniMax-M2.7',
+    'M3.1-Flash': 'MiniMax-M3.1-Flash',
+    M3: 'MiniMax-M3',
+    // Retired id shipped by earlier builds; kept so existing client configs keep resolving
+    'MiniMax-M2.7': 'MiniMax-M3',
   },
   credentialFields: [
     {

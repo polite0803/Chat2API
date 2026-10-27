@@ -461,10 +461,26 @@ interface ToolCallingAPI {
   }>
 }
 
+interface OpencodeCapability {
+  status: string
+  reason: string
+  checkedAt: number
+}
+
+interface OpencodeAPI {
+  getCapabilities: () => Promise<Record<string, OpencodeCapability>>
+  probeModels: () => Promise<{
+    success: boolean
+    capabilities: Record<string, OpencodeCapability>
+    detail?: string
+  }>
+}
+
 interface ElectronAPI {
   proxy: ProxyAPI
   store: StoreAPI
   providers: ProvidersAPI
+  opencode: OpencodeAPI
   accounts: AccountsAPI
   oauth: OAuthAPI
   logs: LogsAPI

@@ -1,6 +1,61 @@
 import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+import type { Plugin } from 'vite'
+
+// Production loads the renderer from file://, so the policy goes into the HTML
+// itself - webRequest.onHeadersReceived never sees file:// requests. 'self' is
+// the document's own origin; style-src still needs 'unsafe-inline' because
+// Radix sets style attributes, and the renderer talks to the main process over
+// IPC only, never over the network.
+const PRODUCTION_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "base-uri 'none'"
+].join('; ')
+
+// The dev server serves the page from http://localhost:5173 and @vitejs/plugin-react
+// injects an inline refresh preamble, so both inline script and the HMR socket
+// have to be allowed. Everything else stays as strict as production.
+const DEVELOPMENT_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "base-uri 'none'"
+].join('; ')
+
+function contentSecurityPolicy(): Plugin {
+  let dev = false
+  return {
+    name: 'chat2api-csp',
+    configResolved(config) {
+      dev = config.command === 'serve'
+    },
+    transformIndexHtml() {
+      return [
+        {
+          tag: 'meta',
+          attrs: {
+            'http-equiv': 'Content-Security-Policy',
+            content: dev ? DEVELOPMENT_CSP : PRODUCTION_CSP
+          },
+          injectTo: 'head-prepend'
+        }
+      ]
+    }
+  }
+}
 
 export default defineConfig({
   main: {
@@ -51,7 +106,7 @@ export default defineConfig({
         }
       }
     },
-    plugins: [react()],
+    plugins: [react(), contentSecurityPolicy()],
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src/renderer/src'),

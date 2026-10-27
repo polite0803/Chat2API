@@ -223,10 +223,21 @@ export function Providers() {
     try {
       const result = await window.electronAPI.providers.checkStatus(id)
       store.updateProviderStatus(id, result.status)
+      // 供应商记录里那份状态快照也一起刷新，别让它一直停在旧值
+      store.updateProvider(id, { status: result.status })
+      const title = result.status === 'online'
+        ? t('providers.providerOnline')
+        : result.status === 'unknown'
+          ? t('providers.statusUnknown')
+          : t('providers.providerOffline')
+      const fallback = result.error || `${t('providers.latency')}: ${result.latency}ms`
+      const description = result.reason
+        ? t(`providers.statusReasons.${result.reason}`, { error: result.error || '', defaultValue: fallback })
+        : fallback
       toast({
-        title: result.status === 'online' ? t('providers.providerOnline') : t('providers.providerOffline'),
-        description: result.error || `${t('providers.latency')}: ${result.latency}ms`,
-        variant: result.status === 'online' ? 'default' : 'destructive',
+        title,
+        description,
+        variant: result.status === 'offline' ? 'destructive' : 'default',
       })
     } catch (error) {
       toast({
@@ -244,6 +255,8 @@ export function Providers() {
       const newStatusMap: Record<string, ProviderStatus> = {}
       for (const [id, result] of Object.entries(statuses)) {
         newStatusMap[id] = result.status
+        // 供应商记录里那份状态快照也一起刷新，别让它一直停在旧值
+        store.updateProvider(id, { status: result.status })
       }
       store.setProviderStatuses(newStatusMap)
       toast({
@@ -282,14 +295,15 @@ export function Providers() {
       if (result.success) {
         const providers = await window.electronAPI.providers.getAll()
         useProvidersStore.getState().setProviders(providers)
+        const summary = result.addedCount
+          ? t('providers.updateModelsCountDesc', {
+              fetched: result.fetchedCount ?? 0,
+              added: result.addedCount,
+            })
+          : t('providers.updateModelsNoChangeDesc', { fetched: result.fetchedCount ?? 0 })
         toast({
           title: t('providers.updateModelsSuccess'),
-          description: result.addedCount
-            ? t('providers.updateModelsCountDesc', {
-                fetched: result.fetchedCount ?? 0,
-                added: result.addedCount,
-              })
-            : t('providers.updateModelsNoChangeDesc', { fetched: result.fetchedCount ?? 0 }),
+          description: result.detail ? `${summary} ${result.detail}` : summary,
         })
         return
       }
@@ -358,11 +372,23 @@ export function Providers() {
         credentials: credentials,
       })
       store.addAccount(account)
-      
-      const providerAccounts = store.getAccountsByProvider(targetProvider.id)
-      store.updateAccountCount(targetProvider.id, providerAccounts.length, providerAccounts.filter(a => a.status === 'active').length)
     }
-    
+
+    // 无凭据的内置供应商（OpenCode）由主进程建一个本地账号，渲染层要把它读回来，
+    // 否则卡片上永远是 0 个账号，看着像没接上
+    const providerAccounts = await window.electronAPI.accounts.getByProvider(targetProvider.id)
+    const knownAccountIds = new Set(store.getAccountsByProvider(targetProvider.id).map(a => a.id))
+    for (const account of providerAccounts) {
+      if (!knownAccountIds.has(account.id)) {
+        store.addAccount(account)
+      }
+    }
+    store.updateAccountCount(
+      targetProvider.id,
+      providerAccounts.length,
+      providerAccounts.filter(a => a.status === 'active').length
+    )
+
     setShowAddProviderDialog(false)
     toast({
       title: t('providers.addSuccess'),

@@ -22,7 +22,9 @@ export interface TokenExtractionConfig {
   windowTitle?: string
 }
 
-export const TOKEN_EXTRACTION_CONFIGS: Record<ProviderType, TokenExtractionConfig> = {
+// 只有带内置浏览器登录的供应商需要抽取规则；OpenCode 走本机运行时，不需要登录
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+export const TOKEN_EXTRACTION_CONFIGS: Partial<Record<ProviderType, TokenExtractionConfig>> = {
   kimi: {
     loginUrl: 'https://www.kimi.com',
     tokenSources: [

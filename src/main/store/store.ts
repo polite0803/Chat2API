@@ -538,6 +538,11 @@ class StoreManager {
       this.store?.set('userModelOverrides', userModelOverrides)
     }
     this.store?.set('providers', updatedProviders)
+
+    // 凭据型供应商（OpenCode）自己不需要账号，但负载均衡要有一个 active 账号
+    for (const provider of updatedProviders) {
+      if (provider.type === 'builtin') this.ensureLocalAccount(provider.id)
+    }
   }
 
   /**
@@ -566,13 +571,48 @@ class StoreManager {
           description: builtinConfig.description,
           supportedModels: builtinConfig.supportedModels,
           modelMappings: builtinConfig.modelMappings,
-          supportsModelFetch: Boolean(builtinConfig.modelsFetch),
+          supportsModelFetch: Boolean(builtinConfig.modelsFetch) || builtinConfig.runtimeModels === true,
         }
         providers.push(newProvider)
         this.store!.set('providers', providers)
         console.log('[Store] Created missing provider:', providerId)
+        this.ensureLocalAccount(providerId)
       }
     }
+  }
+
+  /**
+   * 有些内置供应商不需要任何凭据（OpenCode 走本机运行时）。但负载均衡要有一个
+   * active 账号才肯把请求发出去，所以给它们配一个空的本地账号。
+   */
+  ensureLocalAccount(providerId: string): void {
+    // 只看 store 有没有建好：这个方法会被 initialize() 内部的启动同步调用，
+    // 那时 isInitialized 还没置位，用「已初始化」判据会把整个启动流程打断
+    if (!this.store) return
+    const config = BUILTIN_PROVIDERS.find(bp => bp.id === providerId)
+    if (!config) return
+    if ((config.credentialFields?.length ?? 0) > 0) return
+
+    const accounts = this.store!.get('accounts') || []
+    if (accounts.some((a: Account) => a.providerId === providerId)) return
+
+    const now = Date.now()
+    const account: Account = {
+      id: this.generateId(),
+      providerId,
+      name: `${config.name} local`,
+      credentials: {},
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+      requestCount: 0,
+      todayUsed: 0,
+      lastStatusCheck: now,
+      lastUsed: now,
+    }
+    accounts.push(account)
+    this.store!.set('accounts', accounts)
+    console.log('[Store] Created local account for credential-less provider:', providerId)
   }
 
   /**

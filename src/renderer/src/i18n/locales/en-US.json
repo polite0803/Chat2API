@@ -122,6 +122,13 @@
     "cannotDuplicateProvider": "Cannot duplicate provider",
     "providerOnline": "Provider is online",
     "providerOffline": "Provider is offline",
+    "statusUnknown": "Status unknown",
+    "statusReasons": {
+      "runtime_running": "The local OpenCode runtime is running",
+      "runtime_not_running": "The local OpenCode runtime is installed but not started; it starts automatically on the first request",
+      "runtime_not_installed": "No OpenCode runtime is installed on this machine; the first use downloads it with npx (may take tens of seconds)",
+      "runtime_failed": "The local OpenCode runtime failed to start: {{error}}"
+    },
     "latency": "Latency",
     "checkFailed": "Check failed",
     "cannotCheckProviderStatus": "Cannot check provider status",
@@ -187,6 +194,7 @@
     "oauthAutoCapture": "Token will be automatically captured after login",
     "openOAuthLogin": "Open OAuth Login",
     "validationSuccess": "Validation Successful",
+    "noCredentialsRequired": "This provider needs no credentials — add it directly; requests run through the local runtime.",
     "quota": "Quota",
     "validateCredentials": "Validate Credentials",
     "clearChats": "Clear Chat History",
@@ -322,6 +330,13 @@
     "cookiesHelp": "Full cookie string from browser DevTools (optional but recommended)",
     "thinkingMode": "Thinking Mode",
     "thinkingModeDesc": "Enable thinking mode to get reasoning process before answer"
+  },
+  "opencode": {
+    "name": "OpenCode",
+    "description": "OpenCode free model pool driven by a local OpenCode runtime - no credential needed, ~30-60s per reply",
+    "token": "Not required",
+    "tokenPlaceholder": "The free pool needs no credential; just add an account",
+    "tokenHelp": "The first request starts a local OpenCode runtime (installed binary first, npx as fallback); models are filtered by zero cost"
   },
   "zai": {
     "name": "Z.ai",
@@ -865,6 +880,12 @@
     "help": "Help"
   },
   "models": {
+    "probeModels": "Probe model capabilities",
+    "toolCapable": "Tool capable",
+    "chatOnly": "Chat only",
+    "probeDone": "Probe finished",
+    "probeDoneDesc": "Checked which models can express tool calls as an envelope",
+    "probeFailed": "Probe failed",
     "title": "Model Management",
     "description": "View and manage available models and model mapping configuration",
     "modelList": "Model List",

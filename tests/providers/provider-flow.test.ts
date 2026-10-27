@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { deepseekConfig } from '../../src/main/providers/builtin/deepseek.ts'
 import { glmConfig } from '../../src/main/providers/builtin/glm.ts'
 import { kimiConfig } from '../../src/main/providers/builtin/kimi.ts'
+import { opencodeConfig } from '../../src/main/providers/builtin/opencode.ts'
 import { minimaxConfig } from '../../src/main/providers/builtin/minimax.ts'
 import { mimoConfig } from '../../src/main/providers/builtin/mimo.ts'
 import { qwenConfig } from '../../src/main/providers/builtin/qwen.ts'
@@ -194,17 +195,19 @@ test('GLM, Kimi, and MiniMax built-in default models match current web providers
     'Kimi-K2.6': 'k2d6-chat',
   })
 
-  assert.deepEqual(minimaxConfig.supportedModels, ['MiniMax-M2.7'])
+  assert.deepEqual(minimaxConfig.supportedModels, ['M3.1-Flash', 'M3'])
   assert.deepEqual(minimaxConfig.modelMappings, {
-    'MiniMax-M2.7': 'MiniMax-M2.7',
+    'M3.1-Flash': 'MiniMax-M3.1-Flash',
+    M3: 'MiniMax-M3',
+    'MiniMax-M2.7': 'MiniMax-M3',
   })
 
   const minimaxAdapterSource = readFileSync(
     join(root, 'src/main/proxy/adapters/minimax.ts'),
     'utf8',
   )
-  assert.match(minimaxAdapterSource, /this\.model = 'MiniMax-M2\.7'/)
-  assert.match(minimaxAdapterSource, /request\.model \|\| 'MiniMax-M2\.7'/)
+  assert.match(minimaxAdapterSource, /this\.model = 'MiniMax-M3'/)
+  assert.match(minimaxAdapterSource, /request\.model \|\| 'MiniMax-M3'/)
   assert.doesNotMatch(minimaxAdapterSource, /MiniMax-M2\.5/)
 })
 
@@ -454,6 +457,7 @@ test('README Supported Providers model lists mirror current defaults', () => {
     ['GLM', glmConfig.supportedModels?.join(', ')],
     ['Kimi', kimiConfig.supportedModels?.join(', ')],
     ['MiniMax', minimaxConfig.supportedModels?.join(', ')],
+    ['OpenCode', opencodeConfig.supportedModels?.join(', ')],
     ['Mimo', mimoConfig.supportedModels?.join(', ')],
     ['Qwen', qwenConfig.supportedModels?.join(', ')],
     ['Qwen AI', qwenAiConfig.supportedModels?.join(', ')],

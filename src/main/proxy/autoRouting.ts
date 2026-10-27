@@ -115,6 +115,9 @@ const MODEL_CAPABILITIES: Record<string, Record<string, Partial<ModelCapability>
     'kimi-k2.6': { tier: 'strong', vision: true, contextTokens: 128000 },
   },
   minimax: {
+    'm3.1-flash': { tier: 'balanced', vision: true, contextTokens: 128000 },
+    m3: { tier: 'strong', vision: true, contextTokens: 128000 },
+    // legacy display name, kept so old client configs route the same way
     'minimax-m2.7': { tier: 'balanced', vision: true, contextTokens: 128000 },
   },
   qwen: {

@@ -5,7 +5,7 @@
 
 import Router from '@koa/router'
 import type { Context } from 'koa'
-import { PassThrough } from 'stream'
+import { PassThrough, type Readable } from 'stream'
 import { ChatCompletionRequest, ChatCompletionResponse, ProxyContext } from '../types'
 import type { AccountSelection, ForwardResult } from '../types'
 import { loadBalancer } from '../loadbalancer'
@@ -121,6 +121,19 @@ router.post('/completions', async (ctx: Context) => {
 
   request.requestId = requestId
 
+  // 客户端提前断开时把上游也停掉：OpenCode 的一个回合要 30–60 秒，
+  // 悬着的回合会占住它的串行队列，后面的请求全排着队。
+  // 用不可枚举属性挂上去，免得混进请求日志的 JSON。
+  const abortController = new AbortController()
+  Object.defineProperty(request, 'signal', {
+    value: abortController.signal,
+    enumerable: false,
+    configurable: true,
+  })
+  ctx.res.once('close', () => {
+    if (!ctx.res.writableEnded) abortController.abort()
+  })
+
   // Read feature parameters from Headers (lower priority than request body)
   const webSearchFromHeader = ctx.headers['x-web-search'] === 'true'
   const reasoningEffortFromHeader = ctx.headers['x-reasoning-effort'] as 'low' | 'medium' | 'high' | undefined
@@ -200,7 +213,12 @@ router.post('/completions', async (ctx: Context) => {
   let actualModel = selection ? selection.actualModel : firstCandidate!.actualModel
   let chosenCandidate: AutoCandidate | null = null
 
-  const unsupportedParam = findUnsupportedParameter(request, provider)
+  // auto 的候选可能分属内置与自定义供应商，只有所有候选都拒绝时才整体报错
+  const unsupportedParam = autoDecision
+    ? autoDecision.candidates.every(candidate => findUnsupportedParameter(request, candidate.provider) !== null)
+      ? findUnsupportedParameter(request, firstCandidate!.provider)
+      : null
+    : findUnsupportedParameter(request, provider)
   if (unsupportedParam) {
     ctx.status = 400
     ctx.body = unsupportedParameterError(unsupportedParam)
@@ -428,6 +446,9 @@ router.post('/completions', async (ctx: Context) => {
 
       // Handle stream errors
       result.stream.once('error', (err: Error) => {
+        // 客户端已断开时不再回写错误帧，避免 write after end
+        if (wrapperStream.destroyed || ctx.res.writableEnded || ctx.res.destroyed) return
+
         console.error('[Chat] Stream error:', err.message)
 
         wrapperStream.write(buildStreamErrorFrame(err.message))
@@ -453,10 +474,13 @@ router.post('/completions', async (ctx: Context) => {
 
         // When source stream ends normally, update log and end wrapper
         result.stream.once('end', () => {
+          const elapsed = Date.now() - startTime
           // Update log with collected response
           if (logEntryId) {
             storeManager.updateRequestLog(logEntryId, {
               responseBody: collectedContent || undefined,
+              // 延迟型响应（响应头先发、正文后补）的耗时是整段，不是首字节
+              ...(result.deferred ? { latency: elapsed } : {}),
             })
           }
           wrapperStream.end()
@@ -495,6 +519,16 @@ router.post('/completions', async (ctx: Context) => {
         (typeof request.tool_choice === 'object' && request.tool_choice?.type === 'function')
 
       ctx.body = requiresToolCall ? wrapperStream.pipe(createToolViolationTap()) : wrapperStream
+
+      // 立即发送响应头：客户端通常只对“响应头”计时（例如 10s），首个 token 可能远晚于此
+      ctx.res.flushHeaders()
+
+      // 客户端提前断开时中止上游流，避免继续占用账号与上游配额
+      ctx.res.once('close', () => {
+        if (ctx.res.writableEnded) return
+        const source = result.stream as Readable
+        if (!source.destroyed) source.destroy()
+      })
     } else {
       ctx.set('Content-Type', 'application/json')
 

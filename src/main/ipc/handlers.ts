@@ -9,6 +9,7 @@ import { CustomProviderManager } from '../providers/custom'
 import { getBuiltinProviders, getBuiltinProvider } from '../providers/builtin'
 import { oauthManager } from '../oauth/manager'
 import { fetchProviderModels } from '../providers/modelCatalog'
+import { opencodeService } from '../opencode/service.ts'
 import { proxyServer } from '../proxy/server'
 import { proxyStatusManager } from '../proxy/status'
 import { sessionManager } from '../proxy/sessionManager'
@@ -330,6 +331,35 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
     return CustomProviderManager.importProvider(jsonData)
   })
 
+  ipcMain.handle(IpcChannels.OPENCODE_GET_CAPABILITIES, async () => {
+    const models = await opencodeService.models().catch(() => [])
+    const capabilities: Record<string, { status: string; reason: string; checkedAt: number }> = {}
+    for (const model of models) {
+      const result = opencodeService.capability(model.id)
+      if (result) capabilities[model.id] = result
+    }
+    return capabilities
+  })
+
+  ipcMain.handle(IpcChannels.OPENCODE_PROBE_MODELS, async (_): Promise<{
+    success: boolean
+    capabilities: Record<string, { status: string; reason: string; checkedAt: number }>
+    detail?: string
+  }> => {
+    try {
+      const models = await opencodeService.models()
+      const ids = models.filter(model => model.zeroCost).map(model => model.id)
+      const capabilities = await opencodeService.probeModels(ids, { force: true })
+      return { success: true, capabilities }
+    } catch (error) {
+      return {
+        success: false,
+        capabilities: {},
+        detail: error instanceof Error ? error.message : 'probe failed',
+      }
+    }
+  })
+
   ipcMain.handle(IpcChannels.PROVIDERS_UPDATE_MODELS, async (_, providerId: string): Promise<{
     success: boolean
     reason?: ModelsFetchFailure
@@ -355,6 +385,7 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
       fetchedCount: applied.fetchedCount,
       addedCount: applied.addedCount,
       fetchedAt: applied.fetchedAt,
+      detail: result.detail,
     }
   })
 

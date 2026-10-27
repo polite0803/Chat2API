@@ -1,6 +1,9 @@
 import { storeManager } from '../store/store'
 import type { Provider, AuthType } from '../../shared/types'
 import type { CredentialField } from '../store/types'
+import { getBuiltinProvider } from './builtin/index.ts'
+import { isRuntimeBackedProvider, validateApiEndpoint } from './endpointPolicy.ts'
+import { syncBuiltinProvider } from '../store/providerSync.ts'
 
 export interface CustomProviderData {
   id?: string
@@ -41,24 +44,17 @@ export class CustomProviderManager {
     return { valid: errors.length === 0, errors }
   }
 
-  private static validateApiEndpoint(endpoint: string): CustomProviderValidation {
-    const errors: string[] = []
-    
-    if (!endpoint || endpoint.trim().length === 0) {
-      errors.push('API endpoint cannot be empty')
-    }
-    
-    try {
-      new URL(endpoint)
-    } catch {
-      errors.push('Invalid API endpoint format')
-    }
-    
-    if (!endpoint.startsWith('http://') && !endpoint.startsWith('https://')) {
-      errors.push('API endpoint must start with http:// or https://')
-    }
-    
-    return { valid: errors.length === 0, errors }
+  /**
+   * 本机运行时供应商（OpenCode）不走 HTTP，endpoint 只是一个占位 scheme，
+   * 所以不能套用 http/https 这条规则。判定依据取自内置配置本身，
+   * 不接受调用方自报——否则任意自定义供应商都能借此绕过 endpoint 校验。
+   */
+  private static usesLocalRuntime(data: CustomProviderData): boolean {
+    return isRuntimeBackedProvider(data.id, data.type)
+  }
+
+  private static validateApiEndpoint(endpoint: string, allowNonHttp = false): CustomProviderValidation {
+    return validateApiEndpoint(endpoint, allowNonHttp)
   }
 
   private static validateAuthType(authType: AuthType): CustomProviderValidation {
@@ -134,7 +130,7 @@ export class CustomProviderManager {
     const nameValidation = this.validateName(data.name, data.id)
     errors.push(...nameValidation.errors)
     
-    const endpointValidation = this.validateApiEndpoint(data.apiEndpoint)
+    const endpointValidation = this.validateApiEndpoint(data.apiEndpoint, this.usesLocalRuntime(data))
     errors.push(...endpointValidation.errors)
     
     const authTypeValidation = this.validateAuthType(data.authType)
@@ -169,7 +165,7 @@ export class CustomProviderManager {
     }
     
     const now = Date.now()
-    const provider: Provider = {
+    const created: Provider = {
       id: data.id || storeManager.generateId(),
       name: data.name.trim(),
       type: data.type || 'custom',
@@ -184,9 +180,16 @@ export class CustomProviderManager {
       supportedModels: data.supportedModels || [],
       credentialFields: data.credentialFields,
     }
-    
+
+    // 内置供应商的记录必须和启动时同步出来的形状一致（supportsModelFetch 等标记
+    // 决定卡片上要不要出现「更新模型」入口），否则刚添加完的记录是残的。
+    const builtinConfig = data.type === 'builtin' && data.id ? getBuiltinProvider(data.id) : undefined
+    const provider = builtinConfig ? syncBuiltinProvider(created, builtinConfig) : created
+
     storeManager.addProvider(provider)
-    
+    // 无凭据的内置供应商（OpenCode）自己不需要账号，但负载均衡要有一个 active 账号
+    storeManager.ensureLocalAccount(provider.id)
+
     storeManager.addLog('info', `Created provider: ${provider.name}`, {
       providerId: provider.id,
     })

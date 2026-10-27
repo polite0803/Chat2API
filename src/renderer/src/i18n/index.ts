@@ -21,6 +21,7 @@ i18n
     resources,
     fallbackLng: 'en-US',
     debug: false,
+    showSupportNotice: false,
     interpolation: {
       escapeValue: false,
     },

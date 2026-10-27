@@ -5,6 +5,7 @@ import { createTrayManager, TrayManager } from './tray/TrayManager'
 import { registerIpcHandlers } from './ipc/handlers'
 import { UpdaterManager } from './updater'
 import { storeManager } from './store/store'
+import { opencodeService } from './opencode/service'
 
 // Prevent uncaught exceptions from crashing the app
 process.on('uncaughtException', (error) => {
@@ -75,6 +76,7 @@ async function initializeApp(): Promise<void> {
   })
 
   app.on('will-quit', () => {
+    opencodeService.stop()
     cleanup()
   })
 }

@@ -6,19 +6,65 @@
 
 import axios from 'axios'
 import { randomUUID } from 'crypto'
-import { getBuiltinProvider } from './builtin'
+import { getBuiltinProvider } from './builtin/index.ts'
+import { resolveModelListSource } from './modelListSource.ts'
 import { readModelList } from './modelListReaders'
 import { buildAuthHeaders, buildRequestBody, buildRequestUrl } from './modelListRequest'
 import { storeManager } from '../store/store'
+import { opencodeService } from '../opencode/service.ts'
 import type { ModelsFetchResult } from '../store/types'
 
 const TIMEOUT_MS = 15000
 
 export async function fetchProviderModels(providerId: string): Promise<ModelsFetchResult> {
   const config = getBuiltinProvider(providerId)
-  const fetchConfig = config?.modelsFetch
+  const source = resolveModelListSource(config)
 
-  if (!config || !fetchConfig) {
+  if (!config || source === 'unsupported') {
+    return {
+      ok: false,
+      reason: 'unsupported',
+      detail: config
+        ? `provider ${providerId} declares neither a runtime nor a modelsFetch source`
+        : `provider ${providerId} is not a built-in provider`,
+    }
+  }
+
+  // OpenCode 的清单在本机运行时里（它报什么就有什么），不走 HTTP
+  if (source === 'runtime') {
+    try {
+      const models = await opencodeService.models()
+      const free = models.filter(model => model.zeroCost)
+      // 走 Anthropic 协议的那几个模型，我们的通路是 OpenAI 形状，发不通：不收，但要说明白
+      const usable = free.filter(model => model.protocol === 'openai')
+      const skipped = free.filter(model => model.protocol !== 'openai')
+      if (usable.length === 0) {
+        return {
+          ok: false,
+          reason: 'empty',
+          detail: 'the local OpenCode runtime reported no zero-cost models on the OpenAI-compatible endpoint',
+        }
+      }
+      return {
+        ok: true,
+        models: usable.map(model => ({ displayName: model.name || model.id, actualModelId: model.id })),
+        detail:
+          skipped.length > 0
+            ? `${skipped.length} model(s) are served over the Anthropic protocol and are not reachable here: ${skipped.map(m => m.id).join(', ')}`
+            : undefined,
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        reason: 'network_error',
+        detail: error instanceof Error ? error.message : 'failed to reach the local OpenCode runtime',
+      }
+    }
+  }
+
+  const fetchConfig = config.modelsFetch
+
+  if (!fetchConfig) {
     return {
       ok: false,
       reason: 'unsupported',

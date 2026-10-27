@@ -4,6 +4,7 @@ import kimiConfig from './kimi.ts'
 import minimaxConfig from './minimax.ts'
 import mimoConfig from './mimo.ts'
 import qwenConfig from './qwen.ts'
+import opencodeConfig from './opencode.ts'
 import qwenAiConfig from './qwen-ai.ts'
 import zaiConfig from './zai.ts'
 import type { BuiltinProviderConfig } from '../../store/types.ts'
@@ -14,6 +15,7 @@ export const builtinProviders: BuiltinProviderConfig[] = [
   kimiConfig,
   minimaxConfig,
   mimoConfig,
+  opencodeConfig,
   qwenConfig,
   qwenAiConfig,
   zaiConfig,
@@ -25,6 +27,7 @@ export const builtinProviderMap: Record<string, BuiltinProviderConfig> = {
   kimi: kimiConfig,
   minimax: minimaxConfig,
   mimo: mimoConfig,
+  opencode: opencodeConfig,
   qwen: qwenConfig,
   'qwen-ai': qwenAiConfig,
   zai: zaiConfig,
@@ -44,6 +47,7 @@ export {
   kimiConfig,
   minimaxConfig,
   mimoConfig,
+  opencodeConfig,
   qwenConfig,
   qwenAiConfig,
   zaiConfig,

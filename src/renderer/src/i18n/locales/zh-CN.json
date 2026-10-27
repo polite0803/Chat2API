@@ -122,6 +122,13 @@
     "cannotDuplicateProvider": "无法复制供应商",
     "providerOnline": "供应商在线",
     "providerOffline": "供应商离线",
+    "statusUnknown": "状态未知",
+    "statusReasons": {
+      "runtime_running": "本机 OpenCode 运行时正在运行",
+      "runtime_not_running": "本机 OpenCode 运行时已安装但还没启动，首次请求时会自动拉起",
+      "runtime_not_installed": "本机还没装 OpenCode 运行时，首次使用会用 npx 下载（可能需要数十秒）",
+      "runtime_failed": "本机 OpenCode 运行时启动失败：{{error}}"
+    },
     "latency": "延迟",
     "checkFailed": "检测失败",
     "cannotCheckProviderStatus": "无法检测供应商状态",
@@ -187,6 +194,7 @@
     "oauthAutoCapture": "登录成功后自动获取 Token",
     "openOAuthLogin": "打开 OAuth 登录",
     "validationSuccess": "验证成功",
+    "noCredentialsRequired": "该供应商无需凭据，直接添加即可；请求由本机运行时完成。",
     "quota": "配额",
     "validateCredentials": "验证凭证",
     "clearChats": "清除对话记录",
@@ -322,6 +330,13 @@
     "cookiesHelp": "从浏览器 DevTools 获取的完整 Cookie 字符串（可选但推荐）",
     "thinkingMode": "思考模式",
     "thinkingModeDesc": "启用思考模式，在回答前输出推理过程"
+  },
+  "opencode": {
+    "name": "OpenCode",
+    "description": "OpenCode 免费模型池：由本机 OpenCode 运行时驱动，无需凭据；单轮约 30-60 秒",
+    "token": "无需填写",
+    "tokenPlaceholder": "免费池不需要凭据，直接添加账号即可",
+    "tokenHelp": "首次请求会自动启动本机 OpenCode 运行时（优先用已安装的，找不到则用 npx 兜底）；模型按计费为 0 筛选"
   },
   "zai": {
     "name": "Z.ai",
@@ -865,6 +880,12 @@
     "help": "帮助"
   },
   "models": {
+    "probeModels": "体检模型能力",
+    "toolCapable": "支持工具",
+    "chatOnly": "仅对话",
+    "probeDone": "体检完成",
+    "probeDoneDesc": "已逐个探测模型能否按信封产出工具调用",
+    "probeFailed": "体检失败",
     "title": "模型管理",
     "description": "查看和管理可用模型及模型映射配置",
     "modelList": "模型列表",

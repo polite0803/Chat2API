@@ -12,7 +12,11 @@
 
 | 显示名称 | 实际模型 ID |
 | --- | --- |
-| MiniMax-M2.7 | MiniMax-M2.7 |
+| M3.1-Flash | MiniMax-M3.1-Flash |
+| M3 | MiniMax-M3 |
+
+清单取自 `agent.minimax.cn` 的 `/minimax-cloud/api/v1/config?biz_id=3&app_id=3001&client=web`
+（2026-10-27 实测：匿名可读，`{base_resp, models:[{model_id, display_name}]}`，两条）。
 
 ## 适配状态
 
@@ -25,4 +29,5 @@
 1. 登录 `agent.minimaxi.com`。
 2. 从浏览器请求或本地存储中复制 JWT token；如有 `realUserID`，可单独填入。
 3. 在供应商管理中添加 MiniMax 账号。
-4. 默认模型仅保留 `MiniMax-M2.7`；旧的 `MiniMax-M2.5` 不再作为内置默认模型。
+4. 内置模型为官网当日在售的两条；旧的 `MiniMax-M2.7` 只保留映射别名，指向 `MiniMax-M3`，
+   方便老配置继续可用。

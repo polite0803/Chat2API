@@ -65,6 +65,8 @@ export interface ChatCompletionRequest {
   model: string
   /** Internal correlation id assigned by the proxy (never forwarded upstream) */
   requestId?: string
+  /** Aborted when the client disconnects, so long upstream turns can stop early */
+  signal?: AbortSignal
   /** Original model name before mapping (used for feature detection like web search, thinking mode) */
   originalModel?: string
   messages: ChatMessage[]
@@ -246,6 +248,12 @@ export interface ForwardResult {
   latency?: number
   providerSessionId?: string
   parentMessageId?: string
+  /**
+   * The provider answered with headers first and finishes the body later
+   * (OpenCode's agent turn takes 30-60s). The request's latency is then the
+   * total time measured when the stream ends, not the time to first byte.
+   */
+  deferred?: boolean
 }
 
 /**

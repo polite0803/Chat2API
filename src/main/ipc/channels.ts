@@ -28,6 +28,8 @@ export const IpcChannels = {
   PROVIDERS_EXPORT: 'providers:export',
   PROVIDERS_IMPORT: 'providers:import',
   PROVIDERS_UPDATE_MODELS: 'providers:updateModels',
+  OPENCODE_GET_CAPABILITIES: 'opencode:getCapabilities',
+  OPENCODE_PROBE_MODELS: 'opencode:probeModels',
   PROVIDERS_GET_EFFECTIVE_MODELS: 'providers:getEffectiveModels',
   PROVIDERS_ADD_CUSTOM_MODEL: 'providers:addCustomModel',
   PROVIDERS_REMOVE_MODEL: 'providers:removeModel',

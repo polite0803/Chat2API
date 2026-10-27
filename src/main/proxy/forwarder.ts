@@ -21,6 +21,7 @@ import { DeepSeekStreamHandler } from './adapters/deepseek-stream'
 import { GLMAdapter, GLMStreamHandler } from './adapters/glm'
 import { KimiAdapter, KimiStreamHandler } from './adapters/kimi'
 import { MimoAdapter, MimoStreamHandler } from './adapters/mimo'
+import { OpencodeAdapter, buildCompletion, createDeferredCompletionStream } from './adapters/opencode'
 import { QwenAdapter, QwenStreamHandler } from './adapters/qwen'
 import { QwenAiAdapter, QwenAiStreamHandler } from './adapters/qwen-ai'
 import { ZaiAdapter, ZaiStreamHandler } from './adapters/zai'
@@ -31,6 +32,7 @@ import { sessionManager } from './sessionManager'
 import { loadBalancer } from './loadbalancer'
 import { autoRouter, type AutoCandidate } from './autoRouter'
 import { accountRuntime } from './accountRuntime'
+import { stripUnsupportedForBuiltin } from './parameterPolicy'
 import { createContextManagementService, SummaryGenerator } from './services/contextManagementService'
 
 function shouldDeleteSession(): boolean {
@@ -101,6 +103,12 @@ export class RequestForwarder {
       matches: MiniMaxAdapter.isMiniMaxProvider,
       forward: (request, account, provider, actualModel, startTime) =>
         this.forwardMiniMax(request, account, provider, actualModel, startTime),
+    },
+    {
+      name: 'opencode',
+      matches: OpencodeAdapter.isOpencodeProvider,
+      forward: (request, account, provider, actualModel, startTime) =>
+        this.forwardOpencode(request, account, provider, actualModel, startTime),
     },
     {
       name: 'mimo',
@@ -230,6 +238,9 @@ export class RequestForwarder {
     const config = storeManager.getConfig()
     const maxRetries = options.maxRetries ?? config.retryCount
 
+    // stream_options 等客户端默认参数对内建供应商无效，发送前丢弃而不是报 400
+    request = stripUnsupportedForBuiltin(request, provider)
+
     // 记录在途与 RPM：仅用于路由打分，下一次请求即可读到
     accountRuntime.beginAttempt(account.id)
 
@@ -302,7 +313,10 @@ export class RequestForwarder {
         lastError = result.error
         lastStatus = result.status
 
-        if (result.status && result.status < 500 && result.status !== 429) {
+        // 429 是上游限流：同一个账号隔 5 秒再打一次基本没用，只会把配额和等待
+        // 一起赔进去（OpenCode 配额耗尽时一次失败就要 20 多秒，重试 3 次就是两分钟）。
+        // 冷却记录照旧，循环到此为止。
+        if (result.status && result.status < 500) {
           break
         }
       } catch (error) {
@@ -319,6 +333,8 @@ export class RequestForwarder {
 
     return {
       success: false,
+      // 丢掉状态码的话，路由层会把它映射成 500，客户端就看不到"被限流/请求有问题"
+      status: lastStatus,
       error: lastError || 'Request failed after retries',
       latency: Date.now() - startTime,
     }
@@ -1167,6 +1183,75 @@ export class RequestForwarder {
    * Mimo Dedicated Forward
    * Uses Mimo adapter for Xiaomi AI Studio
    */
+  /**
+   * OpenCode：驱动本机运行时完成一次 agent 回合。
+   * 免费模型单轮 30–60 秒，且它不是 token 流，所以流式响应是一次性分片（见 adapters/opencode.ts）。
+   */
+  private async forwardOpencode(
+    request: ChatCompletionRequest,
+    account: Account,
+    provider: Provider,
+    actualModel: string,
+    startTime: number
+  ): Promise<ForwardResult> {
+    const id = `chatcmpl-${Date.now().toString(36)}`
+    try {
+      // 工具清单仍走托管层的判定（tool_choice / 强制工具），
+      // 但 opencode 的档案让托管层既不注入提示也不解析响应 —— 工具由 OpenCode 的信封翻译。
+      const transformed = this.transformRequestForPromptToolUse(request, provider)
+      const tools = transformed.plan.toolChoiceMode === 'none' ? [] : (transformed.tools ?? [])
+      const adapter = new OpencodeAdapter(provider, account)
+      const runTurn = () =>
+        adapter.chatCompletion({
+          model: actualModel,
+          messages: transformed.messages as never,
+          stream: request.stream,
+          tools: tools as never,
+          signal: request.signal,
+        })
+
+      if (request.stream) {
+        // 响应头先走：一个回合 30–60 秒（首次还要拉起运行时），
+        // 等回合跑完再开流的话，客户端的响应头超时（AxAgent 是 10 秒）
+        // 会先判失败再回退，这条链路永远打不通。
+        const deferred = createDeferredCompletionStream(id, actualModel)
+        void runTurn().then(
+          reply => deferred.complete(reply),
+          error => deferred.fail(error),
+        )
+        return {
+          success: true,
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+          stream: deferred.stream,
+          skipTransform: true,
+          latency: Date.now() - startTime,
+          deferred: true,
+        }
+      }
+
+      const reply = await runTurn()
+      const latency = Date.now() - startTime
+
+      return {
+        success: true,
+        status: 200,
+        body: buildCompletion(id, actualModel, reply),
+        latency,
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      // 免费池配额用完是限流，不是我们这边的故障：报 429，客户端才知道该退避
+      const quotaExhausted = /free usage limit/i.test(message)
+      return {
+        success: false,
+        status: quotaExhausted ? 429 : 502,
+        error: message,
+        latency: Date.now() - startTime,
+      }
+    }
+  }
+
   private async forwardMimo(
     request: ChatCompletionRequest,
     account: Account,

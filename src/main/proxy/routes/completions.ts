@@ -5,6 +5,7 @@
 
 import Router from '@koa/router'
 import type { Context } from 'koa'
+import type { Readable } from 'stream'
 import { loadBalancer } from '../loadbalancer'
 import { requestForwarder } from '../forwarder'
 import { streamHandler } from '../stream'
@@ -276,6 +277,16 @@ router.post('/completions', async (ctx: Context) => {
         result.stream.pipe(chatTransform).pipe(textTransform)
       }
       ctx.body = textTransform
+
+      // 立即发送响应头：客户端通常只对“响应头”计时（例如 10s），首个 token 可能远晚于此
+      ctx.res.flushHeaders()
+
+      // 客户端提前断开时中止上游流，避免继续占用账号与上游配额
+      ctx.res.once('close', () => {
+        if (ctx.res.writableEnded) return
+        const source = result.stream as Readable
+        if (!source.destroyed) source.destroy()
+      })
     } else {
       ctx.set('Content-Type', 'application/json')
       ctx.body = toTextCompletion(result.body)

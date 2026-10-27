@@ -1,10 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 
 import { syncBuiltinProvider } from '../../src/main/store/providerSync.ts'
 import kimiConfig from '../../src/main/providers/builtin/kimi.ts'
 import glmConfig from '../../src/main/providers/builtin/glm.ts'
 import type { Provider } from '../../src/main/store/types.ts'
+
+const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
 
 function stored(overrides: Partial<Provider>): Provider {
   return {
@@ -52,4 +57,16 @@ test('a provider without modelsFetch is marked unsupported rather than inheritin
 test('the flag tracks the shipped config on every startup', () => {
   assert.equal(Boolean(kimiConfig.modelsFetch), true)
   assert.equal(Boolean(glmConfig.modelsFetch), false)
+})
+
+test('the local-account helper never demands a finished initialization', () => {
+  const source = readFileSync(join(root, 'src/main/store/store.ts'), 'utf8')
+  const start = source.indexOf('ensureLocalAccount(providerId: string): void {')
+  assert.ok(start > 0, 'ensureLocalAccount must exist')
+  const body = source.slice(start, source.indexOf('\n  }', start))
+
+  // initializeDefaultProviders() calls it while isInitialized is still false:
+  // ensureInitialized() there aborts the whole store startup
+  assert.doesNotMatch(body, /ensureInitialized\(\)/)
+  assert.match(body, /if \(!this\.store\) return/)
 })

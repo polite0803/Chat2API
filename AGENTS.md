@@ -137,13 +137,15 @@ going out and coming back as an upstream 401. Rules apply in order, first writer
 `auth` is unused by any shipped provider right now - the one adapter that needed a stored cookie map was Perplexity, and that provider has been removed. A later rule cannot overwrite a cookie or header an earlier rule set.
 cookies.
 
-Four readers exist, tried in this order under `reader: 'auto'`: `openai-list` (`data: [{id, name?}]`),
+Six readers exist, tried in this order under `reader: 'auto'`: `openai-list` (`data: [{id, name?}]`),
 `qwen-double-data` (`data: {data: [...]}`), `kimi-available-models` (`availableModels: [{id, displayName?}]`,
-deduped by id), `qwen-cn-model-list` (`data: [{modelCode, displayModelName, show}]`, `show: false` dropped).
+deduped by id), `qwen-cn-model-list` (`data: [{modelCode, displayModelName, show}]`, `show: false` dropped),
+`minimax-cloud-config` (`{base_resp, models: [{model_id, display_name}]}`) and `mimo-bot-config`
+(`data.modelConfigList`, keeping only `isInPromptNameList === true`).
 An unrecognised payload reports `unrecognized_shape` instead of returning an empty list, so an upstream
 change never looks like "this provider has no models".
 
-Status of the eight built-in providers (verified 2026-10-27 by anonymous requests, plus logged-in session
+Status of the eight web-chat providers (verified 2026-10-27 by anonymous requests, plus logged-in session
 replays): `qwen-ai` (`data:[{id,name}]`) and `kimi` (`availableModels:[{id,displayName}]`, POST)
 answer anonymously; `minimax` answers anonymously at
 `GET https://agent.minimax.cn/minimax-cloud/api/v1/config?biz_id=3&app_id=3001&client=web` with the
@@ -196,6 +198,54 @@ provider record carries `supportsModelFetch`, which startup derives from the shi
 return a typed `reason` (`unsupported`, `no_active_account`, `http_status`, `empty`,
 `unrecognized_shape`, `network_error`), each with its own message in the UI.
 
+### Runtime-backed Providers (OpenCode)
+OpenCode does not talk HTTP: a builtin can declare `runtimeModels: true` in `builtin/<provider>.ts`,
+which means its model list comes from a local runtime instead of an endpoint. Three places treat that
+flag differently from a normal provider, and all three are easy to get wrong:
+
+- **The endpoint is a placeholder.** `apiEndpoint: 'opencode://local'` is never requested; it exists
+  so the provider record stays complete. `providers:add` therefore must not apply the
+  http/https rule to it: `CustomProviderManager.validate` asks `isRuntimeBackedProvider(id, type)`
+  (`providers/endpointPolicy.ts`), which only answers yes when the **shipped builtin config** says
+  `runtimeModels` - a caller-supplied flag would let any custom provider skip the check.
+- **A local account has to exist.** A credential-less provider still needs one active account or the
+  load balancer refuses to route, so `storeManager.ensureLocalAccount()` creates an empty active
+  account for every builtin with no `credentialFields`. It runs inside `initialize()`, before
+  `isInitialized` is set, so it must check `this.store` and never `ensureInitialized()`.
+- **Status checks must not send HTTP.** Probing `opencode://local` is axios's "Unsupported protocol
+  opencode:". `ProviderChecker.checkProviderStatus` answers `unknown` (runtime not started yet) or
+  `online` (already running) from `opencodeService.getState()` instead, and never starts the runtime
+  as a side effect of a status check.
+
+The same flag decides where the model list comes from: `providers/modelListSource.ts` resolves
+`runtime` **before** `http`, because a runtime-backed provider has no `modelsFetch` at all and would
+otherwise be reported as "does not support online updates".
+
+A runtime-backed provider answers slowly (one agent turn is 30-60s), so its streaming request must
+not wait for that turn before opening the stream: `forwardOpencode` returns a
+`createDeferredCompletionStream()` that already carries the role chunk, so the response headers go
+out at once and the body follows. Otherwise any client with a response-header deadline (AxAgent:
+10s) fails the request before the answer exists. `ForwardResult.deferred` marks that case, and the
+route then records the total elapsed time instead of the time to first byte.
+
+Two more facts about that path, both measured on 2026-10-27:
+
+- **Turns can run in parallel.** The runtime supports concurrent sessions (one session per
+  request); the service used to serialize them, which multiplied the wait by the client's
+  concurrency. Measured: 3 serial turns 10.3s vs 3 parallel turns 2.6s and 4 parallel turns 3.6s,
+  all successful. `opencode/concurrency.ts` admits `MAX_CONCURRENT_TURNS = 10` - the client
+  (AxAgent) fans out 10 agent nodes per round, so a lower cap just multiplies its wait - and queues
+  the rest; the capability probe shares that budget. Only 4 has a measurement behind it; the quota
+  was exhausted before 6/8/10 could be measured, so treat 10 as "matched to the client", not
+  "verified".
+- **The free pool has a quota, and running out of it fails silently.** After roughly twenty-odd
+  turns the runtime stops answering, does not report an error on the session API, and only writes
+  `level=ERROR ... error.error="AI_APICallError: Free usage limit reached..."` to its own log. The
+  bridge watches that log per session id and aborts the request, so the turn fails in ~3s with the
+  reason instead of hanging for the 5-minute timeout; the forwarder maps it to 429. A dead runtime
+  process must also be replaced, not reused: `ensureStarted()` drops a bridge whose child died and
+  starts a new one, otherwise every later request fails with "Failed to create session: HTTP 0".
+
 ### IPC Communication
 All main-renderer communication uses IPC channels defined in `src/main/ipc/channels.ts`. The naming convention is `domain:action` (e.g., `proxy:start`, `accounts:add`).
 
@@ -232,11 +282,13 @@ that path.
   `api_error`. A failure after the stream started is an `data: {"error": ...}` frame, never
   assistant text, and every stream carries exactly one `[DONE]`.
 - `usage` is `null` unless the upstream reported real token counts; it is never fabricated.
-- Built-in providers reject `response_format` (other than `text`), `stream_options`, `logit_bias`,
-  `seed`, `max_tokens`, `top_p`, `stop`, `frequency_penalty`, `presence_penalty` and `n > 1` with
-  `400 unsupported_parameter`; custom providers keep passing them through. None of the eight web
-  upstreams exposes a token-limit field or a truncation signal, so the proxy neither forwards
-  `max_tokens` nor can it ever emit `finish_reason:"length"`.
+- Built-in providers silently drop `response_format`, `stream_options`, `logit_bias`, `seed`,
+  `max_tokens`, `top_p`, `stop`, `frequency_penalty` and `presence_penalty` in
+  `proxy/parameterPolicy.ts`, because OpenAI-compatible clients send them by default and a `400`
+  would take the whole client offline; only `n > 1` changes the response shape and still returns
+  `400 unsupported_parameter`. Custom providers keep passing all of them through. None of the web
+  upstreams exposes a token-limit field or a truncation signal, so the proxy never forwards
+  `max_tokens` and can never emit `finish_reason:"length"`.
 - qwen-ai only accepts a single user message per request, so its adapter renders the whole
   conversation (including assistant and tool turns) into one transcript via
   `utils/transcript.ts`; zai already sends the full `messages` array.

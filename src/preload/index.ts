@@ -605,10 +605,22 @@ const trayAPI = {
     ipcRenderer.send('tray:quit-app'),
 }
 
+const opencodeAPI = {
+  getCapabilities: (): Promise<Record<string, { status: string; reason: string; checkedAt: number }>> =>
+    ipcRenderer.invoke(IpcChannels.OPENCODE_GET_CAPABILITIES),
+
+  probeModels: (): Promise<{
+    success: boolean
+    capabilities: Record<string, { status: string; reason: string; checkedAt: number }>
+    detail?: string
+  }> => ipcRenderer.invoke(IpcChannels.OPENCODE_PROBE_MODELS),
+}
+
 const electronAPI = {
   proxy: proxyAPI,
   store: storeAPI,
   providers: providersAPI,
+  opencode: opencodeAPI,
   accounts: accountsAPI,
   oauth: oauthAPI,
   logs: logsAPI,

@@ -5,7 +5,7 @@ export type ProviderStatus = 'online' | 'offline' | 'unknown'
 export type ProviderType = 'builtin' | 'custom'
 
 // Provider vendor type (for OAuth adapters)
-export type ProviderVendor = 'deepseek' | 'glm' | 'kimi' | 'mimo' | 'minimax' | 'qwen' | 'qwen-ai' | 'zai' | 'custom'
+export type ProviderVendor = 'deepseek' | 'glm' | 'kimi' | 'mimo' | 'minimax' | 'opencode' | 'qwen' | 'qwen-ai' | 'zai' | 'custom'
 
 export type AuthType = 
   | 'oauth' 
@@ -212,6 +212,8 @@ export interface ProviderCheckResult {
   status: ProviderStatus
   latency?: number
   error?: string
+  /** Machine-readable cause; the UI turns it into its own wording */
+  reason?: string
 }
 
 export interface OAuthResult {
@@ -537,5 +539,5 @@ export type ModelsFetchFailure =
   | 'network_error'
 
 export type ModelsFetchResult =
-  | { ok: true; models: FetchedModel[] }
+  | { ok: true; models: FetchedModel[]; detail?: string }
   | { ok: false; reason: ModelsFetchFailure; detail?: string }

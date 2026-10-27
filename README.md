@@ -52,11 +52,12 @@
 | DeepSeek         | User Token    | Yes   | deepseek-default, deepseek-expert, deepseek-vision                                                                                                                                                                                                              |
 | GLM | Refresh Token | Yes | GLM-5.3, GLM-5.3-Flash |
 | Kimi             | JWT Token     | Yes   | K3, K2.8, Instant                                                                                                                                                                                                                               |
-| MiniMax          | JWT Token     | Yes   | MiniMax-M2.7                                                                                                                                                                                                                                    |
+| MiniMax          | JWT Token     | Yes   | M3.1-Flash, M3                                                                                                                                                                                                                                    |
 | Mimo             | Cookie        | Yes   | MiMo-V2.5-Pro, MiMo-V2.5, MiMo-V2-Flash                                                                                                                                                                                                         |
 | Qwen (CN)        | SSO Ticket    | Yes   | Qwen3.6, Qwen3.7-Max, Qwen3.5-Flash, Qwen3-Max, Qwen3-Max-Thinking-Preview, Qwen3-Coder                                                                                                                                                         |
 | Qwen AI (Global) | JWT Token     | Yes   | Qwen3.7-Max, Qwen3.6-Plus, Qwen3.6-35B-A3B, Qwen3.6-27B, Qwen3-Coder                                                                                                                                                                           |
 | Z.ai             | JWT Token     | Yes   | Temporarily unavailable due to frontend captcha risk control                                                                                                                                                                                    |
+| OpenCode         | None          | No    | glm-5.3-flash-free, deepseek-v4.1-flash-free, big-pickle, mimo-v2.6-flash-free, nemotron-3-ultra-free, nemotron-3.5-lightning-free, nemotron-3.5-super-vl-free, beam-free, flint-40b-free |
 
 Provider adaptation notes and manual model-addition guides are in [docs/providers](docs/providers/README.md).
 
