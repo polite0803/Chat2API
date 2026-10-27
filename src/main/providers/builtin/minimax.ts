@@ -25,6 +25,12 @@ export const minimaxConfig: BuiltinProviderConfig = {
   },
   enabled: true,
   description: 'MiniMax Agent - AI assistant with MCP multi-agent collaboration',
+  modelsFetch: {
+    // The list lives on agent.minimax.cn, not on this provider's apiEndpoint host
+    url: 'https://agent.minimax.cn/minimax-cloud/api/v1/config?biz_id=3&app_id=3001&client=web',
+    reader: 'minimax-cloud-config',
+    headers: { Origin: 'https://agent.minimax.cn', Referer: 'https://agent.minimax.cn/' },
+  },
   supportedModels: [
     'MiniMax-M2.7',
   ],

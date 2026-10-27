@@ -12,6 +12,7 @@ import {
   DEFAULT_CONFIG,
 } from './types'
 import { normalizeToolCallingConfig } from '../../shared/toolCalling'
+import { isLoopbackHost } from '../proxy/authPolicy'
 
 /**
  * Config Manager class
@@ -321,6 +322,22 @@ export class ConfigManager {
     if (config.logRetentionDays !== undefined) {
       if (config.logRetentionDays < 1 || config.logRetentionDays > 365) {
         errors.push('Log retention days must be between 1-365')
+      }
+    }
+
+    if (config.proxyHost !== undefined && !isLoopbackHost(config.proxyHost)) {
+      errors.push('Proxy host must be 127.0.0.1, ::1 or localhost')
+    }
+
+    if (config.enableApiKey !== undefined && typeof config.enableApiKey !== 'boolean') {
+      errors.push('enableApiKey must be a boolean')
+    }
+
+    if (config.apiKeys !== undefined) {
+      if (!Array.isArray(config.apiKeys)) {
+        errors.push('apiKeys must be an array')
+      } else if (config.apiKeys.some((entry) => !entry || typeof entry.key !== 'string' || entry.key.trim().length === 0)) {
+        errors.push('apiKeys[].key must be a non-empty string')
       }
     }
     

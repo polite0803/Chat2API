@@ -81,12 +81,12 @@ test('partial Chat2API start marker is reported as buffered so stream handlers d
   assert.equal(parser.isBuffering(), true)
 })
 
-test('text before tool call is preserved only before tool calling begins', () => {
+test('text after a tool call is released instead of silently dropped', () => {
   const parser = new ToolStreamParser(plan('managed_xml'))
   const chunks = parser.push('before <tool_calls><invoke name="default_api:read_file"><parameter name="filePath">/tmp/a</parameter></invoke></tool_calls> after', baseChunk)
 
   assert.equal(chunks[0].choices[0].delta.content, 'before ')
-  assert.equal(chunks.some((chunk) => chunk.choices[0].delta.content === ' after'), false)
+  assert.equal(chunks.some((chunk) => chunk.choices[0].delta.content === ' after'), true)
 })
 
 test('invalid tool name is not emitted as a tool call', () => {
@@ -111,6 +111,34 @@ test('generated call IDs stay stable between emitted chunks and final state', ()
   const emittedId = chunks.at(-1)?.choices[0].delta.tool_calls[0].id
 
   assert.equal(parser.hasEmittedToolCall(), true)
-  assert.equal(emittedId, 'call_0')
+  assert.match(String(emittedId), /^call-\d+$/)
   assert.deepEqual(parser.flush(baseChunk), [])
+})
+
+test('call ids are scoped to the request id and unique per response', () => {
+  const planWithId = { ...plan('managed_xml'), diagnostics: { ...plan().diagnostics, requestId: 'chatcmpl-abc' } }
+  const parser = new ToolStreamParser(planWithId)
+  const block = '<|CHAT2API|tool_calls><|CHAT2API|invoke name="default_api:read_file"><|CHAT2API|parameter name="filePath">/tmp/a</|CHAT2API|parameter></|CHAT2API|invoke></|CHAT2API|tool_calls>'
+  const first = parser.push(block, baseChunk)
+  const second = parser.push(block, baseChunk)
+  const ids = [
+    first.at(-1)?.choices[0].delta.tool_calls[0].id,
+    second.at(-1)?.choices[0].delta.tool_calls[0].id,
+  ]
+
+  assert.deepEqual(ids, ['call_chatcmpl-abc-0', 'call_chatcmpl-abc-1'])
+})
+
+test('a hallucinated tool name releases the surrounding text instead of swallowing it', () => {
+  const parser = new ToolStreamParser(plan('managed_xml'))
+  const chunks = parser.push(
+    'answer <tool_calls><invoke name="missing"><parameter name="x">1</parameter></invoke></tool_calls> tail',
+    baseChunk
+  )
+
+  assert.equal(chunks.some((chunk) => chunk.choices[0].delta.tool_calls), false)
+  const text = chunks.map((chunk) => chunk.choices[0].delta.content || '').join('')
+  assert.match(text, /answer/)
+  assert.match(text, /tail/)
+  assert.doesNotMatch(text, /<tool_calls>/)
 })

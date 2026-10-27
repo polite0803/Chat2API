@@ -21,7 +21,7 @@ function getIconPath(): string {
   return path.join(__dirname, '../../build/icon.png')
 }
 
-function loadAppIcon(): nativeImage {
+function loadAppIcon(): Electron.NativeImage {
   const iconPath = getIconPath()
   
   try {
@@ -39,7 +39,7 @@ function loadAppIcon(): nativeImage {
   return createFallbackIcon()
 }
 
-function createFallbackIcon(): nativeImage {
+function createFallbackIcon(): Electron.NativeImage {
   const size = 22
   const canvas = Buffer.alloc(size * size * 4)
   

@@ -22,7 +22,10 @@ export function useTheme() {
     } else {
       root.setAttribute('data-theme', theme)
     }
-  }, [theme])
+
+    // Keep the window caption-button overlay in step with the app theme
+    window.electronAPI?.app?.setTitleBarTheme?.(isDark ? 'dark' : 'light')
+  }, [theme, isDark])
 
   useEffect(() => {
     if (theme !== 'system') return
@@ -31,6 +34,7 @@ export function useTheme() {
     const handleChange = (e: MediaQueryListEvent) => {
       const root = window.document.documentElement
       root.setAttribute('data-theme', e.matches ? 'dark' : 'light')
+      window.electronAPI?.app?.setTitleBarTheme?.(e.matches ? 'dark' : 'light')
     }
 
     mediaQuery.addEventListener('change', handleChange)

@@ -3,9 +3,25 @@
  * Defines core data structures for accounts, providers, and configuration
  */
 
-import type { ProviderStatus } from '../../shared/types'
+import type {
+  ProviderStatus,
+  RequestLogEntry,
+  EffectiveModel,
+  ModelsFetchConfig,
+  ModelsFetchReader,
+  FetchedModel,
+  ModelsFetchFailure,
+  ModelsFetchResult,
+  AutoRoutingConfig,
+} from '../../shared/types.ts'
+import { DEFAULT_AUTO_ROUTING_CONFIG } from '../../shared/types.ts'
 import type { LegacyToolPromptConfig, ToolCallingConfig } from '../../shared/toolCalling.ts'
 import { DEFAULT_TOOL_CALLING_CONFIG } from '../../shared/toolCalling.ts'
+import {
+  DEEPSEEK_PRIMARY_MODELS,
+  DEEPSEEK_LEGACY_MODEL_MAPPING_NAMES,
+  DEFAULT_DEEPSEEK_MODEL_MAPPINGS,
+} from '../../shared/types.ts'
 
 /**
  * Account Status Enum
@@ -68,11 +84,14 @@ export interface BuiltinProviderConfig extends Omit<Provider, 'createdAt' | 'upd
   tokenCheckEndpoint?: string
   /** Token check method */
   tokenCheckMethod?: 'GET' | 'POST'
-  /** Models list API endpoint for dynamic model fetching */
-  modelsApiEndpoint?: string
-  /** Additional headers for models API request */
-  modelsApiHeaders?: Record<string, string>
+  /**
+   * Online model list source. Absent means the provider has no online update entry,
+   * and the UI must not offer it.
+   */
+  modelsFetch?: ModelsFetchConfig
 }
+
+export type { ModelsFetchReader, ModelsFetchConfig, FetchedModel, ModelsFetchFailure, ModelsFetchResult }
 
 /**
  * Load Balance Strategy Enum
@@ -103,6 +122,8 @@ export interface Account {
   status: AccountStatus
   /** Last used time (timestamp) */
   lastUsed?: number
+  /** Last credential/status check time (timestamp) */
+  lastStatusCheck?: number
   /** Created time (timestamp) */
   createdAt: number
   /** Updated time (timestamp) */
@@ -150,6 +171,10 @@ export interface Provider {
   supportedModels?: string[]
   /** Model name mapping */
   modelMappings?: Record<string, string>
+  /** Credential fields the account form renders */
+  credentialFields?: CredentialField[]
+  /** Set at startup from the shipped provider config: this provider has an online model list source */
+  supportsModelFetch?: boolean
   /** Provider status */
   status?: ProviderStatus
   /** Last status check time */
@@ -193,6 +218,8 @@ export interface AppConfig {
   autoStartProxy: boolean
   /** Minimize to tray */
   minimizeToTray: boolean
+  /** UI language */
+  language: 'zh-CN' | 'en-US'
   /** Log level */
   logLevel: 'debug' | 'info' | 'warn' | 'error'
   /** Log retention days */
@@ -219,6 +246,8 @@ export interface AppConfig {
   managementApi: ManagementApiConfig
   /** Context management configuration */
   contextManagement: ContextManagementConfig
+  /** Virtual `auto` model routing configuration */
+  autoRouting: AutoRoutingConfig
 }
 
 /**
@@ -406,63 +435,9 @@ export interface LogEntry {
 
 /**
  * Request Log Entry Interface
- * Detailed log for API request tracking
+ * Defined once in shared/types so main, preload and renderer read the same shape
  */
-export interface RequestLogEntry {
-  /** Log ID */
-  id: string
-  /** Timestamp */
-  timestamp: number
-  /** Request status */
-  status: 'success' | 'error'
-  /** HTTP status code */
-  statusCode: number
-
-  /** HTTP method */
-  method: string
-  /** Request URL path */
-  url: string
-  /** Requested model name */
-  model: string
-  /** Actual model used (after mapping) */
-  actualModel?: string
-
-  /** Provider ID */
-  providerId?: string
-  /** Provider name */
-  providerName?: string
-  /** Account ID */
-  accountId?: string
-  /** Account name */
-  accountName?: string
-
-  /** Request body JSON string */
-  requestBody?: string
-  /** User input extracted from messages (truncated to 200 chars) */
-  userInput?: string
-
-  /** Web search enabled */
-  webSearch?: boolean
-  /** Reasoning effort level */
-  reasoningEffort?: 'low' | 'medium' | 'high'
-
-  /** Response status code */
-  responseStatus: number
-  /** Response preview (truncated) */
-  responsePreview?: string
-  /** Response body JSON string */
-  responseBody?: string
-
-  /** Request latency in milliseconds */
-  latency: number
-  /** Whether streaming request */
-  isStream: boolean
-
-  /** Error message */
-  errorMessage?: string
-  /** Error stack trace */
-  errorStack?: string
-}
+export type { RequestLogEntry }
 
 export interface RequestLogConfig {
   /** Whether detailed request logs are persisted */
@@ -524,37 +499,6 @@ export interface PersistentStatistics {
 }
 
 /**
- * System Prompt Type Enum
- */
-export type PromptType = 'general' | 'tool-use' | 'agent' | 'translation' | 'search'
-
-/**
- * System Prompt Interface
- */
-export interface SystemPrompt {
-  /** Unique identifier */
-  id: string
-  /** Prompt name */
-  name: string
-  /** Prompt description */
-  description: string
-  /** Prompt content */
-  prompt: string
-  /** Prompt type */
-  type: PromptType
-  /** Whether built-in (built-in prompts cannot be edited/deleted) */
-  isBuiltin: boolean
-  /** Emoji icon */
-  emoji?: string
-  /** Group tags */
-  groups?: string[]
-  /** Creation time */
-  createdAt: number
-  /** Update time */
-  updatedAt: number
-}
-
-/**
  * Credential Validation Result Interface
  */
 export interface ValidationResult {
@@ -594,6 +538,13 @@ export interface ProviderModelOverrides {
   addedModels: CustomModel[]
   /** Excluded default model display names */
   excludedModels: string[]
+  /**
+   * Models last pulled from the provider's online list. Kept here rather than in
+   * provider.supportedModels because the startup sync rewrites that field from code.
+   */
+  fetchedModels?: CustomModel[]
+  /** Epoch ms of the last successful online sync */
+  fetchedAt?: number
 }
 
 /**
@@ -602,29 +553,20 @@ export interface ProviderModelOverrides {
  */
 export type UserModelOverrides = Record<string, ProviderModelOverrides>
 
-export const DEEPSEEK_PRIMARY_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro']
-
-export const DEEPSEEK_LEGACY_MODEL_MAPPING_NAMES = [
-  'deepseek-chat',
-  'deepseek-reasoner',
-  'DeepSeek-V3.2',
-  'DeepSeek-Search',
-  'DeepSeek-R1',
-  'DeepSeek-R1-Search',
-]
+export {
+  DEEPSEEK_PRIMARY_MODELS,
+  DEEPSEEK_LEGACY_MODEL_MAPPING_NAMES,
+  DEFAULT_DEEPSEEK_MODEL_MAPPINGS,
+  DEEPSEEK_MODEL_BASES,
+  DEEPSEEK_MODEL_SUFFIXES,
+  DEEPSEEK_RETIRED_MODELS,
+} from '../../shared/types.ts'
 
 /**
  * Effective Model Information
- * Combined model info after merging defaults with user overrides
+ * Defined once in shared/types, shared with preload and the renderer
  */
-export interface EffectiveModel {
-  /** Model display name (used in AI client) */
-  displayName: string
-  /** Actual model ID (used in API call) */
-  actualModelId: string
-  /** Whether this is a user-added custom model */
-  isCustom: boolean
-}
+export type { EffectiveModel }
 
 /**
  * Storage Data Structure Interface
@@ -640,8 +582,6 @@ export interface StoreSchema {
   logs: LogEntry[]
   /** Request log entries */
   requestLogs: RequestLogEntry[]
-  /** System prompts */
-  systemPrompts: SystemPrompt[]
   /** Session records */
   sessions: SessionRecord[]
   /** Persistent statistics */
@@ -711,39 +651,6 @@ export const DEFAULT_REQUEST_LOG_CONFIG: RequestLogConfig = {
   redactSensitiveData: true,
 }
 
-export const DEFAULT_DEEPSEEK_MODEL_MAPPINGS: Record<string, ModelMapping> = {
-  'deepseek-v4-flash-think': {
-    requestModel: 'deepseek-v4-flash-think',
-    actualModel: 'deepseek-v4-flash',
-    preferredProviderId: 'deepseek',
-  },
-  'deepseek-v4-flash-search': {
-    requestModel: 'deepseek-v4-flash-search',
-    actualModel: 'deepseek-v4-flash',
-    preferredProviderId: 'deepseek',
-  },
-  'deepseek-v4-flash-think-search': {
-    requestModel: 'deepseek-v4-flash-think-search',
-    actualModel: 'deepseek-v4-flash',
-    preferredProviderId: 'deepseek',
-  },
-  'deepseek-v4-pro-think': {
-    requestModel: 'deepseek-v4-pro-think',
-    actualModel: 'deepseek-v4-pro',
-    preferredProviderId: 'deepseek',
-  },
-  'deepseek-v4-pro-search': {
-    requestModel: 'deepseek-v4-pro-search',
-    actualModel: 'deepseek-v4-pro',
-    preferredProviderId: 'deepseek',
-  },
-  'deepseek-v4-pro-think-search': {
-    requestModel: 'deepseek-v4-pro-think-search',
-    actualModel: 'deepseek-v4-pro',
-    preferredProviderId: 'deepseek',
-  },
-}
-
 export function createDefaultModelMappings(): Record<string, ModelMapping> {
   return Object.fromEntries(
     Object.entries(DEFAULT_DEEPSEEK_MODEL_MAPPINGS).map(([key, mapping]) => [key, { ...mapping }]),
@@ -780,6 +687,7 @@ export function sanitizeDeepSeekModelOverrides(
   ])
 
   return {
+    ...(overrides || {}),
     addedModels: (overrides?.addedModels || []).filter(model =>
       !migratedModelNames.has(model.displayName)
     ),
@@ -802,6 +710,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   autoStart: false,
   autoStartProxy: false,
   minimizeToTray: true,
+  language: 'en-US',
   logLevel: 'info',
   logRetentionDays: 7,
   requestLogConfig: DEFAULT_REQUEST_LOG_CONFIG,
@@ -815,6 +724,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   toolPromptConfig: undefined,
   managementApi: DEFAULT_MANAGEMENT_API_CONFIG,
   contextManagement: DEFAULT_CONTEXT_MANAGEMENT_CONFIG,
+  autoRouting: DEFAULT_AUTO_ROUTING_CONFIG,
 }
 
 /**

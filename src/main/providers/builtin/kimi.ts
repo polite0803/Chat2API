@@ -25,12 +25,25 @@ export const kimiConfig: BuiltinProviderConfig = {
     'Priority': 'u=1, i',
   },
   enabled: true,
-  description: 'Kimi K2.6 AI assistant by Moonshot, supports thinking mode and web search',
+  description: 'Kimi (Moonshot) web assistant, supports thinking mode and web search',
+  modelsFetch: {
+    url: 'https://www.kimi.com/apiv2/kimi.gateway.config.v1.ConfigService/GetAvailableModels',
+    method: 'POST',
+    body: {},
+    reader: 'auto',
+    headers: { 'Content-Type': 'application/json' },
+  },
   supportedModels: [
-    'Kimi-K2.6',
+    'K3',
+    'K2.8',
+    'Instant',
   ],
   modelMappings: {
-    'Kimi-K2.6': 'kimi-k2.6',
+    K3: 'k3-agent',
+    'K2.8': 'k28-agent-preview',
+    Instant: 'k2d6-chat',
+    // Display name shipped by earlier builds; kept so existing client configs keep resolving
+    'Kimi-K2.6': 'k2d6-chat',
   },
   credentialFields: [
     {

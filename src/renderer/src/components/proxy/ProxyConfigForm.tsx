@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useProxyStore } from '@/stores/proxyStore'
 import { useToast } from '@/hooks/use-toast'
-import { Server, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react'
+import { Server, AlertCircle, RefreshCw } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -251,7 +251,7 @@ export function ProxyConfigForm({ onConfigChange }: ProxyConfigFormProps) {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Server className="h-5 w-5 text-primary" />
+              <Server className="h-[15px] w-[15px] text-[var(--text-muted)]" />
               <CardTitle>{t('proxy.basicConfig')}</CardTitle>
             </div>
             {hasChanges && (
@@ -268,13 +268,10 @@ export function ProxyConfigForm({ onConfigChange }: ProxyConfigFormProps) {
               <Label htmlFor="port" className="flex items-center gap-2">
                 {t('proxy.listeningPort')}
                 {errors.port && (
-                  <span className="text-destructive text-xs flex items-center gap-1">
+                  <span className="text-destructive text-caption flex items-center gap-1">
                     <AlertCircle className="h-3 w-3" />
                     {errors.port}
                   </span>
-                )}
-                {!errors.port && formData.port && (
-                  <CheckCircle2 className="h-3 w-3 text-green-500" />
                 )}
               </Label>
               <Input
@@ -294,13 +291,10 @@ export function ProxyConfigForm({ onConfigChange }: ProxyConfigFormProps) {
               <Label htmlFor="host" className="flex items-center gap-2">
                 {t('proxy.bindAddress')}
                 {errors.host && (
-                  <span className="text-destructive text-xs flex items-center gap-1">
+                  <span className="text-destructive text-caption flex items-center gap-1">
                     <AlertCircle className="h-3 w-3" />
                     {errors.host}
                   </span>
-                )}
-                {!errors.host && formData.host && (
-                  <CheckCircle2 className="h-3 w-3 text-green-500" />
                 )}
               </Label>
               <Input

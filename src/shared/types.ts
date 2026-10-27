@@ -5,7 +5,7 @@ export type ProviderStatus = 'online' | 'offline' | 'unknown'
 export type ProviderType = 'builtin' | 'custom'
 
 // Provider vendor type (for OAuth adapters)
-export type ProviderVendor = 'deepseek' | 'glm' | 'kimi' | 'mimo' | 'minimax' | 'qwen' | 'qwen-ai' | 'zai' | 'perplexity' | 'custom'
+export type ProviderVendor = 'deepseek' | 'glm' | 'kimi' | 'mimo' | 'minimax' | 'qwen' | 'qwen-ai' | 'zai' | 'custom'
 
 export type AuthType = 
   | 'oauth' 
@@ -28,9 +28,29 @@ export interface CredentialField {
 
 export type LoadBalanceStrategy = 'round-robin' | 'fill-first' | 'failover'
 
+export interface AutoRoutingConfig {
+  /** Enables the virtual `auto` model. When off, `auto` is hidden from /v1/models and rejected. */
+  enabled: boolean
+  /** Maximum number of candidates tried before giving up on one request. */
+  maxAttempts: number
+  /** How long a conversation stays pinned to the model it first succeeded on. 0 disables stickiness. */
+  stickyMinutes: number
+}
+
+export const DEFAULT_AUTO_ROUTING_CONFIG: AutoRoutingConfig = {
+  enabled: true,
+  maxAttempts: 3,
+  stickyMinutes: 30,
+}
+
 export type Theme = 'light' | 'dark' | 'system'
 
 export type {
+  LegacyToolPromptConfig,
+  ToolCallingConfig,
+} from './toolCalling'
+
+import type {
   LegacyToolPromptConfig,
   ToolCallingConfig,
 } from './toolCalling'
@@ -43,6 +63,7 @@ export interface Account {
   credentials: Record<string, string>
   status: AccountStatus
   lastUsed?: number
+  lastStatusCheck?: number
   createdAt: number
   updatedAt: number
   errorMessage?: string
@@ -66,10 +87,49 @@ export interface Provider {
   icon?: string
   supportedModels?: string[]
   modelMappings?: Record<string, string>
+  credentialFields?: CredentialField[]
+  /** Set at startup from the shipped provider config: this provider has an online model list source */
+  supportsModelFetch?: boolean
   status?: ProviderStatus
   lastStatusCheck?: number
 }
 
+export const DEEPSEEK_MODEL_BASES = ['deepseek-default', 'deepseek-expert', 'deepseek-vision'] as const
+export const DEEPSEEK_MODEL_SUFFIXES = ['think', 'search', 'think-search'] as const
+
+/** The retired chat.deepseek.com model labels; user data naming them is pruned, not migrated */
+export const DEEPSEEK_RETIRED_MODELS = [
+  'deepseek-v4-flash',
+  'deepseek-v4-pro',
+  'deepseek-v4-flash-think',
+  'deepseek-v4-flash-search',
+  'deepseek-v4-flash-think-search',
+  'deepseek-v4-pro-think',
+  'deepseek-v4-pro-search',
+  'deepseek-v4-pro-think-search',
+]
+
+export const DEEPSEEK_PRIMARY_MODELS: string[] = [...DEEPSEEK_MODEL_BASES]
+
+export const DEEPSEEK_LEGACY_MODEL_MAPPING_NAMES = [
+  'deepseek-chat',
+  'deepseek-reasoner',
+  'DeepSeek-V3.2',
+  'DeepSeek-Search',
+  'DeepSeek-R1',
+  'DeepSeek-R1-Search',
+  ...DEEPSEEK_RETIRED_MODELS,
+]
+
+/** Feature-suffix aliases per base model, generated so the table has one source */
+export const DEFAULT_DEEPSEEK_MODEL_MAPPINGS: Record<string, ModelMapping> = Object.fromEntries(
+  DEEPSEEK_MODEL_BASES.flatMap(base =>
+    DEEPSEEK_MODEL_SUFFIXES.map(suffix => {
+      const requestModel = `${base}-${suffix}`
+      return [requestModel, { requestModel, actualModel: base, preferredProviderId: 'deepseek' }]
+    }),
+  ),
+)
 export interface ModelMapping {
   requestModel: string
   actualModel: string
@@ -110,6 +170,7 @@ export interface AppConfig {
   toolPromptConfig?: LegacyToolPromptConfig
   managementApi: ManagementApiConfig
   contextManagement?: unknown
+  autoRouting: AutoRoutingConfig
   language: 'zh-CN' | 'en-US'
 }
 
@@ -180,26 +241,67 @@ export interface ValidationResult {
   }
 }
 
-export type PromptType = 'general' | 'tool-use' | 'agent' | 'translation' | 'search'
-
-export interface SystemPrompt {
-  id: string
-  name: string
-  description: string
-  prompt: string
-  type: PromptType
-  isBuiltin: boolean
-  emoji?: string
-  groups?: string[]
-  createdAt: number
-  updatedAt: number
-}
-
 export interface SessionConfig {
   sessionTimeout: number
   maxMessagesPerSession: number
   deleteAfterTimeout: boolean
   maxSessionsPerAccount: number
+}
+
+export interface RequestLogEntry {
+  /** Log ID */
+  id: string
+  /** Timestamp */
+  timestamp: number
+  /** Request status */
+  status: 'success' | 'error'
+  /** HTTP status code */
+  statusCode: number
+
+  /** HTTP method */
+  method: string
+  /** Request URL path */
+  url: string
+  /** Requested model name */
+  model: string
+  /** Actual model used (after mapping) */
+  actualModel?: string
+
+  /** Provider ID */
+  providerId?: string
+  /** Provider name */
+  providerName?: string
+  /** Account ID */
+  accountId?: string
+  /** Account name */
+  accountName?: string
+
+  /** Request body JSON string */
+  requestBody?: string
+  /** User input extracted from messages (truncated to 200 chars) */
+  userInput?: string
+
+  /** Web search enabled */
+  webSearch?: boolean
+  /** Reasoning effort level */
+  reasoningEffort?: 'low' | 'medium' | 'high'
+
+  /** Response status code */
+  responseStatus: number
+  /** Response preview (truncated) */
+  responsePreview?: string
+  /** Response body JSON string */
+  responseBody?: string
+
+  /** Request latency in milliseconds */
+  latency: number
+  /** Whether streaming request */
+  isStream: boolean
+
+  /** Error message */
+  errorMessage?: string
+  /** Error stack trace */
+  errorStack?: string
 }
 
 export interface RequestLogConfig {
@@ -366,10 +468,74 @@ export interface ConfigUpdateRequest {
   toolCallingConfig?: Partial<ToolCallingConfig>
   toolPromptConfig?: LegacyToolPromptConfig
   managementApi?: ManagementApiConfig
+  autoRouting?: Partial<AutoRoutingConfig>
 }
 
 export interface EffectiveModel {
   displayName: string
   actualModelId: string
   isCustom: boolean
+  /** Where this entry came from, so the UI can label it truthfully */
+  source: 'builtin' | 'fetched' | 'custom'
 }
+
+/** How an upstream payload is read into display-name / actual-id pairs */
+export type ModelsFetchReader =
+  | 'openai-list'
+  | 'qwen-double-data'
+  | 'qwen-cn-model-list'
+  | 'kimi-available-models'
+  | 'minimax-cloud-config'
+  | 'mimo-bot-config'
+  | 'auto'
+
+/** Where one credential field goes when calling a provider's model list */
+export interface ModelsFetchAuthRule {
+  /** Key in account.credentials */
+  from: string
+  into: 'header' | 'cookie'
+  /** Header name, for into = header */
+  header?: string
+  /** Prefix placed before the value inside the header, e.g. "Bearer " */
+  prefix?: string
+  /** Cookie name, for into = cookie */
+  cookie?: string
+}
+
+/**
+ * Declarative description of a provider's online model list source.
+ * Lives in shared/types because the fetch outcome crosses the IPC boundary.
+ */
+export interface ModelsFetchConfig {
+  url: string
+  method?: 'GET' | 'POST'
+  /** JSON body, for the gateways that need POST with an empty object */
+  body?: Record<string, unknown>
+  /** Payload reader; 'auto' tries every known reader and fails loudly when none match */
+  reader?: ModelsFetchReader
+  /**
+   * How the active account's credentials reach this request. Declaring any rule means
+   * an active account is required; an empty list means the endpoint answers anonymously.
+   */
+  auth?: ModelsFetchAuthRule[]
+  /** Headers merged over the provider's own headers for this request */
+  headers?: Record<string, string>
+}
+
+export interface FetchedModel {
+  displayName: string
+  actualModelId: string
+}
+
+export type ModelsFetchFailure =
+  | 'unsupported'
+  | 'no_active_account'
+  | 'missing_credential_field'
+  | 'http_status'
+  | 'empty'
+  | 'unrecognized_shape'
+  | 'network_error'
+
+export type ModelsFetchResult =
+  | { ok: true; models: FetchedModel[] }
+  | { ok: false; reason: ModelsFetchFailure; detail?: string }

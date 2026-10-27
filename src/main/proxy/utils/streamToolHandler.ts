@@ -18,8 +18,8 @@ import {
   parseToolCallsStream as unifiedParseToolCallsStream,
   flushToolCallBuffer as unifiedFlushToolCallBuffer,
   shouldBlockOutput as unifiedShouldBlockOutput,
-  createBaseChunk as unifiedCreateBaseChunk
 } from './toolParser/index'
+import { debugContent } from './debugContent.ts'
 
 // Re-export StreamState type for backward compatibility
 export type { StreamState } from './toolParser/index'
@@ -281,7 +281,8 @@ export function flushToolCallBuffer(
         }]
       })
     } else if (state.contentBuffer && state.hasEmittedToolCall) {
-      console.warn('[StreamToolHandler] Discarding remaining buffer because tool calls were emitted:', state.contentBuffer.substring(0, 200) + '...')
+      console.warn('[StreamToolHandler] Discarding remaining buffer because tool calls were emitted')
+      debugContent('[StreamToolHandler] Discarded buffer:', state.contentBuffer, 200)
     }
   }
 

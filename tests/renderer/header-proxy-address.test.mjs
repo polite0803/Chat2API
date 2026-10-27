@@ -21,13 +21,25 @@ test('header proxy badge renders the configured bind address instead of a hard-c
   assert.doesNotMatch(headerSource, /127\.0\.0\.1:\{port\}/)
 })
 
-test('tool calling smoke uses a local management API URL that is actually served by the proxy', () => {
+test('tool calling smoke runs in the main process instead of fetching the management API from the renderer', () => {
   const preloadSource = readFileSync(join(root, 'src/preload/index.ts'), 'utf8')
+  const handlersSource = readFileSync(join(root, 'src/main/ipc/handlers.ts'), 'utf8')
   const managementSettingsSource = readFileSync(join(root, 'src/renderer/src/components/settings/ManagementApiSettings.tsx'), 'utf8')
 
-  assert.match(preloadSource, /function resolveLocalManagementApiBaseUrl\(config: AppConfig\)/)
-  assert.match(preloadSource, /configuredHost === '0\.0\.0\.0'/)
-  assert.match(preloadSource, /return `http:\/\/\$\{host\}:\$\{config\.proxyPort\}\/v0\/management`/)
+  // the renderer no longer holds the management secret or builds a URL for the smoke call
+  assert.match(
+    preloadSource,
+    /runSmoke: \(input: \{ clientAdapterId: string \}\)[\s\S]*?IpcChannels\.TOOL_CALLING_RUN_SMOKE/,
+  )
+  assert.doesNotMatch(preloadSource, /fetch\(/)
   assert.doesNotMatch(preloadSource, /managementApi\?\.managementApiPort \|\| config\.proxyPort/)
+
+  // main resolves the adapter from config and runs the smoke in-process
+  assert.match(
+    handlersSource,
+    /IpcChannels\.TOOL_CALLING_RUN_SMOKE[\s\S]*?runToolCallingSmoke\(clientAdapterId\)/,
+  )
+
+  // the management endpoint shown in settings still has to be one the proxy serves
   assert.match(managementSettingsSource, /const apiEndpoint = `http:\/\/127\.0\.0\.1:\$\{proxyPort\}\/v0\/management`/)
 })

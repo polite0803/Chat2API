@@ -145,8 +145,6 @@ export class ProviderChecker {
         return this.checkQwenToken(account.credentials.ticket)
       case 'qwen-ai':
         return this.checkQwenAiToken(account.credentials.token)
-      case 'perplexity':
-        return this.checkPerplexityToken(account.credentials.sessionToken || account.credentials.token)
       case 'mimo':
         return this.checkMimoToken(
           account.credentials.service_token,
@@ -180,7 +178,7 @@ export class ProviderChecker {
 
   private static async checkDeepSeekToken(token: string): Promise<TokenCheckResult> {
     try {
-      console.log('[DeepSeek] Validating Token:', token.substring(0, 20) + '...')
+      console.log('[DeepSeek] Validating Token:', token.length)
       
       const response = await axios.get(
         'https://chat.deepseek.com/api/v0/users/current',
@@ -230,7 +228,7 @@ export class ProviderChecker {
 
   private static async checkGLMToken(refreshToken: string): Promise<TokenCheckResult> {
     try {
-      console.log('[GLM] Validating Token:', refreshToken.substring(0, 20) + '...')
+      console.log('[GLM] Validating Token:', refreshToken.length)
       
       const sign = await this.generateGLMSignV2()
       
@@ -326,7 +324,7 @@ export class ProviderChecker {
 
   private static async checkKimiToken(token: string): Promise<TokenCheckResult> {
     try {
-      console.log('[Kimi] Validating Token:', token.substring(0, 20) + '...')
+      console.log('[Kimi] Validating Token:', token.length)
       
       const response = await axios.post(
         'https://www.kimi.com/apiv2/kimi.gateway.order.v1.SubscriptionService/GetSubscription',
@@ -374,7 +372,7 @@ export class ProviderChecker {
     token: string
   ): Promise<TokenCheckResult> {
     try {
-      console.log('[MiniMax] Validating Token:', token.substring(0, 30) + '...')
+      console.log('[MiniMax] Validating Token:', token.length)
       
       const crypto = await import('crypto')
       
@@ -578,23 +576,6 @@ export class ProviderChecker {
     }
   }
 
-  private static checkPerplexityToken(sessionToken: string): TokenCheckResult {
-    if (!sessionToken) {
-      return { valid: false, error: 'Session token is required' }
-    }
-
-    if (sessionToken.length < 100) {
-      return { valid: false, error: 'Session token appears to be invalid (too short)' }
-    }
-
-    return {
-      valid: true,
-      userInfo: {
-        name: 'Perplexity User',
-      },
-    }
-  }
-
   private static async checkGenericToken(
     config: BuiltinProviderConfig,
     account: Account
@@ -693,55 +674,6 @@ export class ProviderChecker {
     const crypto = await import('crypto')
     const secret = '8a1317a7468aa3ad86e997d08f3f31cb'
     return crypto.createHash('md5').update(`${timestamp}-${nonce}-${secret}`).digest('hex')
-  }
-
-  static async fetchProviderModels(
-    providerId: string
-  ): Promise<{
-    supportedModels: string[]
-    modelMappings: Record<string, string>
-  }> {
-    const builtinConfig = getBuiltinProvider(providerId)
-    
-    if (!builtinConfig) {
-      throw new Error(`Provider ${providerId} not found`)
-    }
-
-    if (!builtinConfig.modelsApiEndpoint) {
-      throw new Error(`Provider ${providerId} does not support dynamic model fetching`)
-    }
-
-    try {
-      const headers: Record<string, string> = {
-        ...(builtinConfig.modelsApiHeaders || builtinConfig.headers),
-      }
-
-      const response = await axios.get(builtinConfig.modelsApiEndpoint, {
-        headers,
-        timeout: CHECK_TIMEOUT,
-        validateStatus: () => true,
-      })
-
-      if (response.status !== 200) {
-        throw new Error(`Failed to fetch models: HTTP ${response.status}`)
-      }
-
-      const models = response.data.data || []
-      const supportedModels: string[] = []
-      const modelMappings: Record<string, string> = {}
-
-      for (const model of models) {
-        if (model.name && model.id) {
-          supportedModels.push(model.name)
-          modelMappings[model.name] = model.id
-        }
-      }
-
-      return { supportedModels, modelMappings }
-    } catch (error) {
-      console.error(`[ProviderChecker] Failed to fetch models for ${providerId}:`, error)
-      throw error
-    }
   }
 }
 

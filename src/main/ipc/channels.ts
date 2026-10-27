@@ -27,7 +27,6 @@ export const IpcChannels = {
   PROVIDERS_DUPLICATE: 'providers:duplicate',
   PROVIDERS_EXPORT: 'providers:export',
   PROVIDERS_IMPORT: 'providers:import',
-  PROVIDERS_SYNC_MODELS: 'providers:syncModels',
   PROVIDERS_UPDATE_MODELS: 'providers:updateModels',
   PROVIDERS_GET_EFFECTIVE_MODELS: 'providers:getEffectiveModels',
   PROVIDERS_ADD_CUSTOM_MODEL: 'providers:addCustomModel',
@@ -92,16 +91,8 @@ export const IpcChannels = {
   APP_CLOSE: 'app:close',
   APP_SHOW_WINDOW: 'app:showWindow',
   APP_HIDE_WINDOW: 'app:hideWindow',
+  APP_SET_TITLE_BAR_THEME: 'app:setTitleBarTheme',
   APP_OPEN_EXTERNAL: 'app:openExternal',
-
-  PROMPTS_GET_ALL: 'prompts:getAll',
-  PROMPTS_GET_BUILTIN: 'prompts:getBuiltin',
-  PROMPTS_GET_CUSTOM: 'prompts:getCustom',
-  PROMPTS_GET_BY_ID: 'prompts:getById',
-  PROMPTS_ADD: 'prompts:add',
-  PROMPTS_UPDATE: 'prompts:update',
-  PROMPTS_DELETE: 'prompts:delete',
-  PROMPTS_GET_BY_TYPE: 'prompts:getByType',
 
   SESSION_GET_CONFIG: 'session:getConfig',
   SESSION_UPDATE_CONFIG: 'session:updateConfig',
@@ -117,6 +108,8 @@ export const IpcChannels = {
   MANAGEMENT_API_GET_CONFIG: 'managementApi:getConfig',
   MANAGEMENT_API_UPDATE_CONFIG: 'managementApi:updateConfig',
   MANAGEMENT_API_GENERATE_SECRET: 'managementApi:generateSecret',
+
+  TOOL_CALLING_RUN_SMOKE: 'toolCalling:runSmoke',
 
   CONTEXT_MANAGEMENT_GET_CONFIG: 'contextManagement:getConfig',
   CONTEXT_MANAGEMENT_UPDATE_CONFIG: 'contextManagement:updateConfig',

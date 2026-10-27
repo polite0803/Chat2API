@@ -67,7 +67,7 @@ const convertLogsToActivities = (logs: LogEntry[], providers: Provider[]): Activ
   })
 }
 
-interface RequestLogEntry {
+interface DashboardRequestLog {
   id: string
   timestamp: number
   status: 'success' | 'error'
@@ -81,7 +81,7 @@ interface RequestLogEntry {
   errorMessage?: string
 }
 
-const convertRequestLogsToActivities = (logs: RequestLogEntry[]): ActivityItem[] => {
+const convertRequestLogsToActivities = (logs: DashboardRequestLog[]): ActivityItem[] => {
   return logs.slice(0, 10).map(log => {
     return {
       id: log.id,
@@ -228,7 +228,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
       const providerUsage = persistentStats?.providerUsage ?? {}
       const requestLogsPromise = window.electronAPI?.requestLogs?.get?.({ limit: 100 }) ?? Promise.resolve([])
-      const requestLogs = await requestLogsPromise as RequestLogEntry[]
+      const requestLogs = await requestLogsPromise as DashboardRequestLog[]
       
       const providerSuccessCount: Record<string, number> = {}
       const providerTotalCount: Record<string, number> = {}

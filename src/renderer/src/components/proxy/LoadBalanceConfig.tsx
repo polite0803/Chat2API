@@ -6,10 +6,18 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Slider } from '@/components/ui/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { Input } from '@/components/ui/input'
 import { useProxyStore, type AccountWeight } from '@/stores/proxyStore'
 import { useToast } from '@/hooks/use-toast'
-import type { LoadBalanceStrategy, Account, Provider } from '@/types/electron'
+import type { LoadBalanceStrategy, Account, Provider, AutoRoutingConfig } from '@/types/electron'
 import { Scale, RefreshCw, Info } from 'lucide-react'
+
+const DEFAULT_AUTO_ROUTING: AutoRoutingConfig = {
+  enabled: true,
+  maxAttempts: 3,
+  stickyMinutes: 30,
+}
 
 interface LoadBalanceConfigProps {
   onConfigChange?: () => void
@@ -22,6 +30,7 @@ export function LoadBalanceConfig({ onConfigChange }: LoadBalanceConfigProps) {
     setLoadBalanceStrategy,
     accountWeights,
     setAccountWeights,
+    appConfig,
     saveAppConfig,
     isLoading,
   } = useProxyStore()
@@ -29,9 +38,11 @@ export function LoadBalanceConfig({ onConfigChange }: LoadBalanceConfigProps) {
   
   const initialStrategyRef = useRef<LoadBalanceStrategy>(loadBalanceStrategy)
   const initialWeightsRef = useRef<AccountWeight[]>(accountWeights)
+  const initialAutoRoutingRef = useRef<AutoRoutingConfig>(DEFAULT_AUTO_ROUTING)
   
   const [selectedStrategy, setSelectedStrategy] = useState<LoadBalanceStrategy>(loadBalanceStrategy)
   const [weights, setWeights] = useState<AccountWeight[]>(accountWeights)
+  const [autoRouting, setAutoRouting] = useState<AutoRoutingConfig>(DEFAULT_AUTO_ROUTING)
   const [accounts, setAccounts] = useState<(Account & { provider?: Provider })[]>([])
   const [hasChanges, setHasChanges] = useState(false)
 
@@ -45,6 +56,13 @@ export function LoadBalanceConfig({ onConfigChange }: LoadBalanceConfigProps) {
     initialStrategyRef.current = loadBalanceStrategy
     initialWeightsRef.current = accountWeights
   }, [])
+
+  // appConfig 在页面挂载后才异步加载，加载完成后同步自动路由设置
+  useEffect(() => {
+    if (!appConfig?.autoRouting) return
+    setAutoRouting(appConfig.autoRouting)
+    initialAutoRoutingRef.current = appConfig.autoRouting
+  }, [appConfig?.autoRouting])
 
   const fetchAccounts = async () => {
     try {
@@ -88,12 +106,19 @@ export function LoadBalanceConfig({ onConfigChange }: LoadBalanceConfigProps) {
     onConfigChange?.()
   }
 
+  const handleAutoRoutingChange = (updates: Partial<AutoRoutingConfig>) => {
+    setAutoRouting(prev => ({ ...prev, ...updates }))
+    setHasChanges(true)
+    onConfigChange?.()
+  }
+
   const handleSave = async () => {
     setLoadBalanceStrategy(selectedStrategy)
     setAccountWeights(weights)
     
     const success = await saveAppConfig({
       loadBalanceStrategy: selectedStrategy,
+      autoRouting,
     })
 
     if (success) {
@@ -114,6 +139,7 @@ export function LoadBalanceConfig({ onConfigChange }: LoadBalanceConfigProps) {
   const handleReset = () => {
     setSelectedStrategy(initialStrategyRef.current)
     setWeights(initialWeightsRef.current)
+    setAutoRouting(initialAutoRoutingRef.current)
     setHasChanges(false)
   }
 
@@ -142,7 +168,7 @@ export function LoadBalanceConfig({ onConfigChange }: LoadBalanceConfigProps) {
       <CardHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Scale className="h-5 w-5 text-primary" />
+            <Scale className="h-[15px] w-[15px] text-[var(--text-muted)]" />
             <CardTitle>{t('proxy.loadBalanceConfig')}</CardTitle>
           </div>
           {hasChanges && (
@@ -233,6 +259,62 @@ export function LoadBalanceConfig({ onConfigChange }: LoadBalanceConfigProps) {
             <p className="text-xs mt-1">{t('proxy.addAndActivateAccount')}</p>
           </div>
         )}
+
+        <div className="space-y-4 pt-4 border-t">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="auto-routing">{t('proxy.autoRouting')}</Label>
+            <Switch
+              id="auto-routing"
+              checked={autoRouting.enabled}
+              onCheckedChange={(checked) => handleAutoRoutingChange({ enabled: checked })}
+            />
+          </div>
+
+          <div className="flex items-start gap-2 p-3 bg-muted/50 rounded-lg">
+            <Info className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-muted-foreground">
+              {t('proxy.autoRoutingDesc')}
+            </p>
+          </div>
+
+          {autoRouting.enabled && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="auto-max-attempts">{t('proxy.autoRoutingMaxAttempts')}</Label>
+                <Input
+                  id="auto-max-attempts"
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={autoRouting.maxAttempts}
+                  onChange={(event) => handleAutoRoutingChange({
+                    maxAttempts: Number(event.target.value) || 1,
+                  })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('proxy.autoRoutingMaxAttemptsHelp')}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="auto-sticky-minutes">{t('proxy.autoRoutingSticky')}</Label>
+                <Input
+                  id="auto-sticky-minutes"
+                  type="number"
+                  min={0}
+                  max={1440}
+                  value={autoRouting.stickyMinutes}
+                  onChange={(event) => handleAutoRoutingChange({
+                    stickyMinutes: Number(event.target.value) || 0,
+                  })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('proxy.autoRoutingStickyHelp')}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="flex justify-end space-x-2 pt-4">
           <Button

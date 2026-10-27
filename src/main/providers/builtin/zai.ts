@@ -26,6 +26,12 @@ export const zaiConfig: BuiltinProviderConfig = {
   },
   enabled: true,
   description: 'Z.ai - Free AI Chatbot powered by GLM-5.1, GLM-5, and GLM-4.7',
+  modelsFetch: {
+    // Anonymous calls get 403 and a bad token gets 401, so the account JWT rides along
+    url: 'https://chat.z.ai/api/models',
+    reader: 'openai-list',
+    auth: [{ from: 'token', into: 'header', header: 'Authorization', prefix: 'Bearer ' }],
+  },
   supportedModels: [
     'GLM-5.1',
     'GLM-5-Turbo',

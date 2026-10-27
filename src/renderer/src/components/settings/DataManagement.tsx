@@ -170,12 +170,11 @@ export function DataManagement() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <div className="h-7 w-7 rounded-lg bg-[var(--accent-primary)]/10 flex items-center justify-center">
-              <Database className="h-4 w-4 text-[var(--accent-primary)]" />
+            <div className="card-icon">
+              <Database className="h-3.5 w-3.5" />
             </div>
             {t('settings.logSettings')}
           </CardTitle>
-          <CardDescription>{t('settings.logRetentionDays')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="grid gap-4 md:grid-cols-3">
@@ -308,8 +307,8 @@ export function DataManagement() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <div className="h-7 w-7 rounded-lg bg-[var(--accent-primary)]/10 flex items-center justify-center">
-              <Download className="h-4 w-4 text-[var(--accent-primary)]" />
+            <div className="card-icon">
+              <Download className="h-3.5 w-3.5" />
             </div>
             {t('settings.dataManagement')}
           </CardTitle>

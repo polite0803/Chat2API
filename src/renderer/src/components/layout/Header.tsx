@@ -1,15 +1,20 @@
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 import { Sun, Moon, Languages, Play, Pause } from 'lucide-react'
 import { useTheme } from '@/hooks/useTheme'
 import { cn } from '@/lib/utils'
-import logoIcon from '@/assets/icons/icons.png'
 import { useEffect, useState } from 'react'
 import { useSettingsStore } from '@/stores/settingsStore'
+
+const platform = window.electronAPI?.app?.platform
+// Windows / Linux render the system caption buttons on top of the header
+const hasCaptionOverlay = platform === 'win32' || platform === 'linux'
 
 export function Header() {
   const { t } = useTranslation()
   const { toggleTheme, isDark } = useTheme()
   const { language, setLanguage } = useSettingsStore()
+  const navigate = useNavigate()
   const [proxyEnabled, setProxyEnabled] = useState(false)
   const [proxyLoading, setProxyLoading] = useState(false)
   const [port, setPort] = useState(8080)
@@ -17,13 +22,13 @@ export function Header() {
 
   useEffect(() => {
     if (!window.electronAPI?.proxy?.onStatusChanged) return
-    
+
     const unsubscribe = window.electronAPI.proxy.onStatusChanged((status) => {
       setProxyEnabled(status.isRunning)
       if (status.port) setPort(status.port)
       setHost(status.host || '127.0.0.1')
     })
-    
+
     window.electronAPI.proxy.getStatus().then((status) => {
       setProxyEnabled(status.isRunning)
       if (status.port) setPort(status.port)
@@ -40,7 +45,7 @@ export function Header() {
       setPort(config.proxyPort || 8080)
       setHost(config.proxyHost || '127.0.0.1')
     })
-    
+
     return () => {
       unsubscribe()
       unsubscribeConfig?.()
@@ -68,95 +73,77 @@ export function Header() {
   }
 
   return (
-    <header className="glass-topbar flex items-center justify-between px-4 drag-region h-12">
-      <div className="flex items-center gap-3 no-drag">
-        <div className="sidebar-logo-icon">
-          <img 
-            src={logoIcon} 
-            alt="Chat2API" 
-            className="h-7 w-7 object-contain"
-          />
-        </div>
-        <div className="flex flex-col">
-          <span className="text-base font-bold text-[var(--text-primary)] leading-tight">
-            Chat2API
-          </span>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-4 no-drag">
+    <header
+      className={cn(
+        'glass-topbar drag-region flex h-12 shrink-0 items-center justify-between px-4',
+        hasCaptionOverlay && 'pr-[138px]'
+      )}
+    >
+      <div className="no-drag flex items-center gap-1.5">
+        <span
+          className={cn(
+            'status-dot',
+            proxyLoading
+              ? 'animate-pulse bg-[var(--warning)]'
+              : proxyEnabled
+                ? 'status-dot-online'
+                : 'bg-[var(--text-dim)]'
+          )}
+        />
         <button
-          onClick={toggleTheme}
-          className="w-8 h-8 flex items-center justify-center rounded-lg transition-all duration-300 group"
-          title={isDark ? t('settings.themeLight') : t('settings.themeDark')}
+          type="button"
+          onClick={() => navigate('/proxy')}
+          className={cn(
+            'rounded-md px-1.5 py-1 font-mono text-meta tabular-nums transition-colors',
+            proxyEnabled
+              ? 'text-[var(--text-primary)] hover:text-[var(--accent-primary)]'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+          )}
+          title={t('nav.proxy')}
         >
-          {isDark ? (
-            <Sun className="h-4 w-4 text-[var(--text-primary)] group-hover:text-[var(--accent-primary)]" />
+          {host}:{port}
+        </button>
+        <button
+          type="button"
+          onClick={handleToggleProxy}
+          disabled={proxyLoading}
+          className={cn(
+            'flex h-6 w-6 items-center justify-center rounded-md transition-colors',
+            'disabled:cursor-not-allowed disabled:opacity-50',
+            proxyEnabled
+              ? 'text-[var(--accent-primary)] hover:bg-[var(--accent-soft-hover)]'
+              : 'text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
+          )}
+          title={proxyEnabled ? t('proxyStatus.stop') : t('proxyStatus.start')}
+        >
+          {proxyLoading ? (
+            <span className="text-micro leading-none">...</span>
+          ) : proxyEnabled ? (
+            <Pause className="h-3 w-3" />
           ) : (
-            <Moon className="h-4 w-4 text-[var(--text-primary)] group-hover:text-[var(--accent-primary)]" />
+            <Play className="h-3 w-3" />
           )}
         </button>
+      </div>
 
+      <div className="no-drag flex items-center gap-1">
         <button
-          onClick={toggleLanguage}
-          className="w-8 h-8 flex items-center justify-center rounded-lg transition-all duration-300 group"
-          title={language === 'zh-CN' ? t('header.switchToEnglish') : t('header.switchToChinese')}
+          type="button"
+          onClick={toggleTheme}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+          title={isDark ? t('settings.themeLight') : t('settings.themeDark')}
         >
-          <Languages className="h-4 w-4 text-[var(--text-primary)] group-hover:text-[var(--accent-primary)]" />
+          {isDark ? <Sun className="h-[15px] w-[15px]" /> : <Moon className="h-[15px] w-[15px]" />}
         </button>
 
-        <div className="flex items-center">
-          <div
-            className={cn(
-              "flex items-center gap-1.5 pl-2.5 pr-1 py-1 rounded-full transition-all duration-300",
-              "border",
-              proxyEnabled
-                ? "proxy-toggle-active"
-                : "bg-[var(--glass-bg)] border-[var(--glass-border)]"
-            )}
-          >
-            <div
-              className={cn(
-                "w-1.5 h-1.5 rounded-full transition-all duration-300",
-                proxyLoading
-                  ? "bg-[var(--warning)] animate-pulse"
-                  : proxyEnabled
-                    ? "bg-[var(--accent-primary)] shadow-[0_0_6px_var(--accent-primary)]"
-                    : "bg-[var(--text-dim)]"
-              )}
-            />
-            <span
-              className={cn(
-                "text-xs font-medium transition-colors duration-300",
-                proxyEnabled
-                  ? "text-[var(--accent-primary)]"
-                  : "text-[var(--text-muted)]"
-              )}
-            >
-              {host}:{port}
-            </span>
-            <button
-              onClick={handleToggleProxy}
-              disabled={proxyLoading}
-              className={cn(
-                "w-6 h-6 flex items-center justify-center rounded-full transition-all duration-200",
-                "disabled:opacity-50 disabled:cursor-not-allowed",
-                proxyEnabled
-                  ? "proxy-toggle-btn-active"
-                  : "bg-[var(--text-dim)]/10 text-[var(--text-secondary)]"
-              )}
-              title={proxyEnabled ? t('proxyStatus.stop') : t('proxyStatus.start')}
-            >
-              {proxyLoading ? (
-                <span className="text-[10px]">...</span>
-              ) : proxyEnabled ? (
-                <Pause className="h-3 w-3" />
-              ) : (
-                <Play className="h-3 w-3" />
-              )}
-            </button>
-          </div>
-        </div>
+        <button
+          type="button"
+          onClick={toggleLanguage}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+          title={language === 'zh-CN' ? t('header.switchToEnglish') : t('header.switchToChinese')}
+        >
+          <Languages className="h-[15px] w-[15px]" />
+        </button>
       </div>
     </header>
   )

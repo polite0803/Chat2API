@@ -43,7 +43,6 @@ assignees: ''
 - [ ] GLM
 - [ ] Kimi
 - [ ] MiniMax
-- [ ] Perplexity
 - [ ] Qwen (CN)
 - [ ] Qwen AI (Global)
 - [ ] Z.ai

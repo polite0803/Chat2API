@@ -1,27 +1,26 @@
 import { useTranslation } from 'react-i18next'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
-import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
-  DropdownMenuSeparator, 
-  DropdownMenuTrigger 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { 
-  MoreVertical, 
-  Edit, 
-  Trash2, 
-  Copy, 
-  RefreshCw, 
+import {
+  MoreVertical,
+  Edit,
+  Trash2,
+  Copy,
+  RefreshCw,
   Users,
   Plus,
   LogIn,
-  Info,
   Download,
-  Settings
+  Settings,
+  Plug,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Provider, ProviderStatus } from '@/types/electron'
@@ -29,7 +28,6 @@ import deepseekIcon from '@/assets/providers/deepseek.svg'
 import glmIcon from '@/assets/providers/glm.svg'
 import kimiIcon from '@/assets/providers/kimi.svg'
 import minimaxIcon from '@/assets/providers/minimax.svg'
-import perplexityIcon from '@/assets/providers/perplexity.svg'
 import qwenIcon from '@/assets/providers/qwen.svg'
 import zaiIcon from '@/assets/providers/zai.svg'
 import mimoIcon from '@/assets/providers/mimo.svg'
@@ -40,7 +38,6 @@ const providerIcons: Record<string, string> = {
   kimi: kimiIcon,
   minimax: minimaxIcon,
   mimo: mimoIcon,
-  perplexity: perplexityIcon,
   qwen: qwenIcon,
   'qwen-ai': qwenIcon,
   zai: zaiIcon,
@@ -62,10 +59,10 @@ interface ProviderCardProps {
   className?: string
 }
 
-const statusColors: Record<ProviderStatus, string> = {
-  online: 'bg-green-500',
-  offline: 'bg-red-500',
-  unknown: 'bg-gray-500',
+const statusDots: Record<ProviderStatus, string> = {
+  online: 'status-dot-online',
+  offline: 'status-dot-offline',
+  unknown: 'bg-[var(--warning)]',
 }
 
 export function ProviderCard({
@@ -109,44 +106,38 @@ export function ProviderCard({
   }
 
   return (
-    <Card hover className={cn('', className)}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-[var(--accent-primary)]/10 flex items-center justify-center overflow-hidden">
+    <Card hover className={cn('flex flex-col p-5', className)}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--glass-border)] bg-[var(--surface-hover)]">
             {icon ? (
-              <img 
-                src={icon} 
-                alt={provider.name}
-                className="h-8 w-8 object-contain"
-              />
+              <img src={icon} alt={provider.name} className="h-6 w-6 object-contain" />
             ) : (
-              <span className="text-xl">🔌</span>
+              <Plug className="h-4 w-4 text-[var(--text-muted)]" />
             )}
           </div>
-          <div>
-            <CardTitle className="text-base flex items-center gap-2">
-              {getProviderName()}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="truncate text-subtitle font-semibold">{getProviderName()}</h3>
               {isBuiltin && (
-                <Badge variant="outline" className="text-xs">
+                <span className="badge-soft">
                   {t('providers.builtin')}
-                </Badge>
+                </span>
               )}
-            </CardTitle>
-            <CardDescription className="text-xs mt-1">
-              {getProviderDescription() || `${provider.supportedModels?.length || 0} ${t('providers.models').toLowerCase()}`}
-            </CardDescription>
-            {provider.id === 'perplexity' && (
-              <p className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 mt-1">
-                <Info className="h-3 w-3 flex-shrink-0" />
-                <span>{t('perplexity.freeUserNotice')}</span>
-              </p>
-            )}
+            </div>
+            <p className="mt-0.5 line-clamp-1 text-meta text-[var(--text-muted)]">
+              {getProviderDescription() ||
+                `${provider.supportedModels?.length || 0} ${t('providers.models').toLowerCase()}`}
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5">
-            <div className={`w-2 h-2 rounded-full ${statusColors[currentStatus]}`} />
-            <span className="text-xs text-muted-foreground">{statusTexts[currentStatus]}</span>
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          <div className="mr-1 flex items-center gap-1.5">
+            <span className={cn('status-dot', statusDots[currentStatus])} />
+            <span className="text-caption text-[var(--text-muted)]">
+              {statusTexts[currentStatus]}
+            </span>
           </div>
           <Switch
             checked={provider.enabled}
@@ -154,7 +145,7 @@ export function ProviderCard({
           />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon">
+              <Button variant="ghost" size="icon" className="h-8 w-8">
                 <MoreVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -173,7 +164,7 @@ export function ProviderCard({
                   {t('providers.manageModels')}
                 </DropdownMenuItem>
               )}
-              {isBuiltin && (provider as any).modelsApiEndpoint && (
+              {isBuiltin && provider.supportsModelFetch && (
                 <DropdownMenuItem onClick={() => onUpdateModels?.(provider.id)}>
                   <Download className="mr-2 h-4 w-4" />
                   {t('providers.updateModels')}
@@ -193,60 +184,54 @@ export function ProviderCard({
                 </>
               )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem 
-                onClick={() => onDelete(provider.id)}
-                className="text-destructive"
-              >
+              <DropdownMenuItem onClick={() => onDelete(provider.id)} className="text-[var(--error)]">
                 <Trash2 className="mr-2 h-4 w-4" />
                 {t('providers.deleteProvider')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </CardHeader>
-      <CardContent>
-        <div className="flex items-center justify-between">
-          <div className="grid grid-cols-3 gap-4 text-sm flex-1">
-            <div className="flex flex-col">
-              <span className="text-muted-foreground text-xs">{t('providers.accounts')}</span>
-              <span className="font-medium">
-                {activeAccountCount} / {accountCount} {t('providers.online').toLowerCase()}
-              </span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-muted-foreground text-xs">{t('providers.models')}</span>
-              <span className="font-medium">
-                {provider.supportedModels?.length || 0}
-              </span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-muted-foreground text-xs">{t('providers.authType')}</span>
-              <span className="font-medium text-xs truncate">
-                {getAuthTypeLabel(provider.authType)}
-              </span>
-            </div>
+      </div>
+
+      <div className="mt-4 flex items-end justify-between gap-3">
+        <div className="grid flex-1 grid-cols-3 gap-4 text-meta">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[var(--text-dim)]">{t('providers.accounts')}</span>
+            <span className="font-medium tabular-nums">
+              {activeAccountCount} / {accountCount}
+            </span>
           </div>
-          
-          <Button
-            size="sm"
-            variant={accountCount === 0 ? 'default' : 'outline'}
-            onClick={() => onManageAccounts(provider.id)}
-            className="ml-4 shrink-0"
-          >
-            {accountCount === 0 ? (
-              <>
-                <Plus className="h-4 w-4 mr-1" />
-                {t('providers.addAccount')}
-              </>
-            ) : (
-              <>
-                <LogIn className="h-4 w-4 mr-1" />
-                {t('providers.accountManagement')}
-              </>
-            )}
-          </Button>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[var(--text-dim)]">{t('providers.models')}</span>
+            <span className="font-medium tabular-nums">
+              {provider.supportedModels?.length || 0}
+            </span>
+          </div>
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-[var(--text-dim)]">{t('providers.authType')}</span>
+            <span className="truncate font-medium">{getAuthTypeLabel(provider.authType)}</span>
+          </div>
         </div>
-      </CardContent>
+
+        <Button
+          size="sm"
+          variant={accountCount === 0 ? 'default' : 'outline'}
+          onClick={() => onManageAccounts(provider.id)}
+          className="shrink-0"
+        >
+          {accountCount === 0 ? (
+            <>
+              <Plus className="h-4 w-4" />
+              {t('providers.addAccount')}
+            </>
+          ) : (
+            <>
+              <LogIn className="h-4 w-4" />
+              {t('providers.accountManagement')}
+            </>
+          )}
+        </Button>
+      </div>
     </Card>
   )
 }

@@ -3,9 +3,8 @@ import type { Context } from 'koa'
 import ConfigManager from '../../../store/config'
 import { managementAuthMiddleware } from '../../middleware/managementAuth'
 import {
-  buildSmokeFixture,
   getLatestToolCallingSmokeResult,
-  setLatestToolCallingSmokeResult,
+  runToolCallingSmoke,
 } from '../../toolCalling/diagnostics'
 import type { ManagementApiResponse } from '../../../../shared/types'
 import type { ToolClientAdapterId } from '../../../../shared/toolCalling'
@@ -30,22 +29,10 @@ router.post('/smoke', async (ctx: Context) => {
   const body = ctx.request.body as { clientAdapterId?: ToolClientAdapterId }
   const config = ConfigManager.get()
   const clientAdapterId = body.clientAdapterId ?? config.toolCallingConfig.clientAdapterId
-  const fixture = buildSmokeFixture(clientAdapterId)
-
-  const result = setLatestToolCallingSmokeResult({
-    success: true,
-    category: 'pass',
-    message: 'Smoke fixture generated. Send it through /v1/chat/completions with a mapped model to run a live provider smoke.',
-    clientAdapterId,
-    timestamp: Date.now(),
-  })
 
   ctx.body = {
     success: true,
-    data: {
-      result,
-      fixture,
-    },
+    data: runToolCallingSmoke(clientAdapterId),
   } as ManagementApiResponse
 })
 

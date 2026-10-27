@@ -29,7 +29,7 @@ When Codex Responses compatibility is enabled, emit response items with type "fu
     const allowedNames = toolNames(context.tools)
     const rawMatches: string[] = []
     const invalidToolNames: string[] = []
-    const toolCalls = []
+    const toolCalls: ReturnType<typeof buildToolCall>[] = []
 
     let parsed: unknown
     try {

@@ -7,6 +7,7 @@ import Router from '@koa/router'
 import type { Context } from 'koa'
 import { managementAuthMiddleware } from '../../middleware/managementAuth'
 import { proxyServer } from '../../server'
+import { isLoopbackHost } from '../../authPolicy'
 import { proxyStatusManager } from '../../status'
 import type {
   ManagementApiResponse,
@@ -71,6 +72,12 @@ router.post('/start', async (ctx: Context) => {
     const port = request.port
     const host = request.host
 
+    if (host !== undefined && !isLoopbackHost(host)) {
+      ctx.status = 400
+      ctx.body = createErrorResponse('invalid_host', 'Proxy host must be 127.0.0.1, ::1 or localhost')
+      return
+    }
+
     const success = await proxyServer.start(port, host)
 
     if (!success) {
@@ -126,6 +133,12 @@ router.post('/restart', async (ctx: Context) => {
     const request = (ctx.request.body as ProxyRestartRequest) || {}
     const port = request.port
     const host = request.host
+
+    if (host !== undefined && !isLoopbackHost(host)) {
+      ctx.status = 400
+      ctx.body = createErrorResponse('invalid_host', 'Proxy host must be 127.0.0.1, ::1 or localhost')
+      return
+    }
 
     const success = await proxyServer.restart(port, host)
 

@@ -153,6 +153,7 @@ export class StreamHandler {
     let contentBuffer = ''
     let isBufferingToolCall = false
     let toolCallIndex = 0
+    let doneSent = false
 
     return new Transform({
       objectMode: true,
@@ -171,7 +172,10 @@ export class StreamHandler {
                 }
                 contentBuffer = ''
               }
-              this.push(formatter.formatDone())
+              if (!doneSent) {
+                doneSent = true
+                this.push(formatter.formatDone())
+              }
               continue
             }
 
@@ -323,9 +327,10 @@ export class StreamHandler {
 
           if (toolCalls.length > 0) {
             for (const tc of toolCalls) {
-              tc.index = toolCallIndex++
+              const callIndex = toolCallIndex++
+              tc.index = callIndex
               const toolCallData = {
-                id: responseId,
+                id: `call_${responseId}-${callIndex}`,
                 object: 'chat.completion.chunk',
                 created,
                 model,
@@ -347,7 +352,10 @@ export class StreamHandler {
             }
           }
         }
-        this.push(formatter.formatDone())
+        if (!doneSent) {
+          doneSent = true
+          this.push(formatter.formatDone())
+        }
         onEnd?.()
         callback()
       },
@@ -497,7 +505,7 @@ export class StreamHandler {
         const finalToolCalls = [...toolCalls]
         if (parsedToolCalls.length > 0) {
           parsedToolCalls.forEach(ptc => {
-            ptc.index += finalToolCalls.length
+            ptc.index = (ptc.index ?? 0) + finalToolCalls.length
             finalToolCalls.push(ptc)
           })
         }

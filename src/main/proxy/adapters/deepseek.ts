@@ -11,6 +11,7 @@ import { getDeepSeekHash } from '../../lib/challenge'
 import type { Account, Provider } from '../../store/types'
 import { resolveDeepSeekChatOptions } from './providerModelOptions'
 import { getProviderToolProfile } from '../toolCalling/providerProfiles'
+import { extractTextContent } from '../utils/contentText'
 
 const DEEPSEEK_API_BASE = 'https://chat.deepseek.com/api'
 
@@ -95,7 +96,7 @@ function uuid(): string {
 
 function generateCookie(): string {
   const timestamp = Date.now()
-  return `intercom-HWWAFSESTIME=${timestamp}; HWWAFSESID=${generateRandomString(18, 'hex')}; Hm_lvt_${uuid(false)}=${Math.floor(timestamp / 1000)},${Math.floor(timestamp / 1000)},${Math.floor(timestamp / 1000)}; Hm_lpvt_${uuid(false)}=${Math.floor(timestamp / 1000)}; _frid=${uuid(false)}; _fr_ssid=${uuid(false)}; _fr_pvid=${uuid(false)}`
+  return `intercom-HWWAFSESTIME=${timestamp}; HWWAFSESID=${generateRandomString(18, 'hex')}; Hm_lvt_${uuid()}=${Math.floor(timestamp / 1000)},${Math.floor(timestamp / 1000)},${Math.floor(timestamp / 1000)}; Hm_lpvt_${uuid()}=${Math.floor(timestamp / 1000)}; _frid=${uuid()}; _fr_ssid=${uuid()}; _fr_pvid=${uuid()}`
 }
 
 function unixTimestamp(): number {
@@ -112,7 +113,7 @@ export class DeepSeekAdapter {
     this.account = account
     console.log('[DeepSeek] Account credentials:', JSON.stringify(account.credentials, null, 2))
     this.token = account.credentials.token || account.credentials.apiKey || account.credentials.refreshToken || ''
-    console.log('[DeepSeek] Using token:', this.token.substring(0, 20) + '...')
+    console.log('[DeepSeek] Using token:', this.token.length)
   }
 
   private async acquireToken(): Promise<string> {
@@ -302,7 +303,7 @@ export class DeepSeekAdapter {
       else if (message.role === 'tool' && message.tool_call_id) {
         text = toolProfile.formatToolResult({
           toolCallId: message.tool_call_id,
-          content: String(message.content || ''),
+          content: extractTextContent(message.content),
         })
       }
       else if (Array.isArray(message.content)) {

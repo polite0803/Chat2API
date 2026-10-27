@@ -31,7 +31,7 @@
 ## ✨ Features
 
 - OpenAI Compatible API: Provides standard OpenAI-compatible API endpoints for seamless integration
-- Multi-Provider Support: Connect DeepSeek, GLM, Kimi, MiniMax, Perplexity 🆕, Qwen, Z.ai and more
+- Multi-Provider Support: Connect DeepSeek, GLM, Kimi, MiniMax, Qwen, Z.ai and more
 - 🆕 Context Management: Intelligent conversation context management with sliding window, token limit, and summary strategies
 - 🆕 Function Calling Support: Universal tool calling capability for all models via prompt engineering, compatible with Cherry Studio, Kilo Code, and other clients
 - 🆕 Model Mapping: Flexible model name mapping with wildcard support and preferred provider/account selection
@@ -49,12 +49,11 @@
 
 | Provider         | Auth Type     | OAuth | Models                                                                                                                                                                                                                                          |
 | ---------------- | ------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| DeepSeek         | User Token    | Yes   | deepseek-v4-flash, deepseek-v4-pro                                                                                                                                                                                                              |
-| GLM              | Refresh Token | Yes   | GLM-5.1                                                                                                                                                                                                                                         |
-| Kimi             | JWT Token     | Yes   | Kimi-K2.6                                                                                                                                                                                                                                       |
+| DeepSeek         | User Token    | Yes   | deepseek-default, deepseek-expert, deepseek-vision                                                                                                                                                                                                              |
+| GLM | Refresh Token | Yes | GLM-5.3, GLM-5.3-Flash |
+| Kimi             | JWT Token     | Yes   | K3, K2.8, Instant                                                                                                                                                                                                                               |
 | MiniMax          | JWT Token     | Yes   | MiniMax-M2.7                                                                                                                                                                                                                                    |
 | Mimo             | Cookie        | Yes   | MiMo-V2.5-Pro, MiMo-V2.5, MiMo-V2-Flash                                                                                                                                                                                                         |
-| Perplexity       | Cookie        | Yes   | Auto                                                                                                                                                                                                                                           |
 | Qwen (CN)        | SSO Ticket    | Yes   | Qwen3.6, Qwen3.7-Max, Qwen3.5-Flash, Qwen3-Max, Qwen3-Max-Thinking-Preview, Qwen3-Coder                                                                                                                                                         |
 | Qwen AI (Global) | JWT Token     | Yes   | Qwen3.7-Max, Qwen3.6-Plus, Qwen3.6-35B-A3B, Qwen3.6-27B, Qwen3-Coder                                                                                                                                                                           |
 | Z.ai             | JWT Token     | Yes   | Temporarily unavailable due to frontend captcha risk control                                                                                                                                                                                    |
@@ -98,7 +97,7 @@ npx electron-vite dev 2>&1
 
 ```bash
 npm run build              # Build the application
-npm run build:mac          # Build for macOS (dmg, zip)
+npm run build:mac          # Build for macOS (dmg only)
 npm run build:win          # Build for Windows (nsis)
 npm run build:linux        # Build for Linux (AppImage, deb)
 npm run build:all          # Build for all platforms
@@ -148,7 +147,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="deepseek-v4-flash",
+    model="deepseek-default",
     messages=[
         {"role": "user", "content": "Hello, who are you?"}
     ]
@@ -225,10 +224,11 @@ Chat2API/
 
 Application data is stored in `~/.chat2api/` directory:
 
-- `config.json` - Application configuration
-- `providers.json` - Provider settings
-- `accounts.json` - Account credentials (encrypted)
-- `logs/` - Request logs
+- `data.json` - configuration, providers, accounts, sessions and app logs (one electron-store file)
+- `request-logs/` - detailed request logs
+
+Account credentials are additionally encrypted with the OS keychain when it is available; if it is
+not, they are stored in `data.json` unencrypted.
 
 ## ❓ FAQ
 

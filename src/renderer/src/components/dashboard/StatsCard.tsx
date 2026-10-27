@@ -1,4 +1,4 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -11,11 +11,19 @@ export interface StatsCardProps {
     value: number
     label?: string
   }
+  /** Use "negative" when a rising value is bad (e.g. latency). */
+  trendPolarity?: 'positive' | 'negative'
   className?: string
 }
 
-export function StatsCard({ title, value, icon: Icon, trend, className }: StatsCardProps) {
-
+export function StatsCard({
+  title,
+  value,
+  icon: Icon,
+  trend,
+  trendPolarity = 'positive',
+  className,
+}: StatsCardProps) {
   const getTrendIcon = () => {
     if (!trend) return null
     if (trend.value > 0) return <TrendingUp className="h-3 w-3" />
@@ -24,37 +32,32 @@ export function StatsCard({ title, value, icon: Icon, trend, className }: StatsC
   }
 
   const getTrendColor = () => {
-    if (!trend) return ''
-    if (trend.value > 0) return 'text-green-500'
-    if (trend.value < 0) return 'text-red-500'
-    return 'text-muted-foreground'
+    if (!trend || trend.value === 0) return 'text-[var(--text-muted)]'
+    const isGood = trendPolarity === 'negative' ? trend.value < 0 : trend.value > 0
+    return isGood ? 'text-[var(--success)]' : 'text-[var(--error)]'
   }
 
   return (
-    <Card hover className={cn('', className)}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <div className="h-8 w-8 rounded-lg bg-[var(--accent-primary)]/10 flex items-center justify-center">
-          <Icon className="h-4 w-4 text-[var(--accent-primary)]" />
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
+    <Card hover className={cn('p-5', className)}>
+      <div className="flex items-start justify-between gap-3">
+        <p className="stat-label">{title}</p>
+        <Icon className="h-[15px] w-[15px] shrink-0 text-[var(--text-dim)]" />
+      </div>
+      <p className="stat-value mt-2">{value}</p>
+      <div className={cn('mt-1.5 flex items-center gap-1 text-meta', getTrendColor())}>
+        {getTrendIcon()}
         {trend && (
-          <div className={cn('flex items-center text-xs mt-1', getTrendColor())}>
-            {getTrendIcon()}
-            <span className="ml-1">
+          <>
+            <span className="tabular-nums">
               {trend.value > 0 ? '+' : ''}
               {trend.value}%
             </span>
             {trend.label && (
-              <span className="text-muted-foreground ml-1">
-                {trend.label}
-              </span>
+              <span className="ml-1 text-[var(--text-dim)]">{trend.label}</span>
             )}
-          </div>
+          </>
         )}
-      </CardContent>
+      </div>
     </Card>
   )
 }

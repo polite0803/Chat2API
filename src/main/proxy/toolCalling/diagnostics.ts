@@ -27,6 +27,18 @@ export function setLatestToolCallingSmokeResult(result: ToolCallingSmokeResult):
   return latestSmokeResult
 }
 
+export function runToolCallingSmoke(clientAdapterId: ToolClientAdapterId) {
+  const fixture = buildSmokeFixture(clientAdapterId)
+  const result = setLatestToolCallingSmokeResult({
+    success: true,
+    category: 'pass',
+    message: 'Smoke fixture generated. Send it through /v1/chat/completions with a mapped model to run a live provider smoke.',
+    clientAdapterId,
+    timestamp: Date.now(),
+  })
+  return { result, fixture }
+}
+
 export function buildSmokeFixture(clientAdapterId: ToolClientAdapterId) {
   return {
     model: 'tool-smoke-test',

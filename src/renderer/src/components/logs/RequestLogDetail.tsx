@@ -10,32 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Copy, Check, Clock, Zap, Server, User, FileJson, AlertCircle, Globe, Brain } from 'lucide-react'
-
-interface RequestLogEntry {
-  id: string
-  timestamp: number
-  status: 'success' | 'error'
-  statusCode: number
-  method: string
-  url: string
-  model: string
-  actualModel?: string
-  providerId?: string
-  providerName?: string
-  accountId?: string
-  accountName?: string
-  requestBody?: string
-  userInput?: string
-  webSearch?: boolean
-  reasoningEffort?: 'low' | 'medium' | 'high'
-  responseStatus: number
-  responsePreview?: string
-  responseBody?: string
-  latency: number
-  isStream: boolean
-  errorMessage?: string
-  errorStack?: string
-}
+import type { RequestLogEntry } from '@/types/electron'
 
 interface RequestLogDetailProps {
   log: RequestLogEntry
@@ -70,8 +45,8 @@ function CopyButton({ text, className = '' }: CopyButtonProps) {
     >
       {copied ? (
         <>
-          <Check className="h-3.5 w-3.5 text-green-500" />
-          <span className="text-green-500">{t('common.copied')}</span>
+          <Check className="h-3.5 w-3.5 text-success" />
+          <span className="text-success">{t('common.copied')}</span>
         </>
       ) : (
         <>
@@ -141,8 +116,8 @@ export function RequestLogDetail({ log, onClose }: RequestLogDetailProps) {
 
   const getStatusColor = (status: 'success' | 'error') => {
     return status === 'success'
-      ? 'bg-green-500/10 text-green-600 border-green-500/20 hover:bg-green-500/20'
-      : 'bg-red-500/10 text-red-600 border-red-500/20 hover:bg-red-500/20'
+      ? 'badge-success hover:opacity-80'
+      : 'badge-error hover:opacity-80'
   }
 
   const renderJsonViewer = (jsonString: string | undefined) => {
@@ -336,11 +311,11 @@ export function RequestLogDetail({ log, onClose }: RequestLogDetailProps) {
                   <div>
                     <SectionHeader 
                       title={t('logs.errorMessage')} 
-                      icon={<AlertCircle className="h-4 w-4 text-red-500" />}
+                      icon={<AlertCircle className="h-4 w-4 text-error" />}
                       copyText={log.errorMessage}
                     />
-                    <div className="p-4 bg-red-500/5 border border-red-500/20 rounded-lg">
-                      <pre className="text-sm text-red-600 font-medium whitespace-pre-wrap break-all font-sans leading-relaxed">
+                    <div className="p-4 bg-error-soft rounded-lg">
+                      <pre className="text-sm text-error font-medium whitespace-pre-wrap break-all font-sans leading-relaxed">
                         {log.errorMessage}
                       </pre>
                     </div>

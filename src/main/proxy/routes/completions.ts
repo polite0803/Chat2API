@@ -10,7 +10,11 @@ import { requestForwarder } from '../forwarder'
 import { streamHandler } from '../stream'
 import { proxyStatusManager } from '../status'
 import { modelMapper } from '../modelMapper'
+import { autoRouter, isAutoModel } from '../autoRouter'
+import type { AutoCandidate } from '../autoRouter'
+import type { AccountSelection, ForwardResult } from '../types'
 import { storeManager } from '../../store/store'
+import { createTextCompletionChunkTransform, toTextCompletion } from '../utils/textCompletion'
 
 const router = new Router({ prefix: '/v1' })
 
@@ -36,7 +40,7 @@ function generateRequestId(): string {
 /**
  * Convert prompt to messages format
  */
-function promptToMessages(prompt: string | string[]): Array<{ role: string; content: string }> {
+function promptToMessages(prompt: string | string[]): Array<{ role: 'user' | 'assistant'; content: string }> {
   if (Array.isArray(prompt)) {
     return prompt.map((p, index) => ({
       role: index % 2 === 0 ? 'user' : 'assistant',
@@ -53,6 +57,7 @@ function promptToMessages(prompt: string | string[]): Array<{ role: string; cont
 router.post('/completions', async (ctx: Context) => {
   const startTime = Date.now()
   const requestId = generateRequestId()
+  ctx.set('X-Request-Id', requestId)
 
   let request: CompletionRequest
   try {
@@ -93,33 +98,66 @@ router.post('/completions', async (ctx: Context) => {
   }
 
   const config = storeManager.getConfig()
-  const preferredProviderId = modelMapper.getPreferredProvider(request.model)
-  const preferredAccountId = modelMapper.getPreferredAccount(request.model)
+  const promptMessages = promptToMessages(request.prompt)
+  const autoDecision = isAutoModel(request.model) && config.autoRouting?.enabled !== false
+    ? autoRouter.select(
+        {
+          model: request.model,
+          messages: promptMessages,
+          stream: request.stream,
+        },
+        config.loadBalanceStrategy
+      )
+    : null
 
-  const selection = loadBalancer.selectAccount(
-    request.model,
-    config.loadBalanceStrategy,
-    preferredProviderId,
-    preferredAccountId
-  )
+  let selection: AccountSelection | null = null
+  if (!autoDecision) {
+    const preferredProviderId = modelMapper.getPreferredProvider(request.model)
+    const preferredAccountId = modelMapper.getPreferredAccount(request.model)
 
-  if (!selection) {
+    selection = loadBalancer.selectAccount(
+      request.model,
+      config.loadBalanceStrategy,
+      preferredProviderId,
+      preferredAccountId
+    )
+
+    if (!selection) {
+      ctx.status = 503
+      ctx.body = {
+        error: {
+          message: `No available account for model: ${request.model}`,
+          type: 'service_unavailable_error',
+          code: 'no_available_account',
+        },
+      }
+      return
+    }
+  }
+
+  const firstCandidate = autoDecision?.candidates[0]
+
+  if (autoDecision && !firstCandidate) {
     ctx.status = 503
     ctx.body = {
       error: {
-        message: `No available account for model: ${request.model}`,
+        message: 'No available model for auto routing',
         type: 'service_unavailable_error',
-        code: 'no_available_account',
+        code: 'no_available_model',
       },
     }
     return
   }
 
-  const { account, provider, actualModel } = selection
+  let account = selection ? selection.account : firstCandidate!.account
+  let provider = selection ? selection.provider : firstCandidate!.provider
+  let actualModel = selection ? selection.actualModel : firstCandidate!.actualModel
+  let chosenCandidate: AutoCandidate | null = null
 
   const chatRequest = {
-    model: actualModel,
-    messages: promptToMessages(request.prompt),
+    // auto 路由时 chatRequest.model 由 forwardAutoCompletion 按候选替换
+    model: autoDecision ? request.model : actualModel,
+    messages: promptMessages,
     max_tokens: request.max_tokens,
     temperature: request.temperature,
     top_p: request.top_p,
@@ -131,21 +169,58 @@ router.post('/completions', async (ctx: Context) => {
   proxyStatusManager.recordRequestStart(request.model, provider.id, account.id)
 
   try {
-    const result = await requestForwarder.forwardChatCompletion(
-      chatRequest,
-      account,
-      provider,
-      actualModel,
-      {
-        requestId,
-        providerId: provider.id,
-        accountId: account.id,
-        model: request.model,
-        actualModel,
-        startTime,
-        isStream: request.stream || false,
+    let result: ForwardResult
+
+    if (autoDecision) {
+      const outcome = await requestForwarder.forwardAutoCompletion(
+        chatRequest,
+        autoDecision.candidates,
+        {
+          requestId,
+          providerId: provider.id,
+          accountId: account.id,
+          model: request.model,
+          actualModel,
+          startTime,
+          isStream: request.stream || false,
+        }
+      )
+
+      if (!outcome) {
+        ctx.status = 503
+        ctx.body = {
+          error: {
+            message: 'Auto routing produced no forward result',
+            type: 'service_unavailable_error',
+            code: 'no_available_model',
+          },
+        }
+        return
       }
-    )
+
+      result = outcome.result
+      chosenCandidate = outcome.candidate
+      account = outcome.candidate.account
+      provider = outcome.candidate.provider
+      actualModel = outcome.candidate.actualModel
+      ctx.set('X-Chat2API-Route', `${actualModel} (${provider.name})`)
+    } else {
+      result = await requestForwarder.forwardChatCompletion(
+        chatRequest,
+        account,
+        provider,
+        actualModel,
+        {
+          requestId,
+          providerId: provider.id,
+          accountId: account.id,
+          model: request.model,
+          actualModel,
+          startTime,
+          isStream: request.stream || false,
+        }
+      )
+    }
 
     const latency = Date.now() - startTime
 
@@ -163,6 +238,13 @@ router.post('/completions', async (ctx: Context) => {
     }
 
     proxyStatusManager.recordRequestSuccess(latency)
+
+    if (autoDecision) {
+      autoRouter.clearAccountCooldown(account.id)
+      if (chosenCandidate) {
+        autoRouter.rememberRoute(autoDecision.conversationKey, chosenCandidate)
+      }
+    }
 
     storeManager.updateAccount(account.id, {
       lastUsed: Date.now(),
@@ -186,12 +268,17 @@ router.post('/completions', async (ctx: Context) => {
       ctx.set('Connection', 'keep-alive')
       ctx.set('X-Accel-Buffering', 'no')
 
-      const transformStream = streamHandler.createTransformStream(actualModel, requestId)
-      result.stream.pipe(transformStream)
-      ctx.body = transformStream
+      const textTransform = createTextCompletionChunkTransform()
+      if (result.skipTransform) {
+        result.stream.pipe(textTransform)
+      } else {
+        const chatTransform = streamHandler.createTransformStream(actualModel, requestId)
+        result.stream.pipe(chatTransform).pipe(textTransform)
+      }
+      ctx.body = textTransform
     } else {
       ctx.set('Content-Type', 'application/json')
-      ctx.body = result.body
+      ctx.body = toTextCompletion(result.body)
     }
   } catch (error) {
     const latency = Date.now() - startTime

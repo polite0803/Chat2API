@@ -142,7 +142,7 @@ export function ManagementApiSettings() {
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">{t('settings.managementApi.status')}:</span>
             {config.enableManagementApi ? (
-              <span className="text-sm text-green-600 dark:text-green-400">{t('settings.managementApi.enabled')}</span>
+              <span className="text-sm text-success">{t('settings.managementApi.enabled')}</span>
             ) : (
               <span className="text-sm text-muted-foreground">{t('settings.managementApi.disabled')}</span>
             )}

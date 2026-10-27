@@ -63,6 +63,8 @@ export interface ChatMessageContent {
  */
 export interface ChatCompletionRequest {
   model: string
+  /** Internal correlation id assigned by the proxy (never forwarded upstream) */
+  requestId?: string
   /** Original model name before mapping (used for feature detection like web search, thinking mode) */
   originalModel?: string
   messages: ChatMessage[]
@@ -100,6 +102,8 @@ export interface ChatCompletionRequest {
   tools?: ChatCompletionTool[]
   /** Tool choice strategy */
   tool_choice?: ChatCompletionToolChoice
+  /** When false the proxy keeps at most one tool call per response */
+  parallel_tool_calls?: boolean
   /** Tool format - determines response format for tool calls */
   tool_format?: 'native' | 'json' | 'auto'
 }
@@ -171,6 +175,8 @@ export interface ToolCall {
     name: string
     arguments: string
   }
+  /** Raw matched text, stripped before the call is emitted downstream */
+  rawText?: string
 }
 
 /**

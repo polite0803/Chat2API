@@ -45,7 +45,6 @@ function mapOAuthCredentials(providerId: string | undefined, credentials: Record
     'qwen': 'tongyi_sso_ticket',
     'qwen-ai': 'tongyi_sso_ticket',
     'zai': 'tongyi_sso_ticket',
-    'perplexity': '__Secure-next-auth.session-token',
     'mimo': 'serviceToken',
   }
 
@@ -55,7 +54,6 @@ function mapOAuthCredentials(providerId: string | undefined, credentials: Record
     'qwen': 'ticket',
     'qwen-ai': 'ticket',
     'zai': 'ticket',
-    'perplexity': 'sessionToken',
     'mimo': 'service_token',
   }
 
@@ -79,13 +77,6 @@ function mapOAuthCredentials(providerId: string | undefined, credentials: Record
     }
   }
 
-  // For Perplexity, if we have the secure token, map it
-  if (providerId === 'perplexity' && credentials['__Secure-next-auth.session-token']) {
-    return { sessionToken: credentials['__Secure-next-auth.session-token'] }
-  }
-  if (providerId === 'perplexity' && credentials['next-auth.session-token']) {
-    return { sessionToken: credentials['next-auth.session-token'] }
-  }
 
   // For Mimo, map all three tokens
   if (providerId === 'mimo') {
@@ -169,7 +160,7 @@ export function AddAccountDialog({
   const isEditing = !!editingAccount
   const builtinProvider = provider as BuiltinProviderConfig | null
   const credentialFields: CredentialField[] = builtinProvider?.credentialFields || getDefaultCredentialFields(provider?.authType, t)
-  const supportsOAuth = provider && ['deepseek', 'glm', 'kimi', 'mimo', 'minimax', 'qwen', 'qwen-ai', 'zai', 'perplexity'].includes(provider.id)
+  const supportsOAuth = provider && ['deepseek', 'glm', 'kimi', 'mimo', 'minimax', 'qwen', 'qwen-ai', 'zai'].includes(provider.id)
 
   useEffect(() => {
     if (open) {
@@ -419,7 +410,7 @@ export function AddAccountDialog({
                       )}
                     </Button>
                     {oauthStatus && !isOAuthLoading && (
-                      <p className={`text-sm ${validationResult.valid ? 'text-green-600' : 'text-red-500'}`}>
+                      <p className={`text-sm ${validationResult.valid ? 'text-success' : 'text-error'}`}>
                         {oauthStatus}
                       </p>
                     )}
@@ -439,14 +430,14 @@ export function AddAccountDialog({
             )}
 
             {validationResult.error && (
-              <div className="flex items-center gap-2 text-sm text-red-500 bg-red-50 p-3 rounded-lg">
+              <div className="flex items-center gap-2 text-sm text-error bg-error-soft p-3 rounded-lg">
                 <AlertCircle className="h-4 w-4 flex-shrink-0" />
                 <span>{validationResult.error}</span>
               </div>
             )}
 
             {validationResult.valid && validationResult.userInfo && (
-              <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 p-3 rounded-lg">
+              <div className="flex items-center gap-2 text-sm text-success bg-success-soft p-3 rounded-lg">
                 <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
                 <div>
                   <span className="font-medium">{t('providers.validationSuccess')}</span>
@@ -617,13 +608,6 @@ function CredentialFieldsForm({ fields, credentials, onChange, t, providerId }: 
           helpText: t('mimo.phTokenHelp'),
         },
       },
-      perplexity: {
-        sessionToken: {
-          label: t('perplexity.sessionToken'),
-          placeholder: t('perplexity.sessionTokenPlaceholder'),
-          helpText: t('perplexity.sessionTokenHelp'),
-        },
-      },
     }
 
     const providerTranslations = translations[providerId]
@@ -670,7 +654,7 @@ function CredentialFieldsForm({ fields, credentials, onChange, t, providerId }: 
                     disabled={!fieldValue}
                   >
                     {isCopied ? (
-                      <Check className="h-4 w-4 text-green-500" />
+                      <Check className="h-4 w-4 text-success" />
                     ) : (
                       <Copy className="h-4 w-4 text-muted-foreground" />
                     )}
@@ -710,7 +694,7 @@ function CredentialFieldsForm({ fields, credentials, onChange, t, providerId }: 
                     disabled={!fieldValue}
                   >
                     {isCopied ? (
-                      <Check className="h-4 w-4 text-green-500" />
+                      <Check className="h-4 w-4 text-success" />
                     ) : (
                       <Copy className="h-4 w-4 text-muted-foreground" />
                     )}

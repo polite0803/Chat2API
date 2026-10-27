@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { useProxyStore } from '@/stores/proxyStore'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
@@ -36,18 +35,18 @@ export function ProxyStatus({ onStatusChange }: ProxyStatusProps) {
     isLoading,
   } = useProxyStore()
   const { toast } = useToast()
-  
+
   const [isRefreshing, setIsRefreshing] = useState(false)
 
   useEffect(() => {
     fetchProxyStatus()
     fetchProxyStatistics()
-    
+
     const statusInterval = setInterval(() => {
       fetchProxyStatus()
       fetchProxyStatistics()
     }, 5000)
-    
+
     return () => {
       clearInterval(statusInterval)
     }
@@ -118,219 +117,195 @@ export function ProxyStatus({ onStatusChange }: ProxyStatusProps) {
   }
 
   const isRunning = proxyStatus?.isRunning ?? false
+  const port = proxyStatus?.port ?? '-'
+  const host = proxyStatus?.host ?? '127.0.0.1'
 
-  const statsCards = [
+  const stats = [
     {
       title: t('dashboard.totalRequests'),
       value: proxyStatistics?.totalRequests ?? 0,
       icon: TrendingUp,
-      color: 'text-primary',
     },
     {
       title: t('common.success'),
       value: proxyStatistics?.successRequests ?? 0,
       icon: CheckCircle2,
-      color: 'text-green-500',
     },
     {
       title: t('common.error'),
       value: proxyStatistics?.failedRequests ?? 0,
       icon: XCircle,
-      color: 'text-destructive',
     },
     {
       title: t('dashboard.successRate'),
       value: `${getSuccessRate()}%`,
       icon: Activity,
-      color: 'text-blue-500',
     },
     {
       title: t('dashboard.avgLatency'),
       value: formatLatency(proxyStatistics?.avgLatency ?? 0),
       icon: Timer,
-      color: 'text-amber-500',
     },
   ]
 
+  const metrics = [
+    { label: t('dashboard.port'), value: port },
+    {
+      label: t('dashboard.runtime'),
+      value: isRunning && proxyStatus?.uptime ? formatUptime(proxyStatus.uptime) : '-',
+    },
+    { label: t('dashboard.totalRequests'), value: proxyStatistics?.totalRequests ?? 0 },
+  ]
+
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Activity className="h-5 w-5 text-primary" />
-              <CardTitle>{t('dashboard.proxyStatus')}</CardTitle>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge
-                variant={isRunning ? 'default' : 'secondary'}
-                className={isRunning ? 'bg-green-500 hover:bg-green-600' : ''}
-              >
-                {isRunning ? (
-                  <>
-                    <CheckCircle2 className="h-3 w-3 mr-1" />
-                    {t('dashboard.running')}
-                  </>
-                ) : (
-                  <>
-                    <Square className="h-3 w-3 mr-1" />
-                    {t('dashboard.stopped')}
-                  </>
-                )}
-              </Badge>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-              >
-                <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-              </Button>
-            </div>
-          </div>
-          <CardDescription>{t('proxy.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">{t('dashboard.port')}</p>
-              <p className="text-2xl font-bold">{proxyStatus?.port ?? '-'}</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">{t('dashboard.runtime')}</p>
-              <p className="text-2xl font-bold">
-                {isRunning && proxyStatus?.uptime
-                  ? formatUptime(proxyStatus.uptime)
-                  : '-'}
+    <div className="space-y-4">
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span
+              className={cn(
+                'status-dot h-2.5 w-2.5',
+                isRunning ? 'status-dot-online' : 'bg-[var(--text-dim)]'
+              )}
+            />
+            <div>
+              <p className="text-subtitle font-semibold leading-tight">
+                {isRunning ? t('dashboard.running') : t('dashboard.stopped')}
+              </p>
+              <p className="mt-0.5 font-mono text-meta text-[var(--text-muted)]">
+                {host}:{port}
               </p>
             </div>
           </div>
 
-          <div className="flex gap-3 pt-4">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              title={t('common.refresh')}
+            >
+              <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
+            </Button>
             {!isRunning ? (
               <Button onClick={handleStart} disabled={isLoading}>
-                <Play className="h-4 w-4 mr-2" />
+                <Play className="mr-1.5 h-3.5 w-3.5" />
                 {t('dashboard.startProxy')}
               </Button>
             ) : (
-              <Button
-                onClick={handleStop}
-                disabled={isLoading}
-                variant="secondary"
-                className="bg-orange-100 text-orange-700 hover:bg-orange-200 dark:bg-orange-950/50 dark:text-orange-400 dark:hover:bg-orange-900/50"
-              >
-                <Square className="h-4 w-4 mr-2" />
+              <Button variant="secondary" onClick={handleStop} disabled={isLoading}>
+                <Square className="mr-1.5 h-3 w-3" />
                 {t('dashboard.stopProxy')}
               </Button>
             )}
           </div>
-        </CardContent>
+        </div>
+
+        <div className="mt-4 grid grid-cols-3 gap-3">
+          {metrics.map((metric) => (
+            <div key={metric.label} className="stat-tile">
+              <p className="text-caption text-[var(--text-dim)]">{metric.label}</p>
+              <p className="mt-1 text-metric">{metric.value}</p>
+            </div>
+          ))}
+        </div>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <BarChart3 className="h-5 w-5 text-primary" />
-            <CardTitle>{t('logs.title')}</CardTitle>
-          </div>
-          <CardDescription>{t('proxy.description')}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 md:grid-cols-5">
-            {statsCards.map((stat, index) => (
-              <Card
-                key={index}
-                hover
-                className="bg-muted/30 border-0 shadow-none"
-              >
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="h-8 w-8 rounded-lg bg-[var(--accent-primary)]/10 flex items-center justify-center">
-                      <stat.icon className={cn('h-4 w-4', stat.color)} />
-                    </div>
-                  </div>
-                  <p className="text-2xl font-bold">{stat.value}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{stat.title}</p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+      <Card className="p-5">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="h-[15px] w-[15px] text-[var(--text-muted)]" />
+          <h3 className="card-heading">
+            {t('proxy.statistics')}
+          </h3>
+        </div>
 
-          {(proxyStatistics?.modelUsage && Object.keys(proxyStatistics.modelUsage).length > 0) ||
-           (proxyStatistics?.providerUsage && Object.keys(proxyStatistics.providerUsage).length > 0) ? (
-            <div className="mt-6 grid gap-6 md:grid-cols-2">
-              {proxyStatistics?.modelUsage && Object.keys(proxyStatistics.modelUsage).length > 0 && (
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Cpu className="h-4 w-4 text-primary" />
-                    <h4 className="text-sm font-medium">{t('providers.modelUsage')}</h4>
-                  </div>
-                  <div className="space-y-1.5">
-                    {(Object.entries(proxyStatistics.modelUsage) as [string, number][])
-                      .sort(([, a], [, b]) => b - a)
-                      .slice(0, 5)
-                      .map(([model, count]) => {
-                        const total = Object.values(proxyStatistics.modelUsage).reduce((a, b) => a + b, 0)
-                        const percentage = Math.round((count / total) * 100)
-                        return (
-                          <div 
-                            key={model} 
-                            className="flex items-center justify-between py-1.5 border-b border-border/50 last:border-0"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <div className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />
-                              <code className="text-xs truncate" title={model}>{model}</code>
-                            </div>
-                            <div className="flex items-center gap-2 flex-shrink-0">
-                              <Badge variant="secondary" className="text-xs h-5 px-1.5">
-                                {count}
-                              </Badge>
-                              <span className="text-xs text-muted-foreground w-8 text-right">{percentage}%</span>
-                            </div>
-                          </div>
-                        )
-                      })}
-                  </div>
-                </div>
-              )}
-
-              {proxyStatistics?.providerUsage && Object.keys(proxyStatistics.providerUsage).length > 0 && (
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Server className="h-4 w-4 text-primary" />
-                    <h4 className="text-sm font-medium">{t('providers.providerDistribution')}</h4>
-                  </div>
-                  <div className="space-y-1.5">
-                    {(Object.entries(proxyStatistics.providerUsage) as [string, number][])
-                      .sort(([, a], [, b]) => b - a)
-                      .slice(0, 5)
-                      .map(([providerId, count]) => {
-                        const total = Object.values(proxyStatistics.providerUsage).reduce((a, b) => a + b, 0)
-                        const percentage = Math.round((count / total) * 100)
-                        return (
-                          <div 
-                            key={providerId} 
-                            className="flex items-center justify-between py-1.5 border-b border-border/50 last:border-0"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <div className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />
-                              <span className="text-sm truncate" title={providerId}>{providerId}</span>
-                            </div>
-                            <div className="flex items-center gap-2 flex-shrink-0">
-                              <Badge variant="secondary" className="text-xs h-5 px-1.5">
-                                {count}
-                              </Badge>
-                              <span className="text-xs text-muted-foreground w-8 text-right">{percentage}%</span>
-                            </div>
-                          </div>
-                        )
-                      })}
-                  </div>
-                </div>
-              )}
+        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
+          {stats.map((stat) => (
+            <div key={stat.title} className="stat-tile">
+              <div className="flex items-center gap-1.5 text-caption text-[var(--text-muted)]">
+                <stat.icon className="h-3.5 w-3.5" />
+                <span className="truncate">{stat.title}</span>
+              </div>
+              <p className="mt-1 text-metric">{stat.value}</p>
             </div>
-          ) : null}
-        </CardContent>
+          ))}
+        </div>
+
+        {(proxyStatistics?.modelUsage && Object.keys(proxyStatistics.modelUsage).length > 0) ||
+        (proxyStatistics?.providerUsage && Object.keys(proxyStatistics.providerUsage).length > 0) ? (
+          <div className="mt-5 grid gap-6 border-t border-[var(--glass-border)] pt-5 md:grid-cols-2">
+            {proxyStatistics?.modelUsage && Object.keys(proxyStatistics.modelUsage).length > 0 && (
+              <div>
+                <div className="mb-2 flex items-center gap-2">
+                  <Cpu className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                  <h4 className="text-body font-medium">{t('providers.modelUsage')}</h4>
+                </div>
+                <div className="space-y-1">
+                  {(Object.entries(proxyStatistics.modelUsage) as [string, number][])
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 5)
+                    .map(([model, count]) => {
+                      const total = Object.values(proxyStatistics.modelUsage).reduce((a, b) => a + b, 0)
+                      const percentage = Math.round((count / total) * 100)
+                      return (
+                        <div
+                          key={model}
+                          className="flex items-center justify-between gap-2 py-1.5 text-meta"
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent-primary)]" />
+                            <span className="truncate font-mono" title={model}>
+                              {model}
+                            </span>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2 tabular-nums">
+                            <span className="font-medium">{count}</span>
+                            <span className="w-8 text-right text-[var(--text-dim)]">{percentage}%</span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                </div>
+              </div>
+            )}
+
+            {proxyStatistics?.providerUsage && Object.keys(proxyStatistics.providerUsage).length > 0 && (
+              <div>
+                <div className="mb-2 flex items-center gap-2">
+                  <Server className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                  <h4 className="text-body font-medium">{t('providers.providerDistribution')}</h4>
+                </div>
+                <div className="space-y-1">
+                  {(Object.entries(proxyStatistics.providerUsage) as [string, number][])
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 5)
+                    .map(([providerId, count]) => {
+                      const total = Object.values(proxyStatistics.providerUsage).reduce((a, b) => a + b, 0)
+                      const percentage = Math.round((count / total) * 100)
+                      return (
+                        <div
+                          key={providerId}
+                          className="flex items-center justify-between gap-2 py-1.5 text-meta"
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent-primary)]" />
+                            <span className="truncate" title={providerId}>
+                              {providerId}
+                            </span>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2 tabular-nums">
+                            <span className="font-medium">{count}</span>
+                            <span className="w-8 text-right text-[var(--text-dim)]">{percentage}%</span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
       </Card>
     </div>
   )

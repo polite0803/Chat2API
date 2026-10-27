@@ -8,7 +8,6 @@ import { parseToolCallsFromText } from '../utils/toolParser.ts'
 import { ToolStreamParser } from '../toolCalling/ToolStreamParser.ts'
 import type { ToolCallingPlan } from '../toolCalling/types.ts'
 
-const MODEL_NAME = 'deepseek-chat'
 const SEARCH_CONTROL_MARKER_PATTERN = /^(SEARCH|WEB_SEARCH|SEARCHING)(?:\s+|$)/i
 
 function stripSearchControlMarker(content: string, enabled: boolean): string {
@@ -626,7 +625,7 @@ export class DeepSeekStreamHandler {
             message,
             finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
           }],
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: accumulatedTokenUsage },
+          usage: null,
           created: this.created,
         })
       })

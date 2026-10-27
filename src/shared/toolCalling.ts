@@ -15,10 +15,8 @@ export interface ToolCallingConfig {
   enabled: boolean
   mode: ToolCallingModeSetting
   clientAdapterId: ToolClientAdapterId
-  diagnosticsEnabled: boolean
   advanced: {
     customPromptTemplate?: string
-    promptPreviewEnabled: boolean
   }
 }
 
@@ -48,9 +46,7 @@ export const DEFAULT_TOOL_CALLING_CONFIG: ToolCallingConfig = {
   enabled: true,
   mode: 'auto',
   clientAdapterId: 'standard-openai-tools',
-  diagnosticsEnabled: false,
   advanced: {
-    promptPreviewEnabled: false,
     customPromptTemplate: undefined,
   },
 }
@@ -101,9 +97,7 @@ export function normalizeToolCallingConfig(value: unknown): ToolCallingConfig {
       enabled,
       mode: legacy.mode === 'never' ? 'off' : legacy.mode === 'always' ? 'force' : 'auto',
       clientAdapterId: 'standard-openai-tools',
-      diagnosticsEnabled: Boolean(legacy.customPromptTemplate) || legacy.enableToolCallParsing === false,
       advanced: {
-        promptPreviewEnabled: false,
         customPromptTemplate: typeof legacy.customPromptTemplate === 'string'
           ? legacy.customPromptTemplate
           : undefined,
@@ -123,13 +117,7 @@ export function normalizeToolCallingConfig(value: unknown): ToolCallingConfig {
     clientAdapterId: isClientAdapterId(value.clientAdapterId)
       ? value.clientAdapterId
       : DEFAULT_TOOL_CALLING_CONFIG.clientAdapterId,
-    diagnosticsEnabled: typeof value.diagnosticsEnabled === 'boolean'
-      ? value.diagnosticsEnabled
-      : DEFAULT_TOOL_CALLING_CONFIG.diagnosticsEnabled,
     advanced: {
-      promptPreviewEnabled: typeof advanced.promptPreviewEnabled === 'boolean'
-        ? advanced.promptPreviewEnabled
-        : DEFAULT_TOOL_CALLING_CONFIG.advanced.promptPreviewEnabled,
       customPromptTemplate: typeof advanced.customPromptTemplate === 'string'
         ? advanced.customPromptTemplate
         : undefined,

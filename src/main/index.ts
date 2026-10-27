@@ -28,12 +28,6 @@ if (process.getuid && process.getuid() === 0) {
   console.log('Detected running as root user, sandbox settings have been automatically handled')
 }
 
-declare module 'electron' {
-  interface App {
-    isQuitting?: boolean
-  }
-}
-
 const gotTheLock = app.requestSingleInstanceLock()
 
 if (!gotTheLock) {

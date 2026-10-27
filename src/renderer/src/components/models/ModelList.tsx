@@ -30,7 +30,6 @@ import glmIcon from '@/assets/providers/glm.svg'
 import kimiIcon from '@/assets/providers/kimi.svg'
 import minimaxIcon from '@/assets/providers/minimax.svg'
 import mimoIcon from '@/assets/providers/mimo.svg'
-import perplexityIcon from '@/assets/providers/perplexity.svg'
 import qwenIcon from '@/assets/providers/qwen.svg'
 import zaiIcon from '@/assets/providers/zai.svg'
 import modelMappingIcon from '@/assets/providers/model-mapping.svg'
@@ -41,7 +40,6 @@ const providerIcons: Record<string, string> = {
   kimi: kimiIcon,
   minimax: minimaxIcon,
   mimo: mimoIcon,
-  perplexity: perplexityIcon,
   qwen: qwenIcon,
   'qwen-ai': qwenIcon,
   zai: zaiIcon,
@@ -115,13 +113,13 @@ const ModelRow = memo(({ model, isSelected, onSelect, t }: ModelRowProps) => {
         <div className="flex items-center gap-2">
           {model.status === 'available' ? (
             <>
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
-              <span className="text-sm text-green-500">{t('models.available')}</span>
+              <CheckCircle2 className="h-4 w-4 text-success" />
+              <span className="text-sm text-success">{t('models.available')}</span>
             </>
           ) : (
             <>
-              <XCircle className="h-4 w-4 text-red-500" />
-              <span className="text-sm text-red-500">{t('models.unavailable')}</span>
+              <XCircle className="h-4 w-4 text-error" />
+              <span className="text-sm text-error">{t('models.unavailable')}</span>
             </>
           )}
         </div>
@@ -370,7 +368,7 @@ export function ModelList() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Cpu className="h-5 w-5 text-primary" />
+              <Cpu className="h-[15px] w-[15px] text-[var(--text-muted)]" />
               <CardTitle>{t('models.modelList')}</CardTitle>
             </div>
             <Badge variant="outline">
@@ -381,11 +379,13 @@ export function ModelList() {
             {t('models.description')}
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="text-center py-12 text-muted-foreground border rounded-lg">
-            <Cpu className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-sm font-medium">{t('models.noModelsFound')}</p>
-            <p className="text-xs mt-1">{t('models.noModelsDesc')}</p>
+        <CardContent>
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <Cpu className="h-5 w-5" />
+            </div>
+            <p className="empty-state-title">{t('models.noModelsFound')}</p>
+            <p className="empty-state-hint">{t('models.noModelsDesc')}</p>
           </div>
         </CardContent>
       </Card>
@@ -397,7 +397,7 @@ export function ModelList() {
       <CardHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Cpu className="h-5 w-5 text-primary" />
+            <Cpu className="h-[15px] w-[15px] text-[var(--text-muted)]" />
             <CardTitle>{t('models.modelList')}</CardTitle>
           </div>
           <Badge variant="outline">
@@ -532,10 +532,12 @@ export function ModelList() {
             )}
           </>
         ) : (
-          <div className="text-center py-12 text-muted-foreground border rounded-lg">
-            <Database className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p className="text-sm font-medium">{t('models.noModelsFound')}</p>
-            <p className="text-xs mt-1">{t('models.noModelsDesc')}</p>
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <Database className="h-5 w-5" />
+            </div>
+            <p className="empty-state-title">{t('models.noModelsFound')}</p>
+            <p className="empty-state-hint">{t('models.noModelsDesc')}</p>
           </div>
         )}
       </CardContent>

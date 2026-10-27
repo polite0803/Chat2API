@@ -3,6 +3,7 @@ import { getToolProtocol } from './protocols/index.ts'
 
 export class ToolStreamParser {
   private readonly plan: ToolCallingPlan
+  private readonly idPrefix: string
   private buffer = ''
   private isBufferingToolCall = false
   private emittedToolCall = false
@@ -10,6 +11,11 @@ export class ToolStreamParser {
 
   constructor(plan: ToolCallingPlan) {
     this.plan = plan
+    this.idPrefix = plan.diagnostics?.requestId ? `call_${plan.diagnostics.requestId}` : 'call'
+  }
+
+  private makeId(index: number): string {
+    return `${this.idPrefix}-${index}`
   }
 
   push(content: string, baseChunk: any, includeRole: boolean = false): any[] {
@@ -43,53 +49,63 @@ export class ToolStreamParser {
     const parsed = parseBufferedToolCall(this.buffer, this.plan)
     if (parsed.toolCalls.length > 0) {
       for (const toolCall of parsed.toolCalls) {
+        if (this.plan.parallelToolCalls === false && this.nextToolCallIndex >= 1) break
         const indexedToolCall = {
           ...toolCall,
           index: this.nextToolCallIndex,
-          id: toolCall.id || `call_${this.nextToolCallIndex}`,
+          id: this.makeId(this.nextToolCallIndex),
         }
         this.nextToolCallIndex += 1
         chunks.push(createToolCallChunk(baseChunk, indexedToolCall, includeRole && !this.emittedToolCall))
       }
       this.emittedToolCall = true
       this.isBufferingToolCall = false
-      this.buffer = ''
+      this.releaseRemainder(parsed.rawMatches, chunks, baseChunk)
       return chunks
     }
 
     if (parsed.invalidToolNames.length > 0 || parsed.rawMatches.length > 0) {
       this.isBufferingToolCall = false
-      this.buffer = ''
+      this.releaseRemainder(parsed.rawMatches, chunks, baseChunk)
     }
 
     return chunks
+  }
+
+  private releaseRemainder(rawMatches: string[], chunks: any[], baseChunk: any): void {
+    const remainder = rawMatches.length > 0 ? stripRawMatches(this.buffer, rawMatches) : ''
+    this.buffer = ''
+    if (remainder.trim().length > 0) {
+      chunks.push(createContentChunk(baseChunk, remainder, false))
+    }
   }
 
   flush(baseChunk: any): any[] {
     if (!this.buffer) return []
 
     const parsed = parseBufferedToolCall(this.buffer, this.plan)
+    const chunks: any[] = []
     if (parsed.toolCalls.length > 0) {
-      const chunks = parsed.toolCalls.map((toolCall) => {
+      for (const toolCall of parsed.toolCalls) {
+        if (this.plan.parallelToolCalls === false && this.nextToolCallIndex >= 1) break
         const indexedToolCall = {
           ...toolCall,
           index: this.nextToolCallIndex,
-          id: toolCall.id || `call_${this.nextToolCallIndex}`,
+          id: this.makeId(this.nextToolCallIndex),
         }
         this.nextToolCallIndex += 1
         this.emittedToolCall = true
-        return createToolCallChunk(baseChunk, indexedToolCall, false)
-      })
-      this.buffer = ''
+        chunks.push(createToolCallChunk(baseChunk, indexedToolCall, false))
+      }
+      this.releaseRemainder(parsed.rawMatches, chunks, baseChunk)
       this.isBufferingToolCall = false
       return chunks
     }
 
-    const shouldReleaseText = !this.emittedToolCall
-    const text = this.buffer
+    const remainder = parsed.rawMatches.length > 0 ? stripRawMatches(this.buffer, parsed.rawMatches) : this.buffer
     this.buffer = ''
     this.isBufferingToolCall = false
-    return shouldReleaseText ? [createContentChunk(baseChunk, text, false)] : []
+    return remainder.trim().length > 0 ? [createContentChunk(baseChunk, remainder, false)] : []
   }
 
   hasEmittedToolCall(): boolean {
@@ -143,6 +159,10 @@ function fencedRanges(content: string): Array<{ start: number; end: number }> {
 
 function isInsideRange(index: number, ranges: Array<{ start: number; end: number }>): boolean {
   return ranges.some((range) => index >= range.start && index < range.end)
+}
+
+function stripRawMatches(buffer: string, rawMatches: string[]): string {
+  return rawMatches.reduce((acc, raw) => acc.replace(raw, ''), buffer)
 }
 
 function createContentChunk(baseChunk: any, content: string, includeRole: boolean): any {

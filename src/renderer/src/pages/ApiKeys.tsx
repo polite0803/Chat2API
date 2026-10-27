@@ -38,19 +38,16 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import type { ApiKey } from '@/types/electron'
 
 function generateApiKey(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  let key = 'sk-'
-  for (let i = 0; i < 48; i++) {
-    key += chars.charAt(Math.floor(Math.random() * chars.length))
-  }
-  return key
+  const bytes = new Uint8Array(24)
+  crypto.getRandomValues(bytes)
+  return 'sk-' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
 function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2)
+  return crypto.randomUUID()
 }
 
-export default function ApiKeysPage() {
+export default function ApiKeysPage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useTranslation()
   const { config, updateConfig, fetchConfig } = useSettingsStore()
   const [showAddDialog, setShowAddDialog] = useState(false)
@@ -154,12 +151,14 @@ export default function ApiKeysPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{t('apiKeys.title')}</h1>
-          <p className="text-muted-foreground">{t('apiKeys.description')}</p>
+      {!embedded && (
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">{t('apiKeys.title')}</h1>
+            <p className="text-muted-foreground">{t('apiKeys.description')}</p>
+          </div>
         </div>
-      </div>
+      )}
 
       <Card>
         <CardHeader>

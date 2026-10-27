@@ -879,7 +879,7 @@ export class GLMStreamHandler {
                     finish_reason: finishReason,
                   },
                 ],
-                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+                usage: null,
                 created: this.created,
               })}\n\n`
             )
@@ -1055,7 +1055,7 @@ export class GLMStreamHandler {
                     finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
                   },
                 ],
-                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+                usage: null,
                 created: Math.floor(Date.now() / 1000),
               })
             }
@@ -1079,7 +1079,7 @@ export class GLMStreamHandler {
               finish_reason: 'stop',
             },
           ],
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          usage: null,
           created: Math.floor(Date.now() / 1000),
         })
       })

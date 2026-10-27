@@ -1,7 +1,9 @@
-import { App } from 'electron'
+export {}
 
-declare module 'electron' {
-  interface App {
-    isQuitting?: boolean
+declare global {
+  namespace Electron {
+    interface App {
+      isQuitting?: boolean
+    }
   }
 }

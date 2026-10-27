@@ -39,8 +39,8 @@ export function OAuthProgress({
     },
     success: {
       icon: CheckCircle2,
-      iconClass: 'text-green-500',
-      textClass: 'text-green-600',
+      iconClass: 'text-success',
+      textClass: 'text-success',
       labelKey: 'oauth.success',
     },
     error: {
@@ -51,8 +51,8 @@ export function OAuthProgress({
     },
     cancelled: {
       icon: XCircle,
-      iconClass: 'text-orange-500',
-      textClass: 'text-orange-600',
+      iconClass: 'text-warning',
+      textClass: 'text-warning',
       labelKey: 'oauth.cancelled',
     },
   }

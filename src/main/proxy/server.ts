@@ -12,8 +12,39 @@ import managementRoutes from './routes/management'
 import { proxyStatusManager } from './status'
 import { storeManager } from '../store/store'
 import { sessionManager } from './sessionManager'
+import {
+  checkStartupSecurity,
+  corsAllowHeaders,
+  evaluateApiKeyAuth,
+  requiresApiKey,
+  resolveCorsOrigin,
+  safeKeyEquals,
+} from './authPolicy'
+import { autoRouter } from './autoRouter'
 
 const SLOW_REQUEST_THRESHOLD_MS = 1500
+
+function extractProvidedKey(ctx: Context): string | null {
+  const authHeader = ctx.get('Authorization') || ''
+  if (authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7).trim()
+    return token || null
+  }
+  const headerKey = ctx.get('X-API-Key')
+  return headerKey ? headerKey.trim() : null
+}
+
+function recordKeyUsage(providedKey: string): void {
+  const config = storeManager.getConfig()
+  const matched = (config.apiKeys || []).find((entry) => safeKeyEquals(entry.key, providedKey))
+  if (!matched) return
+  const updatedKeys = config.apiKeys.map((entry) =>
+    entry.id === matched.id
+      ? { ...entry, lastUsedAt: Date.now(), usageCount: entry.usageCount + 1 }
+      : entry
+  )
+  storeManager.updateConfig({ apiKeys: updatedKeys })
+}
 
 /**
  * Proxy Server Class
@@ -39,9 +70,18 @@ export class ProxyServer {
    */
   private setupMiddleware(): void {
     this.app.use(async (ctx, next) => {
-      ctx.set('Access-Control-Allow-Origin', '*')
+      const config = storeManager.getConfig()
+      const allowedOrigin = resolveCorsOrigin({
+        origin: ctx.get('Origin') || undefined,
+        requiresKey: requiresApiKey(config.apiKeys),
+        host: this.host,
+      })
+      if (allowedOrigin) {
+        ctx.set('Access-Control-Allow-Origin', allowedOrigin)
+        ctx.set('Vary', 'Origin')
+      }
       ctx.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-      ctx.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
+      ctx.set('Access-Control-Allow-Headers', corsAllowHeaders())
       ctx.set('Access-Control-Max-Age', '86400')
 
       if (ctx.method === 'OPTIONS') {
@@ -52,13 +92,7 @@ export class ProxyServer {
       await next()
     })
 
-    this.app.use(bodyParser({
-      jsonLimit: '50mb',
-      formLimit: '50mb',
-      textLimit: '50mb',
-    }))
-
-    // API Key validation middleware
+    // API Key validation middleware - runs before body parsing so unauthenticated payloads are never read
     this.app.use(async (ctx, next) => {
       // Skip paths that don't require authentication
       const publicPaths = ['/', '/health', '/stats']
@@ -74,56 +108,45 @@ export class ProxyServer {
       }
 
       const config = storeManager.getConfig()
-      
-      if (config.enableApiKey && config.apiKeys && config.apiKeys.length > 0) {
-        const authHeader = ctx.get('Authorization') || ''
-        const providedKey = authHeader.startsWith('Bearer ') 
-          ? authHeader.slice(7) 
-          : (ctx.query.api_key as string) || ctx.get('X-API-Key')
-        
-        if (!providedKey) {
-          ctx.status = 401
-          ctx.body = {
-            error: {
-              message: 'API key is required',
-              type: 'invalid_request_error',
-              code: 'missing_api_key',
-            },
-          }
-          return
+      const providedKey = extractProvidedKey(ctx)
+      const outcome = evaluateApiKeyAuth({ apiKeys: config.apiKeys, providedKey })
+
+      if (outcome === 'missing_key') {
+        ctx.status = 401
+        ctx.body = {
+          error: {
+            message: 'API key is required',
+            type: 'invalid_request_error',
+            code: 'missing_api_key',
+          },
         }
-        
-        const validKey = config.apiKeys.find(
-          k => k.key === providedKey && k.enabled
-        )
-        
-        if (!validKey) {
-          ctx.status = 401
-          ctx.body = {
-            error: {
-              message: 'Invalid API key',
-              type: 'invalid_request_error',
-              code: 'invalid_api_key',
-            },
-          }
-          return
-        }
-        
-        // Update usage statistics
-        const updatedKeys = config.apiKeys.map(k => 
-          k.id === validKey.id 
-            ? { 
-                ...k, 
-                lastUsedAt: Date.now(), 
-                usageCount: k.usageCount + 1 
-              }
-            : k
-        )
-        storeManager.updateConfig({ apiKeys: updatedKeys })
+        return
       }
-      
+
+      if (outcome === 'invalid_key') {
+        ctx.status = 401
+        ctx.body = {
+          error: {
+            message: 'Invalid API key',
+            type: 'invalid_request_error',
+            code: 'invalid_api_key',
+          },
+        }
+        return
+      }
+
+      if (providedKey) {
+        recordKeyUsage(providedKey)
+      }
+
       await next()
     })
+
+    this.app.use(bodyParser({
+      jsonLimit: '50mb',
+      formLimit: '50mb',
+      textLimit: '50mb',
+    }))
 
     this.app.use(async (ctx, next) => {
       const startTime = Date.now()
@@ -280,8 +303,18 @@ export class ProxyServer {
 
     this.port = port || proxyStatusManager.getPort()
     this.host = host || proxyStatusManager.getHost()
-    
-    sessionManager.initialize()
+
+    const security = checkStartupSecurity({
+      apiKeys: storeManager.getConfig().apiKeys,
+      host: this.host,
+    })
+    if (!security.ok) {
+      storeManager.addLog(
+        'error',
+        `Refusing to listen on ${this.host} without an API key; configure an API key or bind to 127.0.0.1`
+      )
+      return false
+    }
 
     return new Promise((resolve) => {
       try {
@@ -324,12 +357,28 @@ export class ProxyServer {
     }
     
     sessionManager.destroy()
+    autoRouter.reset()
 
+    const server = this.server
     return new Promise((resolve) => {
-      this.server!.close((err) => {
+      let settled = false
+      const forceTimer = setTimeout(() => {
+        (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.()
+      }, 5000)
+
+      const finish = (value: boolean) => {
+        if (settled) return
+        settled = true
+        clearTimeout(forceTimer)
+        resolve(value)
+      }
+
+      ;(server as unknown as { closeIdleConnections?: () => void }).closeIdleConnections?.()
+
+      server.close((err) => {
         if (err) {
           storeManager.addLog('error', `Failed to stop server: ${err.message}`)
-          resolve(false)
+          finish(false)
           return
         }
 
@@ -338,7 +387,7 @@ export class ProxyServer {
 
         storeManager.addLog('info', 'Proxy server stopped')
 
-        resolve(true)
+        finish(true)
       })
     })
   }

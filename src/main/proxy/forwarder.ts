@@ -7,9 +7,15 @@ import axios, { AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios'
 import http2 from 'http2'
 import { PassThrough } from 'stream'
 import { Account, Provider } from '../store/types'
-import { ForwardResult, ChatCompletionRequest, ProxyContext } from './types'
+import {
+  ForwardResult,
+  ChatCompletionRequest,
+  ProxyContext,
+  type ChatMessage as ContextChatMessage,
+} from './types'
 import { proxyStatusManager } from './status'
 import { storeManager } from '../store/store'
+import { wrapStreamWithPlan } from './toolCalling/streamPlanWrapper'
 import { DeepSeekAdapter } from './adapters/deepseek'
 import { DeepSeekStreamHandler } from './adapters/deepseek-stream'
 import { GLMAdapter, GLMStreamHandler } from './adapters/glm'
@@ -19,16 +25,13 @@ import { QwenAdapter, QwenStreamHandler } from './adapters/qwen'
 import { QwenAiAdapter, QwenAiStreamHandler } from './adapters/qwen-ai'
 import { ZaiAdapter, ZaiStreamHandler } from './adapters/zai'
 import { MiniMaxAdapter, MiniMaxStreamHandler } from './adapters/minimax'
-import { PerplexityAdapter } from './adapters/perplexity'
-import { PerplexityStreamHandler } from './adapters/perplexity-stream'
 import { ToolCallingEngine } from './toolCalling/ToolCallingEngine'
 import type { ToolCallingTransformResult } from './toolCalling/types'
 import { sessionManager } from './sessionManager'
-import {
-  createContextManagementService,
-  SummaryGenerator,
-  type ChatMessage as ContextChatMessage,
-} from './services/contextManagementService'
+import { loadBalancer } from './loadbalancer'
+import { autoRouter, type AutoCandidate } from './autoRouter'
+import { accountRuntime } from './accountRuntime'
+import { createContextManagementService, SummaryGenerator } from './services/contextManagementService'
 
 function shouldDeleteSession(): boolean {
   return sessionManager.shouldDeleteAfterChat()
@@ -105,12 +108,6 @@ export class RequestForwarder {
       forward: (request, account, provider, actualModel, startTime) =>
         this.forwardMimo(request, account, provider, actualModel, startTime),
     },
-    {
-      name: 'perplexity',
-      matches: PerplexityAdapter.isPerplexityProvider,
-      forward: (request, account, provider, actualModel, startTime) =>
-        this.forwardPerplexity(request, account, provider, actualModel, startTime),
-    },
   ]
 
   /**
@@ -139,6 +136,7 @@ export class RequestForwarder {
         updatedAt: 0,
       },
       actualModel: request.model,
+      requestId: request.requestId,
     })
   }
 
@@ -225,13 +223,18 @@ export class RequestForwarder {
     account: Account,
     provider: Provider,
     actualModel: string,
-    context: ProxyContext
+    context: ProxyContext,
+    options: { maxRetries?: number } = {}
   ): Promise<ForwardResult> {
     const startTime = Date.now()
     const config = storeManager.getConfig()
-    const maxRetries = config.retryCount
+    const maxRetries = options.maxRetries ?? config.retryCount
+
+    // 记录在途与 RPM：仅用于路由打分，下一次请求即可读到
+    accountRuntime.beginAttempt(account.id)
 
     let lastError: string | undefined
+    let lastStatus: number | undefined
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (attempt > 0) {
@@ -256,6 +259,7 @@ export class RequestForwarder {
 
           const originalCount = modifiedRequest.messages.length
           const contextMessages: ContextChatMessage[] = modifiedRequest.messages.map(msg => ({
+            ...msg,
             role: msg.role as 'user' | 'assistant' | 'system' | 'tool',
             content: msg.content,
             timestamp: Date.now(),
@@ -278,10 +282,7 @@ export class RequestForwarder {
 
             modifiedRequest = {
               ...modifiedRequest,
-              messages: processResult.messages.map(msg => ({
-                role: msg.role,
-                content: msg.content,
-              })),
+              messages: processResult.messages.map(msg => ({ ...msg })),
             }
           }
         } catch (error) {
@@ -293,10 +294,13 @@ export class RequestForwarder {
         const result = await this.doForward(modifiedRequest, account, provider, actualModel, context)
 
         if (result.success) {
+          accountRuntime.recordSuccess(account.id)
+          accountRuntime.endAttempt(account.id)
           return result
         }
 
         lastError = result.error
+        lastStatus = result.status
 
         if (result.status && result.status < 500 && result.status !== 429) {
           break
@@ -306,11 +310,78 @@ export class RequestForwarder {
       }
     }
 
+    accountRuntime.endAttempt(account.id)
+
+    // 429 说明账号已被上游限流，记录指数退避冷却，供后续 auto 路由避开
+    if (lastStatus === 429) {
+      accountRuntime.recordFailure(account.id, 429)
+    }
+
     return {
       success: false,
       error: lastError || 'Request failed after retries',
       latency: Date.now() - startTime,
     }
+  }
+
+  /**
+   * Auto 路由执行：按候选顺序尝试，在流式首包之前失败时切换到下一个账号/供应商。
+   *
+   * 每次尝试把 request.model 替换为候选的显示名，与普通映射请求的上下文一致：
+   * forwarder 之后会以 actualModel 作为上游模型、显示名作为 originalModel 传给 adapter。
+   */
+  async forwardAutoCompletion(
+    request: ChatCompletionRequest,
+    candidates: AutoCandidate[],
+    context: ProxyContext
+  ): Promise<{ result: ForwardResult; candidate: AutoCandidate } | null> {
+    let last: { result: ForwardResult; candidate: AutoCandidate } | null = null
+
+    for (const candidate of candidates) {
+      const attemptRequest: ChatCompletionRequest = {
+        ...request,
+        model: candidate.displayName,
+      }
+      const attemptContext: ProxyContext = {
+        ...context,
+        providerId: candidate.provider.id,
+        accountId: candidate.account.id,
+        actualModel: candidate.actualModel,
+      }
+
+      const result = await this.forwardChatCompletion(
+        attemptRequest,
+        candidate.account,
+        candidate.provider,
+        candidate.actualModel,
+        attemptContext,
+        { maxRetries: 0 }
+      )
+
+      last = { result, candidate }
+
+      if (result.success) {
+        return last
+      }
+
+      if (!this.isFailoverEligible(result.status)) {
+        return last
+      }
+
+      // 429 的冷却已由 forwardChatCompletion 记录，这里只补记 5xx / 网络错误
+      if (result.status !== 429) {
+        autoRouter.markAccountCooldown(candidate.account.id, result.status)
+      }
+      loadBalancer.markAccountFailed(candidate.account.id)
+    }
+
+    return last
+  }
+
+  /** 429 / 5xx / 无状态码（网络错误、超时）才值得换目标；4xx 换目标没有意义 */
+  private isFailoverEligible(status?: number): boolean {
+    if (status === undefined) return true
+    return status === 429 || status >= 500
   }
 
   /**
@@ -331,10 +402,11 @@ export class RequestForwarder {
     }
 
     try {
+      const transformed = this.transformRequestForPromptToolUse(request, provider)
       const chatPath = provider.chatPath || '/chat/completions'
       const url = this.buildUrl(provider, chatPath)
       const headers = this.buildHeaders(provider, account)
-      const body = this.buildRequestBody(request, actualModel, account)
+      const body = this.buildRequestBody({ ...request, messages: transformed.messages }, actualModel, account)
 
       const axiosConfig: AxiosRequestConfig = {
         method: 'POST',
@@ -363,10 +435,13 @@ export class RequestForwarder {
           success: true,
           status: response.status,
           headers: this.extractHeaders(response.headers),
-          stream: response.data,
+          stream: wrapStreamWithPlan(response.data, transformed.plan) as any,
+          skipTransform: transformed.plan.shouldParseResponse,
           latency,
         }
       }
+
+      this.applyToolCallsToResponse(response.data, transformed)
 
       return {
         success: true,
@@ -845,11 +920,11 @@ export class RequestForwarder {
       handler.setChatId(chatId)
 
       if (request.stream) {
-        const transformedStream = await handler.handleStream(response.data)
+        const rawStream = await handler.handleStream(response.data)
 
         if (shouldDeleteSession()) {
-          const originalEnd = transformedStream.end.bind(transformedStream)
-          transformedStream.end = function(chunk?: any, encoding?: any, callback?: any) {
+          const originalEnd = rawStream.end.bind(rawStream)
+          rawStream.end = function(chunk?: any, encoding?: any, callback?: any) {
             adapter.deleteChat(chatId).catch(err => {
               console.error('[QwenAI] Failed to delete chat:', err)
             })
@@ -861,7 +936,7 @@ export class RequestForwarder {
           success: true,
           status: response.status,
           headers: this.extractHeaders(response.headers),
-          stream: transformedStream,
+          stream: wrapStreamWithPlan(rawStream as any, transformed.plan) as any,
           skipTransform: true,
           latency,
           providerSessionId: chatId,
@@ -952,7 +1027,7 @@ export class RequestForwarder {
           success: true,
           status: response.status,
           headers: this.extractHeaders(response.headers),
-          stream: transformedStream,
+          stream: wrapStreamWithPlan(transformedStream as any, transformed.plan) as any,
           skipTransform: true,
           latency,
           providerSessionId: chatId,
@@ -1049,7 +1124,7 @@ export class RequestForwarder {
           success: true,
           status: 200,
           headers: {},
-          stream: stream.stream as any,
+          stream: wrapStreamWithPlan(stream.stream as any, transformed.plan) as any,
           skipTransform: true,
           latency,
           providerSessionId: chatId,
@@ -1199,84 +1274,6 @@ export class RequestForwarder {
     } catch (error) {
       const latency = Date.now() - startTime
       console.error('[Mimo] Forward error:', error)
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        latency,
-      }
-    }
-  }
-
-  /**
-   * Perplexity Dedicated Forward
-   * Uses Electron's net API to bypass Cloudflare protection
-   */
-  private async forwardPerplexity(
-    request: ChatCompletionRequest,
-    account: Account,
-    provider: Provider,
-    actualModel: string,
-    startTime: number
-  ): Promise<ForwardResult> {
-    console.log('[forwardPerplexity] actualModel:', actualModel)
-    try {
-      const transformed = this.transformRequestForPromptToolUse(request, provider)
-      
-      const adapter = new PerplexityAdapter(provider, account)
-      
-      const { stream, sessionId } = await adapter.chatCompletion({
-        model: actualModel,
-        messages: transformed.messages as any,
-        stream: request.stream,
-        temperature: request.temperature,
-      })
-
-      const latency = Date.now() - startTime
-
-      if (request.stream === true) {
-        const deleteSessionCallback = shouldDeleteSession()
-          ? async () => {
-              try {
-                await adapter.deleteSession(sessionId)
-              } catch (error) {
-                console.error('[Perplexity] Failed to delete session:', error)
-              }
-            }
-          : undefined
-
-        const handler = new PerplexityStreamHandler(actualModel, sessionId, deleteSessionCallback, adapter)
-        const transformedStream = await handler.handleStream(stream)
-        
-        return {
-          success: true,
-          status: 200,
-          headers: {},
-          stream: transformedStream as any,
-          skipTransform: true,
-          latency,
-          providerSessionId: sessionId,
-        }
-      }
-
-      const handler = new PerplexityStreamHandler(actualModel, sessionId, undefined, adapter)
-      const result = await handler.handleNonStream(stream)
-      
-      this.applyToolCallsToResponse(result, transformed)
-      
-      if (shouldDeleteSession()) {
-        await adapter.deleteSession(sessionId)
-      }
-      
-      return {
-        success: true,
-        status: 200,
-        headers: {},
-        body: result,
-        latency,
-        providerSessionId: sessionId,
-      }
-    } catch (error) {
-      const latency = Date.now() - startTime
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',

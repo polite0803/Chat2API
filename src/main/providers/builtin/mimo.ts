@@ -26,6 +26,11 @@ export const mimoConfig: BuiltinProviderConfig = {
   },
   enabled: true,
   description: 'XiaomiMIMO - Xiaomi General Intelligence Foundation Model',
+  modelsFetch: {
+    // Anonymous 200; the payload also carries internal entries whose names collide, hence the flag filter
+    url: 'https://aistudio.xiaomimimo.com/open-apis/bot/config',
+    reader: 'mimo-bot-config',
+  },
   supportedModels: [
     'MiMo-V2.5-Pro',
     'MiMo-V2.5',

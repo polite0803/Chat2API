@@ -15,6 +15,11 @@ export const qwenConfig: BuiltinProviderConfig = {
   },
   enabled: true,
   description: 'Qwen AI assistant by Alibaba Cloud (www.qianwen.com)',
+  modelsFetch: {
+    // The site keys this list on a per-install client id, so {uuid} is replaced per request
+    url: 'https://chat2-api.qianwen.com/api/v1/model/list?biz_id=ai_qwen&chat_client=h5&device=pc&fr=pc&pr=qwen&ut={uuid}&la=zh-CN&tz=Asia%2FShanghai&wv=4.11.5&tq=SD&ve=4.11.5',
+    reader: 'qwen-cn-model-list',
+  },
   supportedModels: [
     'Qwen3.6',
     'Qwen3.7-Max',

@@ -7,11 +7,17 @@ import Router from '@koa/router'
 import type { Context } from 'koa'
 import { PassThrough } from 'stream'
 import { ChatCompletionRequest, ChatCompletionResponse, ProxyContext } from '../types'
+import type { AccountSelection, ForwardResult } from '../types'
 import { loadBalancer } from '../loadbalancer'
 import { requestForwarder } from '../forwarder'
 import { streamHandler } from '../stream'
 import { proxyStatusManager } from '../status'
 import { modelMapper } from '../modelMapper'
+import { autoRouter, isAutoModel } from '../autoRouter'
+import type { AutoCandidate } from '../autoRouter'
+import { buildStreamErrorFrame, mapUpstreamError, retryAfterHeader } from '../errorMapping'
+import { findUnsupportedParameter, unsupportedParameterError } from '../parameterPolicy'
+import { createToolViolationTap } from '../utils/toolViolationTap'
 import { storeManager } from '../../store/store'
 import { 
   isAnthropicToolFormat,
@@ -68,6 +74,7 @@ function extractUserInput(messages: Array<{ role: string; content?: string | any
 router.post('/completions', async (ctx: Context) => {
   const startTime = Date.now()
   const requestId = generateRequestId()
+  ctx.set('X-Request-Id', requestId)
   const clientIP = getClientIP(ctx)
 
   let request: ChatCompletionRequest
@@ -112,6 +119,8 @@ router.post('/completions', async (ctx: Context) => {
     return
   }
 
+  request.requestId = requestId
+
   // Read feature parameters from Headers (lower priority than request body)
   const webSearchFromHeader = ctx.headers['x-web-search'] === 'true'
   const reasoningEffortFromHeader = ctx.headers['x-reasoning-effort'] as 'low' | 'medium' | 'high' | undefined
@@ -140,30 +149,63 @@ router.post('/completions', async (ctx: Context) => {
   }
 
   const config = storeManager.getConfig()
-  const preferredProviderId = modelMapper.getPreferredProvider(request.model)
-  const preferredAccountId = modelMapper.getPreferredAccount(request.model)
+  const autoDecision = isAutoModel(request.model) && config.autoRouting?.enabled !== false
+    ? autoRouter.select(request, config.loadBalanceStrategy)
+    : null
 
-  const selection = loadBalancer.selectAccount(
-    request.model,
-    config.loadBalanceStrategy,
-    preferredProviderId,
-    preferredAccountId
-  )
+  let selection: AccountSelection | null = null
+  if (!autoDecision) {
+    const preferredProviderId = modelMapper.getPreferredProvider(request.model)
+    const preferredAccountId = modelMapper.getPreferredAccount(request.model)
 
-  if (!selection) {
+    selection = loadBalancer.selectAccount(
+      request.model,
+      config.loadBalanceStrategy,
+      preferredProviderId,
+      preferredAccountId
+    )
+
+    if (!selection) {
+      ctx.status = 503
+      ctx.body = {
+        error: {
+          message: `No available account for model: ${request.model}`,
+          type: 'service_unavailable_error',
+          param: null,
+          code: 'no_available_account',
+        },
+      }
+      return
+    }
+  }
+
+  const firstCandidate = autoDecision?.candidates[0]
+
+  if (autoDecision && !firstCandidate) {
     ctx.status = 503
     ctx.body = {
       error: {
-        message: `No available account for model: ${request.model}`,
+        message: `No available model for auto routing${autoDecision.profile.needsVision ? ' (vision required)' : ''}`,
         type: 'service_unavailable_error',
         param: null,
-        code: 'no_available_account',
+        code: 'no_available_model',
       },
     }
     return
   }
 
-  const { account, provider, actualModel } = selection
+  // auto 路由时先按排名第一的候选记录请求开始，成功后再用真实命中的账号结算用量
+  let account = selection ? selection.account : firstCandidate!.account
+  let provider = selection ? selection.provider : firstCandidate!.provider
+  let actualModel = selection ? selection.actualModel : firstCandidate!.actualModel
+  let chosenCandidate: AutoCandidate | null = null
+
+  const unsupportedParam = findUnsupportedParameter(request, provider)
+  if (unsupportedParam) {
+    ctx.status = 400
+    ctx.body = unsupportedParameterError(unsupportedParam)
+    return
+  }
 
   const context: ProxyContext = {
     requestId,
@@ -179,30 +221,66 @@ router.post('/completions', async (ctx: Context) => {
   proxyStatusManager.recordRequestStart(request.model, provider.id, account.id)
 
   try {
-    const result = await requestForwarder.forwardChatCompletion(
-      request,
-      account,
-      provider,
-      actualModel,
-      context
-    )
+    let result: ForwardResult
+
+    if (autoDecision) {
+      const outcome = await requestForwarder.forwardAutoCompletion(
+        request,
+        autoDecision.candidates,
+        context
+      )
+
+      if (!outcome) {
+        ctx.status = 503
+        ctx.body = {
+          error: {
+            message: 'Auto routing produced no forward result',
+            type: 'service_unavailable_error',
+            param: null,
+            code: 'no_available_model',
+          },
+        }
+        return
+      }
+
+      result = outcome.result
+      chosenCandidate = outcome.candidate
+      account = outcome.candidate.account
+      provider = outcome.candidate.provider
+      actualModel = outcome.candidate.actualModel
+      ctx.set('X-Chat2API-Route', `${actualModel} (${provider.name})`)
+    } else {
+      result = await requestForwarder.forwardChatCompletion(
+        request,
+        account,
+        provider,
+        actualModel,
+        context
+      )
+    }
 
     const latency = Date.now() - startTime
 
     if (!result.success) {
       proxyStatusManager.recordRequestFailure(latency)
 
-      if (result.status && result.status >= 400 && result.status !== 429) {
+      // auto 路由的失败账号已在 forwardAutoCompletion 内逐个标记，这里不重复计数
+      if (!autoDecision && result.status && result.status >= 400) {
         loadBalancer.markAccountFailed(account.id)
       }
 
-      ctx.status = result.status || 500
+      const mapped = mapUpstreamError(result.status)
+      ctx.status = mapped.status
+      if (mapped.status === 429) {
+        const retryAfter = retryAfterHeader(result.headers as Record<string, unknown> | undefined)
+        if (retryAfter) ctx.set('Retry-After', retryAfter)
+      }
       ctx.body = {
         error: {
           message: result.error || 'Request failed',
-          type: 'api_error',
+          type: mapped.type,
           param: null,
-          code: null,
+          code: mapped.code,
         },
       }
 
@@ -218,9 +296,9 @@ router.post('/completions', async (ctx: Context) => {
       const errorResponseBody = JSON.stringify({
         error: {
           message: result.error || 'Request failed',
-          type: 'api_error',
+          type: mapped.type,
           param: null,
-          code: null,
+          code: mapped.code,
         },
       })
       storeManager.addRequestLog({
@@ -252,6 +330,11 @@ router.post('/completions', async (ctx: Context) => {
     }
 
     loadBalancer.clearAccountFailure(account.id)
+    autoRouter.clearAccountCooldown(account.id)
+
+    if (autoDecision && chosenCandidate) {
+      autoRouter.rememberRoute(autoDecision.conversationKey, chosenCandidate)
+    }
 
     proxyStatusManager.recordRequestSuccess(latency)
 
@@ -347,22 +430,7 @@ router.post('/completions', async (ctx: Context) => {
       result.stream.once('error', (err: Error) => {
         console.error('[Chat] Stream error:', err.message)
 
-        // Send error as SSE event
-        const errorEvent = {
-          id: requestId,
-          object: 'chat.completion.chunk',
-          created: Math.floor(Date.now() / 1000),
-          model: actualModel,
-          choices: [{
-            index: 0,
-            delta: {
-              content: `\n\n[Error: ${err.message}]`,
-            },
-            finish_reason: 'stop',
-          }],
-        }
-
-        wrapperStream.write(`data: ${JSON.stringify(errorEvent)}\n\n`)
+        wrapperStream.write(buildStreamErrorFrame(err.message))
         wrapperStream.write('data: [DONE]\n\n')
         wrapperStream.end()
 
@@ -422,9 +490,21 @@ router.post('/completions', async (ctx: Context) => {
         })
       }
 
-      ctx.body = wrapperStream
+      const requiresToolCall =
+        request.tool_choice === 'required' ||
+        (typeof request.tool_choice === 'object' && request.tool_choice?.type === 'function')
+
+      ctx.body = requiresToolCall ? wrapperStream.pipe(createToolViolationTap()) : wrapperStream
     } else {
       ctx.set('Content-Type', 'application/json')
+
+      const requiresToolCall =
+        request.tool_choice === 'required' ||
+        (typeof request.tool_choice === 'object' && request.tool_choice?.type === 'function')
+      const bodyToolCalls = (result.body as any)?.choices?.[0]?.message?.tool_calls
+      if (requiresToolCall && (!Array.isArray(bodyToolCalls) || bodyToolCalls.length === 0)) {
+        ctx.set('X-Chat2API-Tool-Violation', 'required')
+      }
 
       if (result.body) {
         // Check if we need to transform to Anthropic format

@@ -12,16 +12,17 @@ import type {
   LoadBalanceStrategy,
   ModelMapping,
   AppConfig,
+  AutoRoutingConfig,
   AccountStatus,
   ProviderType,
   ProviderVendor,
   ProviderStatus,
   ApiKey,
-  SystemPrompt,
-  PromptType,
   ToolCallingConfig,
   LegacyToolPromptConfig,
   EffectiveModel,
+  RequestLogEntry,
+  ModelsFetchFailure,
 } from '../../../shared/types'
 
 export type { 
@@ -38,16 +39,17 @@ export type {
   LoadBalanceStrategy,
   ModelMapping,
   AppConfig,
+  AutoRoutingConfig,
   AccountStatus,
   ProviderType,
   ProviderVendor,
   ProviderStatus,
   ApiKey,
-  SystemPrompt,
-  PromptType,
   ToolCallingConfig,
   LegacyToolPromptConfig,
   EffectiveModel,
+  RequestLogEntry,
+  ModelsFetchFailure,
 }
 
 export interface CustomProviderFormData {
@@ -103,8 +105,11 @@ interface ProvidersAPI {
   import: (jsonData: string) => Promise<Provider>
   updateModels: (providerId: string) => Promise<{
     success: boolean
-    modelsCount?: number
-    error?: string
+    reason?: ModelsFetchFailure
+    detail?: string
+    fetchedCount?: number
+    addedCount?: number
+    fetchedAt?: number
   }>
   getEffectiveModels: (providerId: string) => Promise<EffectiveModel[]>
   addCustomModel: (providerId: string, model: { displayName: string; actualModelId: string }) => Promise<{
@@ -269,6 +274,8 @@ interface AppAPI {
   close: () => Promise<void>
   showWindow: () => Promise<void>
   hideWindow: () => Promise<void>
+  setTitleBarTheme: (theme: 'dark' | 'light') => Promise<void>
+  platform: string
   openExternal: (url: string) => Promise<void>
 }
 
@@ -276,17 +283,6 @@ interface ConfigAPI {
   get: () => Promise<AppConfig>
   update: (updates: Partial<AppConfig>) => Promise<boolean>
   onConfigChanged: (callback: (config: AppConfig) => void) => () => void
-}
-
-interface PromptsAPI {
-  getAll: () => Promise<SystemPrompt[]>
-  getBuiltin: () => Promise<SystemPrompt[]>
-  getCustom: () => Promise<SystemPrompt[]>
-  getById: (id: string) => Promise<SystemPrompt | undefined>
-  add: (prompt: Omit<SystemPrompt, 'id' | 'createdAt' | 'updatedAt'>) => Promise<SystemPrompt>
-  update: (id: string, updates: Partial<SystemPrompt>) => Promise<SystemPrompt | null>
-  delete: (id: string) => Promise<boolean>
-  getByType: (type: PromptType) => Promise<SystemPrompt[]>
 }
 
 interface SessionConfig {
@@ -458,8 +454,11 @@ interface ContextManagementAPI {
 }
 
 interface ToolCallingAPI {
-  getStatus: () => Promise<unknown>
-  runSmoke: (input: { clientAdapterId: string }) => Promise<{ success: boolean; data?: unknown; error?: { message?: string } }>
+  runSmoke: (input: { clientAdapterId: string }) => Promise<{
+    success: boolean
+    data?: { result?: { message?: string } }
+    error?: { message?: string }
+  }>
 }
 
 interface ElectronAPI {
@@ -473,7 +472,6 @@ interface ElectronAPI {
   statistics: StatisticsAPI
   app: AppAPI
   config: ConfigAPI
-  prompts: PromptsAPI
   session: SessionAPI
   managementApi: ManagementApiAPI
   contextManagement: ContextManagementAPI

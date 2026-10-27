@@ -23,7 +23,7 @@ export function Models() {
   }, [fetchAppConfig])
 
   useEffect(() => {
-    if (tabFromUrl && ['list', 'mapping', 'prompts'].includes(tabFromUrl)) {
+    if (tabFromUrl && ['list', 'mapping', 'tool-calling'].includes(tabFromUrl)) {
       setActiveTab(tabFromUrl)
     }
   }, [tabFromUrl])
@@ -50,9 +50,9 @@ export function Models() {
             <ArrowRight className="h-4 w-4" />
             <span className="hidden sm:inline">{t('models.modelMapping')}</span>
           </TabsTrigger>
-          <TabsTrigger value="prompts" className="flex items-center gap-2 py-2">
+          <TabsTrigger value="tool-calling" className="flex items-center gap-2 py-2">
             <Wrench className="h-4 w-4" />
-            <span className="hidden sm:inline">{t('models.prompts')}</span>
+            <span className="hidden sm:inline">{t('models.toolCalling')}</span>
           </TabsTrigger>
         </TabsList>
 
@@ -64,7 +64,7 @@ export function Models() {
           <ModelMappingConfig />
         </TabsContent>
 
-        <TabsContent value="prompts" className="mt-6">
+        <TabsContent value="tool-calling" className="mt-6">
           <ToolCallingPanel />
         </TabsContent>
       </Tabs>

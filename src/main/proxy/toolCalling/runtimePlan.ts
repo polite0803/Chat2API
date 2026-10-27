@@ -44,6 +44,7 @@ export function buildToolCallingRuntimePlan(input: {
     toolChoiceMode: input.clientRequest.toolChoice.mode,
     allowedToolNames,
     forcedToolName: forcedName,
+    parallelToolCalls: input.clientRequest.parallelToolCalls ?? true,
     diagnostics: {
       requestId: input.requestId,
       clientAdapterId: input.clientRequest.clientAdapterId,

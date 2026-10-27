@@ -9,6 +9,7 @@ import { ModelsResponse, ModelInfo } from '../types'
 import { loadBalancer } from '../loadbalancer'
 import { storeManager } from '../../store/store'
 import { modelMapper } from '../modelMapper'
+import { AUTO_MODEL_ID } from '../autoRouter'
 
 const router = new Router({ prefix: '/v1' })
 
@@ -19,6 +20,17 @@ router.get('/models', async (ctx: Context) => {
   const providers = storeManager.getProviders().filter(p => p.enabled)
   const models: ModelInfo[] = []
   const addedModels = new Set<string>()
+
+  // 虚拟模型：请求时由 autoRouter 在全部可用供应商/模型中挑选目标
+  if (storeManager.getConfig().autoRouting?.enabled !== false) {
+    addedModels.add(AUTO_MODEL_ID)
+    models.push({
+      id: AUTO_MODEL_ID,
+      object: 'model',
+      created: Math.floor(Date.now() / 1000),
+      owned_by: 'auto-router',
+    })
+  }
 
   for (const provider of providers) {
     const accounts = storeManager.getAccountsByProviderId(provider.id)
@@ -70,6 +82,31 @@ router.get('/models', async (ctx: Context) => {
  */
 router.get('/models/:model', async (ctx: Context) => {
   const modelId = ctx.params.model
+
+  if (modelId.trim().toLowerCase() === AUTO_MODEL_ID) {
+    // 自动路由关闭时，`auto` 既不在列表里，也不应该被单模型查询命中
+    if (storeManager.getConfig().autoRouting?.enabled === false) {
+      ctx.status = 404
+      ctx.body = {
+        error: {
+          message: `Model '${modelId}' not found`,
+          type: 'invalid_request_error',
+          param: 'model',
+          code: 'model_not_found',
+        },
+      }
+      return
+    }
+
+    ctx.set('Content-Type', 'application/json')
+    ctx.body = {
+      id: AUTO_MODEL_ID,
+      object: 'model',
+      created: Math.floor(Date.now() / 1000),
+      owned_by: 'auto-router',
+    }
+    return
+  }
 
   const config = storeManager.getConfig()
   const mappings = config.modelMappings || {}

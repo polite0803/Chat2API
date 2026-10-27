@@ -17,6 +17,7 @@ import { createBaseChunk } from '../utils/streamToolHandler'
 import { getProviderToolProfile } from '../toolCalling/providerProfiles'
 import { ToolStreamParser } from '../toolCalling/ToolStreamParser'
 import type { ToolCallingPlan } from '../toolCalling/types'
+import { debugContent } from '../utils/debugContent.ts'
 
 /**
  * Check if content contains tool calls (both bracket and XML formats)
@@ -63,6 +64,8 @@ interface QwenMessage {
 
 interface ChatCompletionRequest {
   model: string
+  /** Original model name before mapping (used for feature detection like thinking mode) */
+  originalModel?: string
   messages: QwenMessage[]
   tools?: any[]
   stream?: boolean
@@ -570,7 +573,7 @@ export class QwenStreamHandler {
           model: this.model,
           object: 'chat.completion.chunk',
           choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          usage: null,
           created: this.created,
         })}\n\n`
       )
@@ -648,7 +651,7 @@ export class QwenStreamHandler {
               const eventMessages: Array<{ msg: any, hasMultiLoad: boolean }> = []
 
               for (const msg of result.data.messages) {
-                console.log('[Qwen] Message detail:', JSON.stringify(msg).substring(0, 500))
+                debugContent('[Qwen] Message detail:', msg, 500)
 
                 // Collect thinking content from meta_data.multi_load
                 const metaData = msg.meta_data || {}
@@ -684,7 +687,11 @@ export class QwenStreamHandler {
               if (!this.sentRole && eventThinkingContent.length > this.thinkingContent.length) {
                 const chunk = eventThinkingContent.substring(this.thinkingContent.length)
                 this.thinkingContent = eventThinkingContent
-                console.log('[Qwen] Thinking chunk, length:', chunk.length, 'content:', chunk.substring(0, 50), 'type:', eventThinkingType, 'prev:', this.thinkingContent.length - chunk.length, '->', this.thinkingContent.length)
+                debugContent(
+                  `[Qwen] Thinking chunk length=${chunk.length} type=${eventThinkingType} prev=${this.thinkingContent.length - chunk.length} -> ${this.thinkingContent.length}`,
+                  chunk,
+                  50,
+                )
 
                 if (chunk.trim()) {
                   // Send reasoning_content delta
@@ -776,7 +783,7 @@ export class QwenStreamHandler {
                         model: this.model,
                         object: 'chat.completion.chunk',
                         choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
-                        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+                        usage: null,
                         created: this.created,
                       })}\n\n`
                     )
@@ -802,7 +809,8 @@ export class QwenStreamHandler {
               safeEnd('data: [DONE]\n\n')
             }
           } catch (err) {
-            console.error('[Qwen] Parse error:', err, 'Data:', eventData.substring(0, 200))
+            console.error('[Qwen] Parse error:', err)
+            debugContent('[Qwen] Parse error data:', eventData, 200)
           }
         }
 
@@ -828,7 +836,7 @@ export class QwenStreamHandler {
                 model: this.model,
                 object: 'chat.completion.chunk',
                 choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
-                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+                usage: null,
                 created: this.created,
               })}\n\n`
             )
@@ -909,7 +917,7 @@ export class QwenStreamHandler {
           message: { role: string; content: string | null; reasoning_content?: string; tool_calls?: any[] }
           finish_reason: string
         }>
-        usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
+        usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null
         created: number
       } = {
         id: '',
@@ -922,7 +930,7 @@ export class QwenStreamHandler {
             finish_reason: 'stop',
           },
         ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        usage: null,
         created: this.created,
       }
 

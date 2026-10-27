@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Check, Plus, ArrowRight, Loader2, ExternalLink, AlertCircle, CheckCircle2, ArrowLeft, Info, Eye, EyeOff, Copy } from 'lucide-react'
+import { Check, Plus, ArrowRight, Loader2, ExternalLink, AlertCircle, CheckCircle2, ArrowLeft, Eye, EyeOff, Copy } from 'lucide-react'
 import type { BuiltinProviderConfig, ProviderVendor } from '@/types/electron'
 import { cn } from '@/lib/utils'
 import deepseekIcon from '@/assets/providers/deepseek.svg'
@@ -22,7 +22,6 @@ import glmIcon from '@/assets/providers/glm.svg'
 import kimiIcon from '@/assets/providers/kimi.svg'
 import mimoIcon from '@/assets/providers/mimo.svg'
 import minimaxIcon from '@/assets/providers/minimax.svg'
-import perplexityIcon from '@/assets/providers/perplexity.svg'
 import qwenIcon from '@/assets/providers/qwen.svg'
 import zaiIcon from '@/assets/providers/zai.svg'
 
@@ -50,7 +49,6 @@ const providerIcons: Record<string, string> = {
   kimi: kimiIcon,
   mimo: mimoIcon,
   minimax: minimaxIcon,
-  perplexity: perplexityIcon,
   qwen: qwenIcon,
   'qwen-ai': qwenIcon,
   zai: zaiIcon,
@@ -70,7 +68,6 @@ function mapOAuthCredentials(providerId: string | undefined, credentials: Record
     'qwen': 'tongyi_sso_ticket',
     'qwen-ai': 'tongyi_sso_ticket',
     'zai': 'tongyi_sso_ticket',
-    'perplexity': '__Secure-next-auth.session-token',
   }
 
   const providerFieldNames: Record<string, string> = {
@@ -79,7 +76,6 @@ function mapOAuthCredentials(providerId: string | undefined, credentials: Record
     'qwen': 'ticket',
     'qwen-ai': 'ticket',
     'zai': 'ticket',
-    'perplexity': 'sessionToken',
   }
 
   const oauthKey = credentialKeyMap[providerId]
@@ -102,14 +98,6 @@ function mapOAuthCredentials(providerId: string | undefined, credentials: Record
     }
   }
 
-  if (providerId === 'perplexity' && credentials['__Secure-next-auth.session-token']) {
-    console.log('[mapOAuthCredentials] Mapped Perplexity secure token')
-    return { sessionToken: credentials['__Secure-next-auth.session-token'] }
-  }
-  if (providerId === 'perplexity' && credentials['next-auth.session-token']) {
-    console.log('[mapOAuthCredentials] Mapped Perplexity session token')
-    return { sessionToken: credentials['next-auth.session-token'] }
-  }
 
   if (providerId === 'mimo') {
     console.log('[mapOAuthCredentials] Processing Mimo credentials')
@@ -218,7 +206,7 @@ export function AddProviderDialog({
     ? providers.find((p) => p.id === selectedProvider) 
     : null
 
-  const supportsOAuth = selectedProviderData && ['deepseek', 'glm', 'kimi', 'mimo', 'minimax', 'qwen', 'qwen-ai', 'zai', 'perplexity'].includes(selectedProviderData.id)
+  const supportsOAuth = selectedProviderData && ['deepseek', 'glm', 'kimi', 'mimo', 'minimax', 'qwen', 'qwen-ai', 'zai'].includes(selectedProviderData.id)
 
   const toggleModelExpansion = (providerId: string) => {
     setExpandedModels(prev => {
@@ -493,13 +481,6 @@ export function AddProviderDialog({
                   helpText: t('mimo.phTokenHelp'),
                 },
               },
-              perplexity: {
-                sessionToken: {
-                  label: t('perplexity.sessionToken'),
-                  placeholder: t('perplexity.sessionTokenPlaceholder'),
-                  helpText: t('perplexity.sessionTokenHelp'),
-                },
-              },
             }
 
             const providerTranslations = translations[selectedProviderData.id]
@@ -543,7 +524,7 @@ export function AddProviderDialog({
                       disabled={!fieldValue}
                     >
                       {isCopied ? (
-                        <Check className="h-4 w-4 text-green-500" />
+                        <Check className="h-4 w-4 text-success" />
                       ) : (
                         <Copy className="h-4 w-4 text-muted-foreground" />
                       )}
@@ -583,7 +564,7 @@ export function AddProviderDialog({
                       disabled={!fieldValue}
                     >
                       {isCopied ? (
-                        <Check className="h-4 w-4 text-green-500" />
+                        <Check className="h-4 w-4 text-success" />
                       ) : (
                         <Copy className="h-4 w-4 text-muted-foreground" />
                       )}
@@ -628,7 +609,7 @@ export function AddProviderDialog({
         <TabsTrigger value="builtin">{t('providers.builtinProviders')}</TabsTrigger>
         <TabsTrigger value="custom" disabled className="gap-1">
           {t('providers.customProviders')}
-          <span className="text-[10px] text-muted-foreground">({t('providers.customProviderNotSupported')})</span>
+          <span className="text-micro text-[var(--text-muted)]">({t('providers.customProviderNotSupported')})</span>
         </TabsTrigger>
       </TabsList>
 
@@ -675,12 +656,6 @@ export function AddProviderDialog({
                       <p className="text-xs text-muted-foreground mt-0.5">
                         {getProviderDescription(provider)}
                       </p>
-                      {provider.id === 'perplexity' && (
-                        <p className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 mt-1">
-                          <Info className="h-3 w-3 flex-shrink-0" />
-                          <span>{t('perplexity.freeUserNotice')}</span>
-                        </p>
-                      )}
                       <div className="flex items-center gap-1 mt-1 flex-wrap">
                         {expandedModels.has(provider.id) ? (
                           provider.supportedModels?.map((model) => (
@@ -805,7 +780,7 @@ export function AddProviderDialog({
                   )}
                 </Button>
                 {oauthStatus && !isOAuthLoading && (
-                  <p className={`text-sm ${validationResult.valid ? 'text-green-600' : 'text-red-500'}`}>
+                  <p className={`text-sm ${validationResult.valid ? 'text-success' : 'text-error'}`}>
                     {oauthStatus}
                   </p>
                 )}
@@ -817,14 +792,14 @@ export function AddProviderDialog({
         )}
 
         {validationResult.error && (
-          <div className="flex items-center gap-2 text-sm text-red-500 bg-red-50 p-3 rounded-lg mt-4">
+          <div className="flex items-center gap-2 text-sm text-error bg-error-soft p-3 rounded-lg mt-4">
             <AlertCircle className="h-4 w-4 flex-shrink-0" />
             <span>{validationResult.error}</span>
           </div>
         )}
 
         {validationResult.valid && validationResult.userInfo && (
-          <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 p-3 rounded-lg mt-4">
+          <div className="flex items-center gap-2 text-sm text-success bg-success-soft p-3 rounded-lg mt-4">
             <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
             <div>
               <span className="font-medium">{t('providers.validationSuccess')}</span>

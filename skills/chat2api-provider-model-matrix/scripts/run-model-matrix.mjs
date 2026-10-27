@@ -25,7 +25,6 @@ const providerAliases = new Map([
   ['minimax', new Set(['minimax'])],
   ['qwen', new Set(['qwen', 'tongyi'])],
   ['tongyi', new Set(['qwen', 'tongyi'])],
-  ['perplexity', new Set(['perplexity'])],
 ])
 
 function parseArgs(values) {

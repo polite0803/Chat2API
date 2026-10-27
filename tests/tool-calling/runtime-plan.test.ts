@@ -20,8 +20,7 @@ test('off mode disables managed processing', () => {
       enabled: true,
       mode: 'off',
       clientAdapterId: 'cherry-studio-mcp',
-      diagnosticsEnabled: false,
-      advanced: { promptPreviewEnabled: false },
+      advanced: {},
     },
     clientRequest: {
       clientAdapterId: 'cherry-studio-mcp',
@@ -46,8 +45,7 @@ test('auto mode manages P0 provider requests with tools', () => {
       enabled: true,
       mode: 'auto',
       clientAdapterId: 'cherry-studio-mcp',
-      diagnosticsEnabled: false,
-      advanced: { promptPreviewEnabled: false },
+      advanced: {},
     },
     clientRequest: {
       clientAdapterId: 'cherry-studio-mcp',
@@ -73,8 +71,7 @@ test('tool_choice none disables prompt injection and parsing', () => {
       enabled: true,
       mode: 'force',
       clientAdapterId: 'standard-openai-tools',
-      diagnosticsEnabled: false,
-      advanced: { promptPreviewEnabled: false },
+      advanced: {},
     },
     clientRequest: {
       clientAdapterId: 'standard-openai-tools',
@@ -98,8 +95,7 @@ test('forced missing tool name is rejected before provider call', () => {
       enabled: true,
       mode: 'force',
       clientAdapterId: 'standard-openai-tools',
-      diagnosticsEnabled: false,
-      advanced: { promptPreviewEnabled: false },
+      advanced: {},
     },
     clientRequest: {
       clientAdapterId: 'standard-openai-tools',

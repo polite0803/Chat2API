@@ -15,13 +15,16 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useProxyStore } from '@/stores/proxyStore'
 
+type ToolCallingConfigPatch = Partial<Omit<ToolCallingConfig, 'advanced'>> & {
+  advanced?: Partial<ToolCallingConfig['advanced']>
+}
+
 function mergeToolCallingConfig(
   config: ToolCallingConfig,
-  updates: Partial<ToolCallingConfig>,
+  updates: ToolCallingConfigPatch,
 ): ToolCallingConfig {
   return {
     ...config,
@@ -38,6 +41,7 @@ export function ToolCallingPanel() {
   const { t } = useTranslation()
   const { appConfig, saveAppConfig } = useProxyStore()
   const [smokeStatus, setSmokeStatus] = useState<'not_run' | 'running' | 'pass' | 'failed'>('not_run')
+  const [smokeError, setSmokeError] = useState<string | null>(null)
   const config = appConfig?.toolCallingConfig ?? DEFAULT_TOOL_CALLING_CONFIG
   const clientAdapters = P0_TOOL_CLIENT_ADAPTERS.filter(
     (adapter) => adapter.id === 'standard-openai-tools' || adapter.id === 'cherry-studio-mcp',
@@ -48,20 +52,27 @@ export function ToolCallingPanel() {
     [config.clientAdapterId],
   )
 
-  const saveConfig = (updates: Partial<ToolCallingConfig>) => {
+  const saveConfig = (updates: ToolCallingConfigPatch) => {
     if (!appConfig) return
     saveAppConfig({ toolCallingConfig: mergeToolCallingConfig(config, updates) })
   }
 
   const runSmoke = async () => {
     setSmokeStatus('running')
+    setSmokeError(null)
     try {
       const result = await window.electronAPI?.toolCalling?.runSmoke?.({
         clientAdapterId: config.clientAdapterId,
       })
-      setSmokeStatus(result?.success ? 'pass' : 'failed')
-    } catch {
+      if (result?.success) {
+        setSmokeStatus('pass')
+        return
+      }
       setSmokeStatus('failed')
+      setSmokeError(result?.error?.message ?? t('toolCalling.smoke.failedHint'))
+    } catch (error) {
+      setSmokeStatus('failed')
+      setSmokeError(error instanceof Error ? error.message : t('toolCalling.smoke.failedHint'))
     }
   }
 
@@ -72,8 +83,8 @@ export function ToolCallingPanel() {
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-primary/10 p-2">
-              <Wrench className="h-5 w-5 text-primary" />
+            <div className="card-icon">
+              <Wrench className="h-3.5 w-3.5" />
             </div>
             <div>
               <CardTitle className="text-base">{t('toolCalling.title')}</CardTitle>
@@ -149,6 +160,9 @@ export function ToolCallingPanel() {
             <div>
               <Label>{t('toolCalling.smoke.title')}</Label>
               <p className="text-xs text-muted-foreground">{t('toolCalling.smoke.description')}</p>
+              {smokeStatus === 'failed' && smokeError && (
+                <p className="mt-1 text-xs text-destructive">{smokeError}</p>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Badge variant={smokeStatus === 'pass' ? 'default' : 'outline'}>
@@ -165,45 +179,27 @@ export function ToolCallingPanel() {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <Settings2 className="h-5 w-5 text-muted-foreground" />
-              <div>
-                <CardTitle className="text-base">{t('toolCalling.advanced.title')}</CardTitle>
-                <CardDescription>{t('toolCalling.advanced.description')}</CardDescription>
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="card-icon">
+              <Settings2 className="h-3.5 w-3.5" />
             </div>
-            <Switch
-              checked={config.diagnosticsEnabled}
-              onCheckedChange={(diagnosticsEnabled) => saveConfig({ diagnosticsEnabled })}
-            />
+            <div>
+              <CardTitle className="text-base">{t('toolCalling.advanced.title')}</CardTitle>
+              <CardDescription>{t('toolCalling.advanced.description')}</CardDescription>
+            </div>
           </div>
         </CardHeader>
-        {config.diagnosticsEnabled && (
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>{t('toolCalling.advanced.promptPreview')}</Label>
-                <p className="text-xs text-muted-foreground">{t('toolCalling.advanced.promptPreviewDesc')}</p>
-              </div>
-              <Switch
-                checked={config.advanced.promptPreviewEnabled}
-                onCheckedChange={(promptPreviewEnabled) => saveConfig({ advanced: { promptPreviewEnabled } })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>{t('toolCalling.advanced.customTemplate')}</Label>
-              <Textarea
-                className="min-h-[160px] font-mono text-xs"
-                value={config.advanced.customPromptTemplate ?? ''}
-                onChange={(event) => saveConfig({
-                  advanced: { customPromptTemplate: event.target.value || undefined },
-                })}
-                placeholder={t('toolCalling.advanced.customTemplatePlaceholder')}
-              />
-            </div>
-          </CardContent>
-        )}
+        <CardContent className="space-y-2">
+          <Label>{t('toolCalling.advanced.customTemplate')}</Label>
+          <Textarea
+            className="min-h-[160px] font-mono text-micro"
+            value={config.advanced.customPromptTemplate ?? ''}
+            onChange={(event) => saveConfig({
+              advanced: { customPromptTemplate: event.target.value || undefined },
+            })}
+            placeholder={t('toolCalling.advanced.customTemplatePlaceholder')}
+          />
+        </CardContent>
       </Card>
     </div>
   )

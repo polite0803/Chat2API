@@ -7,11 +7,8 @@ import Router from '@koa/router'
 import type { Context } from 'koa'
 import { managementAuthMiddleware } from '../../middleware/managementAuth'
 import ConfigManager from '../../../store/config'
-import type {
-  ManagementApiResponse,
-  AppConfig,
-  ConfigUpdateRequest,
-} from '../../../../shared/types'
+import type { ManagementApiResponse, ConfigUpdateRequest } from '../../../../shared/types'
+import type { AppConfig } from '../../../store/types'
 
 const router = new Router({ prefix: '/v0/management/config' })
 

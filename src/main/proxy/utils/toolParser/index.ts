@@ -1,5 +1,6 @@
 import { ToolCall } from '../../types'
 import { ToolCallFormat } from '../../constants/signatures'
+import { debugContent } from '../debugContent.ts'
 
 /**
  * 工具调用解析结果
@@ -7,7 +8,8 @@ import { ToolCallFormat } from '../../constants/signatures'
 export interface ToolParseResult {
   content: string
   toolCalls: ToolCall[]
-  format: ToolCallFormat
+  /** 'unknown' means the text carried no recognisable tool-call markup at all */
+  format: ToolCallFormat | 'unknown'
   rawMatches: string[]
 }
 
@@ -257,7 +259,8 @@ export function flushToolCallBuffer(
         finish_reason: null
       })
     } else if (state.contentBuffer && state.hasEmittedToolCall) {
-      console.warn('[StreamHandler] Discarding remaining buffer because tool calls were emitted:', state.contentBuffer.substring(0, 200) + '...')
+      console.warn('[StreamHandler] Discarding remaining buffer because tool calls were emitted')
+      debugContent('[StreamHandler] Discarded buffer:', state.contentBuffer, 200)
     }
   }
 

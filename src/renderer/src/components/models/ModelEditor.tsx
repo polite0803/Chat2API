@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
 import { useProvidersStore } from '@/stores/providersStore'
 import type { EffectiveModel } from '@/types/electron'
@@ -200,7 +201,7 @@ export function ModelEditor({
     }
   }
 
-  const renderModelTable = (modelList: EffectiveModel[], isCustom: boolean) => {
+  const renderModelTable = (modelList: EffectiveModel[]) => {
     if (modelList.length === 0) {
       return (
         <div className="text-center py-8 text-muted-foreground border rounded-lg">
@@ -227,7 +228,12 @@ export function ModelEditor({
               return (
                 <TableRow key={model.displayName}>
                   <TableCell>
-                    <code className="text-sm">{model.displayName}</code>
+                    <div className="flex items-center gap-2">
+                      <code className="text-sm">{model.displayName}</code>
+                      {model.source === 'fetched' && (
+                        <Badge variant="secondary">{t('modelEditor.fromOnlineSync')}</Badge>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <code className="text-sm">
@@ -283,12 +289,12 @@ export function ModelEditor({
             <div className="space-y-6 mt-4">
               <div>
                 <h3 className="text-lg font-semibold mb-3">{t('modelEditor.defaultModels')}</h3>
-                {renderModelTable(defaultModels, false)}
+                {renderModelTable(defaultModels)}
               </div>
 
               <div>
                 <h3 className="text-lg font-semibold mb-3">{t('modelEditor.customModels')}</h3>
-                {renderModelTable(customModels, true)}
+                {renderModelTable(customModels)}
               </div>
 
               <Alert>

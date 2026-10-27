@@ -8,7 +8,6 @@ import { useTranslation } from 'react-i18next'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { 
   DropdownMenu, 
   DropdownMenuContent, 
@@ -74,26 +73,26 @@ export function AccountList({
   }> = {
     active: {
       labelKey: 'providers.active',
-      color: 'text-green-600',
-      bgColor: 'bg-green-100',
+      color: 'text-success',
+      bgColor: 'bg-success-soft',
       icon: Check,
     },
     inactive: {
       labelKey: 'providers.inactive',
-      color: 'text-gray-600',
-      bgColor: 'bg-gray-100',
+      color: 'text-[var(--text-muted)]',
+      bgColor: 'bg-[var(--bg-tertiary)]',
       icon: Clock,
     },
     expired: {
       labelKey: 'providers.expired',
-      color: 'text-orange-600',
-      bgColor: 'bg-orange-100',
+      color: 'text-warning',
+      bgColor: 'bg-warning-soft',
       icon: AlertCircle,
     },
     error: {
       labelKey: 'common.error',
-      color: 'text-red-600',
-      bgColor: 'bg-red-100',
+      color: 'text-error',
+      bgColor: 'bg-error-soft',
       icon: X,
     },
   }
@@ -181,7 +180,7 @@ export function AccountList({
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span>{t('providers.total')}: {totalCount}</span>
           <span>•</span>
-          <span className="text-green-600">{activeCount} {t('providers.onlineCount')}</span>
+          <span className="text-[var(--success)]">{activeCount} {t('providers.onlineCount')}</span>
         </div>
         <Button size="sm" onClick={onAddAccount}>
           <Plus className="mr-2 h-4 w-4" />
@@ -189,8 +188,8 @@ export function AccountList({
         </Button>
       </div>
 
-      <ScrollArea className="h-[calc(100vh-400px)]">
-        <div className="space-y-3 pr-4">
+      <div>
+        <div className="space-y-3">
           {accounts.map((account) => {
             const config = statusConfig[account.status]
             const StatusIcon = config.icon
@@ -233,7 +232,7 @@ export function AccountList({
                         </div>
                         
                         {account.status === 'error' && account.errorMessage && (
-                          <p className="text-xs text-red-500 mt-1 truncate">
+                          <p className="text-meta text-error mt-1 truncate">
                             {account.errorMessage}
                           </p>
                         )}
@@ -290,7 +289,7 @@ export function AccountList({
                             {t('providers.editAccount')}
                           </DropdownMenuItem>
                           {/* Show Clear Chats for supported web providers */}
-                          {(providerId === 'kimi' || providerId === 'qwen' || providerId === 'qwen-ai' || providerId === 'minimax' || providerId === 'zai' || providerId === 'perplexity' || providerId === 'deepseek' || providerId === 'glm' || providerId === 'mimo') && (
+                          {(providerId === 'kimi' || providerId === 'qwen' || providerId === 'qwen-ai' || providerId === 'minimax' || providerId === 'zai' || providerId === 'deepseek' || providerId === 'glm' || providerId === 'mimo') && (
                             <>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem 
@@ -299,7 +298,7 @@ export function AccountList({
                                   handleClearChats(account)
                                 }}
                                 disabled={clearingChatsId === account.id}
-                                className="text-amber-600"
+                                className="text-warning"
                               >
                                 <Trash className="mr-2 h-4 w-4" />
                                 {clearingChatsId === account.id ? t('common.loading') : t('providers.clearChats')}
@@ -326,7 +325,7 @@ export function AccountList({
             )
           })}
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Clear Chats Confirmation Dialog */}
       <Dialog open={showClearChatsDialog} onOpenChange={setShowClearChatsDialog}>
@@ -336,7 +335,7 @@ export function AccountList({
             <DialogDescription>
               <div className="space-y-2">
                 <p>{t('providers.clearChatsConfirm')}</p>
-                <p className="text-amber-600 font-medium">{t('providers.clearChatsWarning')}</p>
+                <p className="text-warning font-medium">{t('providers.clearChatsWarning')}</p>
               </div>
             </DialogDescription>
           </DialogHeader>
@@ -349,7 +348,7 @@ export function AccountList({
             </Button>
             <Button 
               onClick={confirmClearChats}
-              className="bg-amber-600 hover:bg-amber-700"
+              className="btn-warning"
             >
               {t('common.confirm')}
             </Button>

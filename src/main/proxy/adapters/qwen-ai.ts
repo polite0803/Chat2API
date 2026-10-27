@@ -9,6 +9,9 @@ import { PassThrough } from 'stream'
 import { createParser } from 'eventsource-parser'
 import { Account, Provider } from '../../store/types'
 import { hasToolUse, parseToolUse, ToolCall } from '../promptToolUse'
+import { extractTextContent } from '../utils/contentText'
+import { renderTranscript } from '../utils/transcript'
+import { debugContent } from '../utils/debugContent.ts'
 
 const QWEN_AI_BASE = 'https://chat.qwen.ai'
 
@@ -262,23 +265,18 @@ export class QwenAiAdapter {
 
     const messages = request.messages
     
-    // Extract system message and user message
+    // Extract system message; the rest of the conversation is rendered in full so
+    // assistant/tool turns are not dropped by the single-message upstream API
     let systemContent = ''
-    let userContent = ''
     
-    // Single-turn mode: extract all messages
     for (const msg of messages) {
       if (msg.role === 'system') {
-        systemContent += (systemContent ? '\n\n' : '') + msg.content
-      } else if (msg.role === 'user') {
-        userContent = msg.content
+        systemContent += (systemContent ? '\n\n' : '') + extractTextContent(msg.content)
       }
     }
-    
-    // If system prompt exists, prepend it to user content
-    if (systemContent) {
-      userContent = `${systemContent}\n\nUser: ${userContent}`
-    }
+
+    const transcript = renderTranscript(messages, 'qwen-ai')
+    const userContent = systemContent ? `${systemContent}\n\n${transcript}` : transcript
 
     const fid = uuid()
     const childId = uuid()
@@ -427,7 +425,7 @@ export class QwenAiStreamHandler {
           model: this.model,
           object: 'chat.completion.chunk',
           choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          usage: null,
           created: this.created,
         })}\n\n`
       )
@@ -466,7 +464,7 @@ export class QwenAiStreamHandler {
     const parser = createParser({
       onEvent: (event: any) => {
         try {
-          console.log('[QwenAI] Parsed event:', event.event, 'data:', event.data?.substring(0, 200))
+          debugContent(`[QwenAI] Parsed event: ${event.event}`, event.data, 200)
           
           if (event.data === '[DONE]') {
             console.log('[QwenAI] Received [DONE] signal')
@@ -488,7 +486,7 @@ export class QwenAiStreamHandler {
             const status = delta.status
             const content = delta.content || ''
 
-            console.log('[QwenAI] Phase:', phase, 'Status:', status, 'Content:', content.substring(0, 50))
+            debugContent(`[QwenAI] Phase: ${phase} Status: ${status}`, content, 50)
 
             if (phase === 'think') {
               if (status !== 'finished') {
@@ -522,7 +520,7 @@ export class QwenAiStreamHandler {
               // When status === 'finished', the think phase is done
             } else if (phase === 'thinking_summary') {
               const extra = delta.extra || {}
-              console.log('[QwenAI] thinking_summary extra:', JSON.stringify(extra).substring(0, 300))
+              debugContent('[QwenAI] thinking_summary extra:', extra, 300)
               if (extra.summary_thought?.content) {
                 const newSummary = extra.summary_thought.content.join('\n')
                 if (newSummary && newSummary.length > summaryText.length) {
@@ -610,7 +608,7 @@ export class QwenAiStreamHandler {
                 created: this.created,
               }
               transStream.write(`data: ${JSON.stringify(finalChunk)}\n\n`)
-              transStream.end('data: [DONE]\n\n')
+              if (!transStream.writableEnded) transStream.end('data: [DONE]\n\n')
 
               if (this.onEnd && this.chatId) {
                 this.onEnd(this.chatId)
@@ -625,16 +623,16 @@ export class QwenAiStreamHandler {
 
     stream.on('data', (buffer: Buffer) => {
       const text = buffer.toString()
-      console.log('[QwenAI] Raw stream data:', text.substring(0, 500))
+      debugContent('[QwenAI] Raw stream data:', text, 500)
       parser.feed(text)
     })
     stream.once('error', (err: Error) => {
       console.error('[QwenAI] Stream error:', err)
-      transStream.end('data: [DONE]\n\n')
+      if (!transStream.writableEnded) transStream.end('data: [DONE]\n\n')
     })
     stream.once('close', () => {
       console.log('[QwenAI] Stream closed')
-      transStream.end('data: [DONE]\n\n')
+      if (!transStream.writableEnded) transStream.end('data: [DONE]\n\n')
     })
 
     return transStream
@@ -653,7 +651,7 @@ export class QwenAiStreamHandler {
             finish_reason: 'stop',
           },
         ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        usage: null,
         created: this.created,
       }
 

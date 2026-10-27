@@ -13,9 +13,7 @@ test('v2 tool calling defaults use managed standard OpenAI tools', () => {
     enabled: true,
     mode: 'auto',
     clientAdapterId: 'standard-openai-tools',
-    diagnosticsEnabled: false,
     advanced: {
-      promptPreviewEnabled: false,
       customPromptTemplate: undefined,
     },
   })
@@ -33,9 +31,7 @@ test('legacy prompt config migrates to v2 shape without exposing protocol format
       enabled: true,
       mode: 'force',
       clientAdapterId: 'standard-openai-tools',
-      diagnosticsEnabled: true,
       advanced: {
-        promptPreviewEnabled: false,
         customPromptTemplate: 'legacy {{tools}}',
       },
     },
@@ -47,9 +43,7 @@ test('legacy never mode disables v2 managed tool calling', () => {
     enabled: false,
     mode: 'off',
     clientAdapterId: 'standard-openai-tools',
-    diagnosticsEnabled: false,
     advanced: {
-      promptPreviewEnabled: false,
       customPromptTemplate: undefined,
     },
   })

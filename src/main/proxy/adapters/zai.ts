@@ -638,7 +638,7 @@ export class ZaiStreamHandler {
           model: this.model,
           object: 'chat.completion.chunk',
           choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          usage: null,
           created: this.created,
         })}\n\n`
       )
@@ -747,7 +747,7 @@ export class ZaiStreamHandler {
             // Check if we emitted tool calls
             const finishReason = this.toolCallState.hasEmittedToolCall ? 'tool_calls' : 'stop'
             
-            const usage = result.usage || { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
+            const usage = result.usage ?? null
             
             transStream.write(
               `data: ${JSON.stringify({
@@ -818,7 +818,7 @@ export class ZaiStreamHandler {
             finish_reason: 'stop',
           },
         ],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        usage: null,
         created: this.created,
       }
 

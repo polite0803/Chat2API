@@ -48,7 +48,6 @@ assignees: xiaoY233
 - [ ] GLM
 - [ ] Kimi
 - [ ] MiniMax
-- [ ] Perplexity
 - [ ] Qwen (CN)
 - [ ] Qwen AI (Global)
 - [ ] Z.ai

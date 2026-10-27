@@ -66,6 +66,7 @@ export interface ToolCallingPlan {
   toolChoiceMode: 'auto' | 'none' | 'required' | 'forced'
   allowedToolNames: Set<string>
   forcedToolName?: string
+  parallelToolCalls?: boolean
   diagnostics: ToolCallDiagnostics
 }
 

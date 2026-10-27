@@ -28,6 +28,7 @@ import { useNavigationStore } from '@/stores/navigationStore'
 import { useToast } from '@/hooks/use-toast'
 import type { ModelMapping, Provider, Account } from '@/types/electron'
 import { ArrowRight, Plus, Pencil, Trash2, Search, Sparkles, Save, RotateCcw, AlertTriangle, Lock } from 'lucide-react'
+import { DEFAULT_DEEPSEEK_MODEL_MAPPINGS as DEFAULT_MODEL_MAPPINGS } from '@shared/types'
 
 interface ModelMappingConfigProps {
   onConfigChange?: () => void
@@ -58,38 +59,6 @@ const parseModelOptionValue = (value: string): { providerId: string; model: stri
   }
 }
 
-const DEFAULT_MODEL_MAPPINGS: Record<string, ModelMapping> = {
-  'deepseek-v4-flash-think': {
-    requestModel: 'deepseek-v4-flash-think',
-    actualModel: 'deepseek-v4-flash',
-    preferredProviderId: 'deepseek',
-  },
-  'deepseek-v4-flash-search': {
-    requestModel: 'deepseek-v4-flash-search',
-    actualModel: 'deepseek-v4-flash',
-    preferredProviderId: 'deepseek',
-  },
-  'deepseek-v4-flash-think-search': {
-    requestModel: 'deepseek-v4-flash-think-search',
-    actualModel: 'deepseek-v4-flash',
-    preferredProviderId: 'deepseek',
-  },
-  'deepseek-v4-pro-think': {
-    requestModel: 'deepseek-v4-pro-think',
-    actualModel: 'deepseek-v4-pro',
-    preferredProviderId: 'deepseek',
-  },
-  'deepseek-v4-pro-search': {
-    requestModel: 'deepseek-v4-pro-search',
-    actualModel: 'deepseek-v4-pro',
-    preferredProviderId: 'deepseek',
-  },
-  'deepseek-v4-pro-think-search': {
-    requestModel: 'deepseek-v4-pro-think-search',
-    actualModel: 'deepseek-v4-pro',
-    preferredProviderId: 'deepseek',
-  },
-}
 
 const DEFAULT_MODEL_MAPPING_KEYS = new Set(Object.keys(DEFAULT_MODEL_MAPPINGS))
 
@@ -439,15 +408,15 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
   }
 
   return (
-    <Card className={hasChanges ? 'ring-2 ring-amber-500/50' : ''}>
+    <Card className={hasChanges ? 'highlight-warning' : ''}>
       <CardHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <ArrowRight className="h-5 w-5 text-primary" />
+            <ArrowRight className="h-[15px] w-[15px] text-[var(--text-muted)]" />
             <CardTitle>{t('proxy.modelMappingConfig')}</CardTitle>
           </div>
           {hasChanges && (
-            <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/50 gap-1">
+            <Badge variant="outline" className="badge-warning gap-1">
               <AlertTriangle className="h-3 w-3" />
               {t('proxy.unsaved')}
             </Badge>
@@ -457,11 +426,11 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
       </CardHeader>
       <CardContent className="space-y-6">
         {hasChanges && (
-          <div className="bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 p-4 rounded-lg border border-amber-500/20">
+          <div className="alert-warning p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2 text-sm">
-                <AlertTriangle className="h-4 w-4 text-amber-600" />
-                <span className="text-amber-700 dark:text-amber-400 font-medium">{t('proxy.unsavedChangesHint')}</span>
+                <AlertTriangle className="h-4 w-4 text-warning" />
+                <span className="text-warning font-medium">{t('proxy.unsavedChangesHint')}</span>
               </div>
               <div className="flex shrink-0 gap-2">
                 <Button
@@ -477,7 +446,7 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
                   size="sm"
                   onClick={handleSaveAll}
                   disabled={isLoading}
-                  className="bg-amber-600 hover:bg-amber-700"
+                  className="btn-warning"
                 >
                   <Save className="h-4 w-4 mr-2" />
                   {isLoading ? t('providers.saving') : t('proxy.saveConfig')}
@@ -535,7 +504,7 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
                       <TableCell>
                         <div className="flex items-center gap-2">
                           {isWildcardMapping && (
-                            <Sparkles className="h-4 w-4 text-amber-500" />
+                            <Sparkles className="h-4 w-4 text-warning" />
                           )}
                           <code className="text-sm">{mapping.requestModel}</code>
                         </div>
@@ -608,7 +577,7 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
         )}
 
         <div className="flex items-start gap-2 p-3 bg-muted/50 rounded-lg">
-          <Sparkles className="h-4 w-4 text-amber-500 mt-0.5 flex-shrink-0" />
+          <Sparkles className="h-4 w-4 text-warning mt-0.5 flex-shrink-0" />
           <div className="space-y-1">
             <p className="text-sm font-medium">{t('proxy.wildcardMapping')}</p>
             <p className="text-xs text-muted-foreground">

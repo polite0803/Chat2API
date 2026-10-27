@@ -31,7 +31,7 @@
 ## ✨ 功能特性
 
 - OpenAI 兼容 API：提供标准 OpenAI 兼容接口，无缝对接现有工具
-- 多服务商支持：支持 DeepSeek、GLM、Kimi、MiniMax、Perplexity 🆕、Qwen、Z.ai 等
+- 多服务商支持：支持 DeepSeek、GLM、Kimi、MiniMax、Qwen、Z.ai 等
 - 🆕 上下文管理：智能对话上下文管理，支持滑动窗口、Token 限制和总结压缩策略
 - 🆕 工具调用支持：通过提示词工程为所有模型提供通用工具调用能力，兼容 Cherry Studio、Kilo Code 等客户端
 - 🆕 模型映射：灵活的模型名称映射，支持通配符和首选服务商/账户选择
@@ -49,12 +49,11 @@
 
 | 服务商           | 认证类型          | OAuth | 模型                                                                                                                                                                                                                                            |
 | ------------- | ------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| DeepSeek      | User Token    | 是     | deepseek-v4-flash, deepseek-v4-pro                                                                                                                                                                                                            |
-| GLM           | Refresh Token | 是     | GLM-5.1                                                                                                                                                                                                                                       |
-| Kimi          | JWT Token     | 是     | Kimi-K2.6                                                                                                                                                                                                                                     |
+| DeepSeek      | User Token    | 是     | deepseek-default, deepseek-expert, deepseek-vision                                                                                                                                                                                                            |
+| GLM | Refresh Token | 是 | GLM-5.3, GLM-5.3-Flash |
+| Kimi          | JWT Token     | 是     | K3, K2.8, Instant                                                                                                                                                                                                                                     |
 | MiniMax       | JWT Token     | 是     | MiniMax-M2.7                                                                                                                                                                                                                                  |
 | Mimo          | Cookie        | 是     | MiMo-V2.5-Pro, MiMo-V2.5, MiMo-V2-Flash                                                                                                                                                                                                       |
-| Perplexity    | Cookie        | 是     | Auto                                                                                                                                                                                                                                         |
 | Qwen (国内版)    | SSO Ticket    | 是     | Qwen3.6, Qwen3.7-Max, Qwen3.5-Flash, Qwen3-Max, Qwen3-Max-Thinking-Preview, Qwen3-Coder                                                                                                                                                       |
 | Qwen AI (国际版) | JWT Token     | 是     | Qwen3.7-Max, Qwen3.6-Plus, Qwen3.6-35B-A3B, Qwen3.6-27B, Qwen3-Coder                                                                                                                                                                         |
 | Z.ai          | JWT Token     | 是     | 受前端验证码风控限制，暂不可用                                                                                                                                                                                                                              |
@@ -98,7 +97,7 @@ npx electron-vite dev 2>&1
 
 ```bash
 npm run build              # 构建应用
-npm run build:mac          # 构建 macOS 版本 (dmg, zip)
+npm run build:mac          # 构建 macOS 版本（仅 dmg）
 npm run build:win          # 构建 Windows 版本 (nsis)
 npm run build:linux        # 构建 Linux 版本 (AppImage, deb)
 npm run build:all          # 构建所有平台
@@ -148,7 +147,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="deepseek-v4-flash",
+    model="deepseek-default",
     messages=[
         {"role": "user", "content": "你好，你是谁？"}
     ]
@@ -225,10 +224,10 @@ Chat2API/
 
 应用数据存储在 `~/.chat2api/` 目录下：
 
-- `config.json` - 应用配置
-- `providers.json` - 服务商设置
-- `accounts.json` - 账户凭证（加密）
-- `logs/` - 请求日志
+- `data.json` - 配置、服务商、账户、会话与应用日志（单一 electron-store 文件）
+- `request-logs/` - 请求明细日志
+
+账户凭证在系统钥匙串可用时会再加密一层；不可用时将以明文写入 `data.json`。
 
 ## ❓ 常见问题
 

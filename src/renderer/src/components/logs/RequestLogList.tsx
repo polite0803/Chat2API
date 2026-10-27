@@ -14,30 +14,8 @@ import {
 } from '@/components/ui/dialog'
 import { RequestLogDetail } from './RequestLogDetail'
 import { RequestLogStats } from './RequestLogStats'
-import { Trash2 } from 'lucide-react'
-
-interface RequestLogEntry {
-  id: string
-  timestamp: number
-  status: 'success' | 'error'
-  statusCode: number
-  method: string
-  url: string
-  model: string
-  actualModel?: string
-  providerId?: string
-  providerName?: string
-  accountId?: string
-  accountName?: string
-  requestBody?: string
-  userInput?: string
-  responseStatus: number
-  responsePreview?: string
-  latency: number
-  isStream: boolean
-  errorMessage?: string
-  errorStack?: string
-}
+import { Trash2, FileText } from 'lucide-react'
+import type { RequestLogEntry } from '@/types/electron'
 
 interface RequestLogStatsData {
   total: number
@@ -56,10 +34,10 @@ interface RowProps {
 const ITEM_HEIGHT = 72
 
 function getStatusColor(status: 'success' | 'error', statusCode: number) {
-  if (status === 'success') return 'bg-green-500/10 text-green-500 border-green-500/20'
-  if (statusCode >= 500) return 'bg-red-500/10 text-red-500 border-red-500/20'
-  if (statusCode >= 400) return 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
-  return 'bg-red-500/10 text-red-500 border-red-500/20'
+  if (status === 'success') return 'badge-success'
+  if (statusCode >= 500) return 'badge-error'
+  if (statusCode >= 400) return 'badge-warning'
+  return 'badge-error'
 }
 
 function formatTime(timestamp: number) {
@@ -76,7 +54,11 @@ function formatLatency(ms: number) {
   return `${(ms / 1000).toFixed(2)}s`
 }
 
-export function RequestLogList() {
+interface RequestLogListProps {
+  highlightId?: string
+}
+
+export function RequestLogList({ highlightId }: RequestLogListProps) {
   const { t } = useTranslation()
   const [logs, setLogs] = useState<RequestLogEntry[]>([])
   const [stats, setStats] = useState<RequestLogStatsData | null>(null)
@@ -86,6 +68,7 @@ export function RequestLogList() {
   const [showClearDialog, setShowClearDialog] = useState(false)
   const logsRef = useRef<RequestLogEntry[]>([])
   const containerRef = useRef<HTMLDivElement>(null)
+  const consumedHighlightRef = useRef<string | null>(null)
   const [containerSize, setContainerSize] = useState({ width: 800, height: 400 })
 
   const fetchLogs = useCallback(async () => {
@@ -131,6 +114,15 @@ export function RequestLogList() {
     }, 3000)
     return () => clearInterval(interval)
   }, [refreshLogs])
+
+  useEffect(() => {
+    if (!highlightId || consumedHighlightRef.current === highlightId || logs.length === 0) return
+    const target = logs.find(log => log.id === highlightId)
+    if (target) {
+      setSelectedLog(target)
+      consumedHighlightRef.current = highlightId
+    }
+  }, [highlightId, logs])
 
   useEffect(() => {
     const updateSize = () => {
@@ -238,12 +230,16 @@ export function RequestLogList() {
 
       <div ref={containerRef} className="flex-1 mt-4">
         {isLoading ? (
-          <div className="flex items-center justify-center h-32 text-muted-foreground">
+          <div className="flex h-32 items-center justify-center text-[var(--text-muted)]">
             {t('common.loading')}
           </div>
         ) : logs.length === 0 ? (
-          <div className="flex items-center justify-center h-32 text-muted-foreground">
-            {t('logs.noRequestLogs')}
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <FileText className="h-5 w-5" />
+            </div>
+            <p className="empty-state-title">{t('logs.noRequestLogs')}</p>
+            <p className="empty-state-hint">{t('logs.noRequestLogsHint')}</p>
           </div>
         ) : (
           <List

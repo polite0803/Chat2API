@@ -220,13 +220,13 @@ export function About() {
   ]
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-      <div className="max-w-4xl mx-auto space-y-6 pb-12 px-4 animate-fade-in">
-        <div className="flex flex-col items-center justify-center py-10 text-center relative">
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-[var(--accent-primary)]/10 blur-[80px] rounded-full pointer-events-none" />
+    <div>
+      <div className="space-y-6 animate-fade-in">
+        <div className="flex flex-col items-center justify-center py-6 text-center relative">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-[var(--accent-primary)]/10 blur-[60px] rounded-full pointer-events-none" />
 
-          <div className="relative mb-6 animate-scale-in">
-            <div className="relative w-24 h-24 rounded-[2rem] glass-card p-4 shadow-2xl border border-[var(--glass-border)] bg-[var(--glass-bg)] overflow-hidden">
+          <div className="relative mb-4 animate-scale-in">
+            <div className="relative w-16 h-16 rounded-2xl glass-card p-2.5 overflow-hidden">
               <img
                 src={logoIcon}
                 alt="Chat2API Logo"
@@ -236,7 +236,7 @@ export function About() {
           </div>
 
           <div className="space-y-2 z-10">
-            <h1 className="text-4xl font-bold tracking-tight text-[var(--text-primary)]">
+            <h1 className="text-xl font-semibold tracking-tight text-[var(--text-primary)]">
               {t('settings.appName')}
             </h1>
             <p className="text-[var(--text-muted)] font-medium max-w-sm mx-auto">
@@ -252,7 +252,7 @@ export function About() {
         </div>
 
         <div className="grid grid-cols-1 gap-4">
-          <div className="glass-card p-6 space-y-5">
+          <div className="glass-card p-5 space-y-4">
             <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--text-dim)] flex items-center gap-2">
               <Globe className="w-3.5 h-3.5" />
               {t('about.links')}
@@ -274,7 +274,7 @@ export function About() {
                     </span>
                   </div>
                   <div className="w-6 h-6 flex items-center justify-center rounded-full bg-[var(--bg-tertiary)]/30 opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0">
-                    <span className="text-[10px] text-[var(--text-primary)]">
+                    <span className="text-micro text-[var(--text-primary)]">
                       ↗
                     </span>
                   </div>
@@ -347,7 +347,7 @@ export function About() {
                   </div>
                   <button
                     onClick={handleInstallUpdate}
-                    className="px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/90 text-white text-sm font-medium rounded-full transition-colors flex items-center gap-2 shadow-lg shadow-[var(--accent-primary)]/20"
+                    className="px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--button-primary-hover)] text-[var(--text-on-accent)] text-sm font-medium rounded-full transition-colors flex items-center gap-2 shadow-lg shadow-[var(--accent-primary)]/20"
                   >
                     <RefreshCw className="w-4 h-4" />
                     {t('settings.restartAndInstall')}
@@ -355,9 +355,9 @@ export function About() {
                 </div>
               ) : updateInfo.phase === 'error' ? (
                 <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[var(--accent-error)]/10">
-                    <AlertCircle className="w-3.5 h-3.5 text-[var(--accent-error)]" />
-                    <span className="text-xs font-medium text-[var(--accent-error)]">
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-full badge-error">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    <span className="text-xs font-medium">
                       {t('settings.updateCheckFailed')}
                     </span>
                   </div>
@@ -383,7 +383,7 @@ export function About() {
                   </div>
                   <button
                     onClick={handleDownloadUpdate}
-                    className="px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/90 text-white text-sm font-medium rounded-full transition-colors flex items-center gap-2 shadow-lg shadow-[var(--accent-primary)]/20"
+                    className="px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--button-primary-hover)] text-[var(--text-on-accent)] text-sm font-medium rounded-full transition-colors flex items-center gap-2 shadow-lg shadow-[var(--accent-primary)]/20"
                   >
                     <Download className="w-4 h-4" />
                     {t('settings.downloadUpdate')}
@@ -421,13 +421,13 @@ export function About() {
         </div>
 
         <div className="text-center space-y-3 pt-8 pb-4 border-t border-[var(--glass-border)] opacity-60">
-          <p className="text-[11px] font-bold tracking-[0.2em] text-[var(--text-dim)] uppercase">
+          <p className="text-caption font-bold tracking-[0.2em] text-[var(--text-dim)] uppercase">
             {t('about.credits')}
           </p>
           <p className="text-xs text-[var(--text-muted)] max-w-lg mx-auto leading-relaxed">
             {t('about.builtWith')}
           </p>
-          <p className="text-[10px] text-[var(--text-dim)] font-mono">
+          <p className="text-micro text-[var(--text-dim)] font-mono">
             © {new Date().getFullYear()} {t('settings.appName')} • GPL-3.0 License
           </p>
         </div>

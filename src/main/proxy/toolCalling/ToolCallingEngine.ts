@@ -52,7 +52,7 @@ export class ToolCallingEngine {
     }
 
     return {
-      messages: injectPrompt(request.messages, renderPrompt(plan.protocol, plan.tools, this.config)),
+      messages: injectPrompt(request.messages, renderPrompt(plan, this.config)),
       tools: undefined,
       plan,
     }
@@ -73,28 +73,45 @@ export class ToolCallingEngine {
     if (parseResult.toolCalls.length === 0) return
 
     message.content = parseResult.content || null
-    message.tool_calls = parseResult.toolCalls
+    const requestId = plan.diagnostics?.requestId
+    const parsedCalls = plan.parallelToolCalls === false
+      ? parseResult.toolCalls.slice(0, 1)
+      : parseResult.toolCalls
+    message.tool_calls = parsedCalls.map((toolCall, index) => ({
+      ...toolCall,
+      index,
+      id: requestId ? `call_${requestId}-${index}` : toolCall.id || `call_${index}`,
+    }))
 
     const choice = result.choices[0]
     choice.finish_reason = 'tool_calls'
   }
 }
 
-function renderPrompt(
-  protocol: ToolProtocolId,
-  tools: NormalizedToolDefinition[],
-  config: ToolCallingConfig,
-): string {
-  const prompt = getToolProtocol(protocol).renderPrompt(tools)
-  const customPromptTemplate = config.diagnosticsEnabled
-    ? config.advanced.customPromptTemplate
-    : undefined
-  if (!customPromptTemplate) return prompt
+function renderPrompt(plan: ToolCallingPlan, config: ToolCallingConfig): string {
+  const prompt = getToolProtocol(plan.protocol).renderPrompt(plan.tools)
+  const directive = buildToolChoiceDirective(plan)
+  const withDirective = directive ? `${prompt}\n\n${directive}` : prompt
+  const customPromptTemplate = config.advanced.customPromptTemplate
+  if (!customPromptTemplate) return withDirective
 
   return customPromptTemplate
-    .replace(/\{\{tools\}\}/g, prompt)
-    .replace(/\{\{tool_names\}\}/g, tools.map((tool) => tool.name).join(', '))
-    .replace(/\{\{format\}\}/g, protocol)
+    .replace(/\{\{tools\}\}/g, withDirective)
+    .replace(/\{\{tool_names\}\}/g, plan.tools.map((tool) => tool.name).join(', '))
+    .replace(/\{\{format\}\}/g, plan.protocol)
+}
+
+function buildToolChoiceDirective(plan: ToolCallingPlan): string | undefined {
+  const directives: string[] = []
+  if (plan.forcedToolName) {
+    directives.push(`You must call the tool "${plan.forcedToolName}" in this turn. Do not answer with plain text.`)
+  } else if (plan.toolChoiceMode === 'required') {
+    directives.push('You must call at least one of the available tools in this turn. Do not answer with plain text.')
+  }
+  if (plan.parallelToolCalls === false) {
+    directives.push('Call at most one tool in this turn.')
+  }
+  return directives.length > 0 ? directives.join(' ') : undefined
 }
 
 function injectPrompt(messages: ChatMessage[], prompt: string): ChatMessage[] {

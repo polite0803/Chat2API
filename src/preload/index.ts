@@ -12,9 +12,9 @@ import type {
   LogEntry,
   ProviderVendor,
   AppConfig,
-  SystemPrompt,
-  PromptType,
   EffectiveModel,
+  RequestLogEntry,
+  ModelsFetchFailure,
 } from '../shared/types'
 
 const proxyAPI = {
@@ -98,8 +98,11 @@ const providersAPI = {
   
   updateModels: (providerId: string): Promise<{
     success: boolean
-    modelsCount?: number
-    error?: string
+    reason?: ModelsFetchFailure
+    detail?: string
+    fetchedCount?: number
+    addedCount?: number
+    fetchedAt?: number
   }> => 
     ipcRenderer.invoke(IpcChannels.PROVIDERS_UPDATE_MODELS, providerId),
   
@@ -302,32 +305,6 @@ const logsAPI = {
   },
 }
 
-interface RequestLogEntry {
-  id: string
-  timestamp: number
-  status: 'success' | 'error'
-  statusCode: number
-  method: string
-  url: string
-  model: string
-  actualModel?: string
-  providerId?: string
-  providerName?: string
-  accountId?: string
-  accountName?: string
-  requestBody?: string
-  userInput?: string
-  webSearch?: boolean
-  reasoningEffort?: 'low' | 'medium' | 'high'
-  responseStatus: number
-  responsePreview?: string
-  responseBody?: string
-  latency: number
-  isStream: boolean
-  errorMessage?: string
-  errorStack?: string
-}
-
 interface RequestLogFilter {
   status?: 'success' | 'error'
   providerId?: string
@@ -442,6 +419,11 @@ const appAPI = {
   hideWindow: (): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.APP_HIDE_WINDOW),
 
+  setTitleBarTheme: (theme: 'dark' | 'light'): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.APP_SET_TITLE_BAR_THEME, theme),
+
+  platform: process.platform,
+
   openExternal: (url: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.APP_OPEN_EXTERNAL, url),
 
@@ -506,32 +488,6 @@ const configAPI = {
     ipcRenderer.on(IpcChannels.CONFIG_CHANGED, handler)
     return () => ipcRenderer.removeListener(IpcChannels.CONFIG_CHANGED, handler)
   },
-}
-
-const promptsAPI = {
-  getAll: (): Promise<SystemPrompt[]> => 
-    ipcRenderer.invoke(IpcChannels.PROMPTS_GET_ALL),
-  
-  getBuiltin: (): Promise<SystemPrompt[]> => 
-    ipcRenderer.invoke(IpcChannels.PROMPTS_GET_BUILTIN),
-  
-  getCustom: (): Promise<SystemPrompt[]> => 
-    ipcRenderer.invoke(IpcChannels.PROMPTS_GET_CUSTOM),
-  
-  getById: (id: string): Promise<SystemPrompt | undefined> => 
-    ipcRenderer.invoke(IpcChannels.PROMPTS_GET_BY_ID, id),
-  
-  add: (prompt: Omit<SystemPrompt, 'id' | 'createdAt' | 'updatedAt'>): Promise<SystemPrompt> => 
-    ipcRenderer.invoke(IpcChannels.PROMPTS_ADD, prompt),
-  
-  update: (id: string, updates: Partial<SystemPrompt>): Promise<SystemPrompt | null> => 
-    ipcRenderer.invoke(IpcChannels.PROMPTS_UPDATE, id, updates),
-  
-  delete: (id: string): Promise<boolean> => 
-    ipcRenderer.invoke(IpcChannels.PROMPTS_DELETE, id),
-  
-  getByType: (type: PromptType): Promise<SystemPrompt[]> => 
-    ipcRenderer.invoke(IpcChannels.PROMPTS_GET_BY_TYPE, type),
 }
 
 interface SessionConfig {
@@ -633,44 +589,9 @@ const contextManagementAPI = {
     ipcRenderer.invoke(IpcChannels.CONTEXT_MANAGEMENT_UPDATE_CONFIG, updates),
 }
 
-function resolveLocalManagementApiBaseUrl(config: AppConfig): string {
-  const configuredHost = config.proxyHost || '127.0.0.1'
-  const host = configuredHost === '0.0.0.0' || configuredHost === '::' || configuredHost === '[::]'
-    ? '127.0.0.1'
-    : configuredHost
-
-  return `http://${host}:${config.proxyPort}/v0/management`
-}
-
 const toolCallingAPI = {
-  async getStatus() {
-    const config = await configAPI.get()
-    const secret = config.managementApi?.managementApiSecret
-    if (!secret) return null
-
-    const response = await fetch(`${resolveLocalManagementApiBaseUrl(config)}/tool-calling/status`, {
-      headers: { Authorization: `Bearer ${secret}` },
-    })
-    return response.json()
-  },
-
-  async runSmoke(input: { clientAdapterId: string }) {
-    const config = await configAPI.get()
-    const secret = config.managementApi?.managementApiSecret
-    if (!secret) {
-      return { success: false, error: { message: 'Management API secret is not configured.' } }
-    }
-
-    const response = await fetch(`${resolveLocalManagementApiBaseUrl(config)}/tool-calling/smoke`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${secret}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(input),
-    })
-    return response.json()
-  },
+  runSmoke: (input: { clientAdapterId: string }): Promise<{ success: boolean; data?: unknown; error?: { message?: string } }> =>
+    ipcRenderer.invoke(IpcChannels.TOOL_CALLING_RUN_SMOKE, input),
 }
 
 const trayAPI = {
@@ -695,7 +616,6 @@ const electronAPI = {
   statistics: statisticsAPI,
   app: appAPI,
   config: configAPI,
-  prompts: promptsAPI,
   session: sessionAPI,
   managementApi: managementApiAPI,
   contextManagement: contextManagementAPI,

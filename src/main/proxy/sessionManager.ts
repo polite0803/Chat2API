@@ -4,22 +4,7 @@
  */
 
 import { storeManager } from '../store/store'
-import { SessionRecord, SessionConfig, ChatMessage, DEFAULT_SESSION_CONFIG } from '../store/types'
-
-export interface CreateSessionOptions {
-  providerId: string
-  accountId: string
-  model?: string
-  sessionType?: 'chat' | 'agent'
-}
-
-export interface SessionContext {
-  sessionId: string
-  providerSessionId: string | undefined
-  parentMessageId: string | undefined
-  messages: ChatMessage[]
-  isNew: boolean
-}
+import { SessionRecord, SessionConfig } from '../store/types'
 
 class SessionManagerClass {
   private cleanupInterval: NodeJS.Timeout | null = null
@@ -55,69 +40,6 @@ class SessionManagerClass {
     const newConfig = storeManager.updateSessionConfig(updates)
     console.log('[SessionManager] Session config updated:', newConfig)
     return newConfig
-  }
-
-  getOrCreateSession(options: CreateSessionOptions): SessionContext {
-    const { providerId, accountId, model } = options
-    
-    const existingSession = this.getActiveSession(providerId, accountId)
-    
-    if (existingSession) {
-      return {
-        sessionId: existingSession.id,
-        providerSessionId: undefined,
-        parentMessageId: undefined,
-        messages: existingSession.messages,
-        isNew: false,
-      }
-    }
-    
-    const newSession = this.createSession({
-      providerId,
-      accountId,
-      model,
-    })
-    
-    return {
-      sessionId: newSession.id,
-      providerSessionId: undefined,
-      parentMessageId: undefined,
-      messages: newSession.messages,
-      isNew: true,
-    }
-  }
-
-  getActiveSession(providerId: string, accountId: string): SessionRecord | undefined {
-    const sessions = storeManager.getSessionsByProviderId(providerId)
-    const accountSessions = sessions.filter(s => s.accountId === accountId)
-    const config = this.getSessionConfig()
-    const timeoutMs = config.sessionTimeout * 60 * 1000
-    const now = Date.now()
-    
-    return accountSessions.find(s => 
-      s.status === 'active' && 
-      (now - s.lastActiveAt) < timeoutMs
-    )
-  }
-
-  createSession(options: CreateSessionOptions): SessionRecord {
-    const { providerId, accountId, model, sessionType = 'chat' } = options
-    const now = Date.now()
-    
-    const session: SessionRecord = {
-      id: this.generateSessionId(),
-      providerId,
-      accountId,
-      sessionType,
-      messages: [],
-      createdAt: now,
-      lastActiveAt: now,
-      status: 'active',
-      model,
-    }
-    
-    storeManager.addSession(session)
-    return session
   }
 
   getSession(sessionId: string): SessionRecord | undefined {
@@ -164,10 +86,6 @@ class SessionManagerClass {
   shouldDeleteAfterChat(): boolean {
     const config = this.getSessionConfig()
     return config.deleteAfterTimeout
-  }
-
-  private generateSessionId(): string {
-    return `session-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
   }
 }
 

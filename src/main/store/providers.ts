@@ -61,6 +61,7 @@ export class ProviderManager {
     name: string
     authType: AuthType
     apiEndpoint: string
+    chatPath?: string
     headers?: Record<string, string>
     description?: string
     icon?: string

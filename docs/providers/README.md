@@ -9,7 +9,6 @@
 | kimi | [Kimi](kimi.md) |
 | minimax | [MiniMax](minimax.md) |
 | mimo | [Mimo](mimo.md) |
-| perplexity | [Perplexity](perplexity.md) |
 | qwen | [Qwen](qwen.md) |
 | qwen-ai | [Qwen AI](qwen-ai.md) |
 | zai | [Z.ai](zai.md) |

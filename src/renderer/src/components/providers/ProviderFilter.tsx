@@ -1,12 +1,11 @@
 /**
- * Provider Filter Component
- * Supports filtering by type, status and search
+ * Provider filter bar: search, type and status. Kept intentionally flat -
+ * add/refresh actions live in the page header.
  */
 
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
 import {
   Select,
   SelectContent,
@@ -14,23 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuCheckboxItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { 
-  Search, 
-  Filter, 
-  X, 
-  Server, 
-  RefreshCw,
-  Plus,
-  Layers,
-  CheckCircle2,
-  XCircle,
-} from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import type { ProviderStatus, ProviderType } from '@/types/electron'
 import { cn } from '@/lib/utils'
 
@@ -44,9 +27,6 @@ interface ProviderFilterProps {
   onTypeFilterChange: (filter: FilterType) => void
   statusFilter: StatusFilter
   onStatusFilterChange: (filter: StatusFilter) => void
-  onRefresh: () => void
-  onAddProvider: () => void
-  isRefreshing?: boolean
   stats?: {
     total: number
     builtin: number
@@ -63,29 +43,27 @@ export function ProviderFilter({
   onTypeFilterChange,
   statusFilter,
   onStatusFilterChange,
-  onRefresh,
-  onAddProvider,
-  isRefreshing = false,
   stats,
 }: ProviderFilterProps) {
   const { t } = useTranslation()
 
-  const typeFilterOptions: { value: FilterType; labelKey: string; icon: typeof Server }[] = [
-    { value: 'all', labelKey: 'providers.allTypes', icon: Layers },
-    { value: 'builtin', labelKey: 'providers.builtin', icon: Server },
-    { value: 'custom', labelKey: 'providers.custom', icon: Server },
-    { value: 'enabled', labelKey: 'providers.enabledOnly', icon: CheckCircle2 },
-    { value: 'disabled', labelKey: 'providers.disabledOnly', icon: XCircle },
+  const typeFilterOptions: { value: FilterType; labelKey: string }[] = [
+    { value: 'all', labelKey: 'providers.allTypes' },
+    { value: 'builtin', labelKey: 'providers.builtin' },
+    { value: 'custom', labelKey: 'providers.custom' },
+    { value: 'enabled', labelKey: 'providers.enabledOnly' },
+    { value: 'disabled', labelKey: 'providers.disabledOnly' },
   ]
 
-  const statusFilterOptions: { value: StatusFilter; labelKey: string; color: string }[] = [
-    { value: 'all', labelKey: 'providers.allStatus', color: 'bg-gray-500' },
-    { value: 'online', labelKey: 'providers.online', color: 'bg-green-500' },
-    { value: 'offline', labelKey: 'providers.offline', color: 'bg-red-500' },
-    { value: 'unknown', labelKey: 'providers.unknown', color: 'bg-gray-400' },
+  const statusFilterOptions: { value: StatusFilter; labelKey: string; dot: string }[] = [
+    { value: 'all', labelKey: 'providers.allStatus', dot: 'bg-[var(--text-dim)]' },
+    { value: 'online', labelKey: 'providers.online', dot: 'bg-[var(--success)]' },
+    { value: 'offline', labelKey: 'providers.offline', dot: 'bg-[var(--error)]' },
+    { value: 'unknown', labelKey: 'providers.unknown', dot: 'bg-[var(--warning)]' },
   ]
 
-  const hasActiveFilters = typeFilter !== 'all' || statusFilter !== 'all' || searchQuery !== ''
+  const hasActiveFilters =
+    typeFilter !== 'all' || statusFilter !== 'all' || searchQuery !== ''
 
   const handleClearFilters = () => {
     onSearchChange('')
@@ -94,10 +72,10 @@ export function ProviderFilter({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row gap-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+    <div className="mb-4 space-y-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-dim)]" />
           <Input
             placeholder={t('providers.searchProviders')}
             value={searchQuery}
@@ -108,7 +86,7 @@ export function ProviderFilter({
             <Button
               variant="ghost"
               size="icon"
-              className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+              className="absolute right-0.5 top-1/2 h-8 w-8 -translate-y-1/2"
               onClick={() => onSearchChange('')}
             >
               <X className="h-4 w-4" />
@@ -118,8 +96,7 @@ export function ProviderFilter({
 
         <div className="flex items-center gap-2">
           <Select value={typeFilter} onValueChange={(v) => onTypeFilterChange(v as FilterType)}>
-            <SelectTrigger className="w-[140px]">
-              <Filter className="mr-2 h-4 w-4" />
+            <SelectTrigger className="h-9 w-[140px] text-body">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -131,104 +108,48 @@ export function ProviderFilter({
             </SelectContent>
           </Select>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className={cn(statusFilter !== 'all' && 'border-primary')}>
-                <div className={cn(
-                  'w-2 h-2 rounded-full',
-                  statusFilterOptions.find(s => s.value === statusFilter)?.color
-                )} />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {statusFilterOptions.map((option) => (
-                <DropdownMenuCheckboxItem
-                  key={option.value}
-                  checked={statusFilter === option.value}
-                  onCheckedChange={() => onStatusFilterChange(option.value)}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={cn('w-2 h-2 rounded-full', option.color)} />
-                    <span>{t(option.labelKey)}</span>
-                  </div>
-                </DropdownMenuCheckboxItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={onRefresh}
-            disabled={isRefreshing}
+          <Select
+            value={statusFilter}
+            onValueChange={(v) => onStatusFilterChange(v as StatusFilter)}
           >
-            <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
-          </Button>
+            <SelectTrigger className="h-9 w-[130px] text-body">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {statusFilterOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  <span className="flex items-center gap-2">
+                    <span className={cn('h-2 w-2 rounded-full', option.dot)} />
+                    {t(option.labelKey)}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-          <Button onClick={onAddProvider}>
-            <Plus className="mr-2 h-4 w-4" />
-            {t('providers.addProvider')}
-          </Button>
+          {hasActiveFilters && (
+            <Button variant="ghost" size="sm" onClick={handleClearFilters}>
+              {t('common.reset')}
+            </Button>
+          )}
         </div>
       </div>
 
-      {hasActiveFilters && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-muted-foreground">{t('logs.filter')}:</span>
-          
-          {searchQuery && (
-            <Badge variant="secondary" className="gap-1">
-              {t('common.search')}: {searchQuery}
-              <X 
-                className="h-3 w-3 cursor-pointer" 
-                onClick={() => onSearchChange('')}
-              />
-            </Badge>
-          )}
-          
-          {typeFilter !== 'all' && (
-            <Badge variant="secondary" className="gap-1">
-              {t('providers.providerType')}: {t(typeFilterOptions.find(t => t.value === typeFilter)?.labelKey || '')}
-              <X 
-                className="h-3 w-3 cursor-pointer" 
-                onClick={() => onTypeFilterChange('all')}
-              />
-            </Badge>
-          )}
-          
-          {statusFilter !== 'all' && (
-            <Badge variant="secondary" className="gap-1">
-              {t('providers.status')}: {t(statusFilterOptions.find(s => s.value === statusFilter)?.labelKey || '')}
-              <X 
-                className="h-3 w-3 cursor-pointer" 
-                onClick={() => onStatusFilterChange('all')}
-              />
-            </Badge>
-          )}
-          
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            className="h-6 px-2 text-xs"
-            onClick={handleClearFilters}
-          >
-            {t('common.reset')}
-          </Button>
-        </div>
-      )}
-
       {stats && (
-        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-          <span>{t('providers.total')}: {stats.total}</span>
-          <span>•</span>
-          <span className="flex items-center gap-1">
-            <div className="w-2 h-2 rounded-full bg-green-500" />
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-meta text-[var(--text-muted)]">
+          <span>
+            {t('providers.total')} {stats.total}
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="status-dot status-dot-online" />
             {stats.online} {t('providers.onlineCount')}
           </span>
-          <span>•</span>
-          <span>{stats.enabled} {t('providers.enabled')}</span>
-          <span>•</span>
-          <span>{stats.builtin} {t('providers.builtin')}, {stats.custom} {t('providers.custom')}</span>
+          <span>
+            {stats.enabled} {t('providers.enabled')}
+          </span>
+          <span>
+            {stats.builtin} {t('providers.builtin')} · {stats.custom} {t('providers.custom')}
+          </span>
         </div>
       )}
     </div>

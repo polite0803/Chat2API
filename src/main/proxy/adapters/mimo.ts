@@ -752,6 +752,8 @@ export class MimoStreamHandler {
     if (this.usage) {
       yield this.formatOpenAIUsageChunk(id, created, this.usage)
     }
+
+    yield 'data: [DONE]\n\n'
   }
 
   async handleNonStream(stream: NodeJS.ReadableStream): Promise<string> {

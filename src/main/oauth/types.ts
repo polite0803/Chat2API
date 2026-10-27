@@ -22,7 +22,7 @@ export type OAuthStatus = 'idle' | 'pending' | 'success' | 'error' | 'cancelled'
 /**
  * Token type
  */
-export type TokenType = 'jwt' | 'refresh' | 'access' | 'cookie'
+export type TokenType = 'jwt' | 'refresh' | 'access' | 'cookie' | 'token'
 
 /**
  * OAuth login result
@@ -129,7 +129,7 @@ export interface ManualTokenConfig {
 /**
  * Manual input config for each provider
  */
-export const MANUAL_TOKEN_CONFIGS: Record<ProviderType, ManualTokenConfig[]> = {
+export const MANUAL_TOKEN_CONFIGS: Partial<Record<ProviderType, ManualTokenConfig[]>> = {
   deepseek: [
     {
       providerType: 'deepseek',
@@ -196,16 +196,6 @@ export const MANUAL_TOKEN_CONFIGS: Record<ProviderType, ManualTokenConfig[]> = {
       placeholder: 'Enter JWT token from chat.qwen.ai',
       description: 'JWT token obtained from chat.qwen.ai Local Storage (key: "token")',
       helpUrl: 'https://chat.qwen.ai',
-    },
-  ],
-  perplexity: [
-    {
-      providerType: 'perplexity',
-      tokenType: 'cookie',
-      label: 'Cookies',
-      placeholder: 'Paste Perplexity cookies or import HAR file',
-      description: 'Get cookies from perplexity.ai browser DevTools or import HAR file',
-      helpUrl: 'https://www.perplexity.ai',
     },
   ],
 }

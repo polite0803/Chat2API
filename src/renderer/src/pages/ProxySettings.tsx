@@ -6,9 +6,13 @@ import {
   LoadBalanceConfig,
   ProxyStatus,
   AdvancedConfig,
+  SessionManagement,
 } from '@/components/proxy'
+import { ContextManagement } from '@/components/proxy/ContextManagement'
+import ApiKeys from '@/pages/ApiKeys'
 import { useProxyStore } from '@/stores/proxyStore'
-import { Settings, Scale, Activity, Settings2 } from 'lucide-react'
+import { Settings, Scale, Settings2, Key } from 'lucide-react'
+import { PageHeader } from '@/components/layout/PageHeader'
 
 export function ProxySettings() {
   const { t } = useTranslation()
@@ -18,53 +22,56 @@ export function ProxySettings() {
   useEffect(() => {
     if (hasLoadedRef.current) return
     hasLoadedRef.current = true
-    
+
     fetchAppConfig()
     fetchProxyStatus()
     fetchProxyStatistics()
   }, [])
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">{t('proxy.title')}</h2>
-        <p className="text-muted-foreground">{t('proxy.description')}</p>
-      </div>
+    <div>
+      <PageHeader title={t('proxy.title')} description={t('proxy.description')} />
 
-      <Tabs defaultValue="status" className="w-full">
-        <TabsList className="flex flex-wrap w-full gap-1 h-auto p-1">
-          <TabsTrigger value="status" className="flex items-center gap-2 py-2 px-3 flex-1 min-w-0">
-            <Activity className="h-4 w-4 flex-shrink-0" />
-            <span className="hidden md:inline truncate">{t('proxy.statusMonitoring')}</span>
+      <ProxyStatus />
+
+      <Tabs defaultValue="basic" className="mt-6 w-full">
+        <TabsList>
+          <TabsTrigger value="basic" className="gap-2">
+            <Settings className="h-4 w-4" />
+            {t('proxy.basicConfig')}
           </TabsTrigger>
-          <TabsTrigger value="basic" className="flex items-center gap-2 py-2 px-3 flex-1 min-w-0">
-            <Settings className="h-4 w-4 flex-shrink-0" />
-            <span className="hidden md:inline truncate">{t('proxy.basicConfig')}</span>
+          <TabsTrigger value="keys" className="gap-2">
+            <Key className="h-4 w-4" />
+            {t('apiKeys.title')}
           </TabsTrigger>
-          <TabsTrigger value="loadbalance" className="flex items-center gap-2 py-2 px-3 flex-1 min-w-0">
-            <Scale className="h-4 w-4 flex-shrink-0" />
-            <span className="hidden md:inline truncate">{t('proxy.loadBalancing')}</span>
+          <TabsTrigger value="loadbalance" className="gap-2">
+            <Scale className="h-4 w-4" />
+            {t('proxy.loadBalancing')}
           </TabsTrigger>
-          <TabsTrigger value="advanced" className="flex items-center gap-2 py-2 px-3 flex-1 min-w-0">
-            <Settings2 className="h-4 w-4 flex-shrink-0" />
-            <span className="hidden md:inline truncate">{t('proxy.advancedConfig')}</span>
+          <TabsTrigger value="advanced" className="gap-2">
+            <Settings2 className="h-4 w-4" />
+            {t('proxy.advancedConfig')}
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="status" className="mt-6">
-          <ProxyStatus />
-        </TabsContent>
-
-        <TabsContent value="basic" className="mt-6">
+        <TabsContent value="basic">
           <ProxyConfigForm />
         </TabsContent>
 
-        <TabsContent value="loadbalance" className="mt-6">
+        <TabsContent value="keys">
+          <ApiKeys embedded />
+        </TabsContent>
+
+        <TabsContent value="loadbalance">
           <LoadBalanceConfig />
         </TabsContent>
 
-        <TabsContent value="advanced" className="mt-6">
-          <AdvancedConfig />
+        <TabsContent value="advanced">
+          <div className="space-y-6">
+            <AdvancedConfig />
+            <SessionManagement />
+            <ContextManagement />
+          </div>
         </TabsContent>
       </Tabs>
     </div>

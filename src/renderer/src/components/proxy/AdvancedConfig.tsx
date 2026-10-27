@@ -132,7 +132,7 @@ export function AdvancedConfig({ onConfigChange }: AdvancedConfigProps) {
       <CardHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Settings2 className="h-5 w-5 text-primary" />
+            <Settings2 className="h-[15px] w-[15px] text-[var(--text-muted)]" />
             <CardTitle>{t('proxy.advancedConfig')}</CardTitle>
           </div>
           {hasChanges && (
@@ -158,7 +158,7 @@ export function AdvancedConfig({ onConfigChange }: AdvancedConfigProps) {
                   </span>
                 )}
                 {!errors.timeout && formData.timeout && (
-                  <CheckCircle2 className="h-3 w-3 text-green-500" />
+                  <CheckCircle2 className="h-3 w-3 text-success" />
                 )}
               </Label>
               <Input
@@ -184,7 +184,7 @@ export function AdvancedConfig({ onConfigChange }: AdvancedConfigProps) {
                   </span>
                 )}
                 {!errors.retryCount && formData.retryCount && (
-                  <CheckCircle2 className="h-3 w-3 text-green-500" />
+                  <CheckCircle2 className="h-3 w-3 text-success" />
                 )}
               </Label>
               <Input

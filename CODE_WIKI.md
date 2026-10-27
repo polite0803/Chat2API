@@ -6,7 +6,7 @@ Chat2API 是一个多平台 AI 服务统一管理工具，通过利用官方 Web
 
 ### 核心功能
 - OpenAI 兼容 API：提供标准的 OpenAI 兼容 API 端点，实现无缝集成
-- 多提供商支持：连接 DeepSeek、GLM、Kimi、MiniMax、Perplexity、Qwen、Z.ai 等
+- 多提供商支持：连接 DeepSeek、GLM、Kimi、MiniMax、Qwen、Z.ai 等
 - 上下文管理：智能对话上下文管理，支持滑动窗口、令牌限制和摘要策略
 - 函数调用支持：通过提示工程实现所有模型的通用工具调用能力，兼容 Cherry Studio、Kilo Code 等客户端
 - 模型映射：灵活的模型名称映射，支持通配符和首选提供商/账户选择
@@ -231,10 +231,10 @@ npm run start:sandbox
 ### 7.1 配置文件
 
 应用数据存储在 `~/.chat2api/` 目录：
-- `config.json` - 应用配置
-- `providers.json` - 提供商设置
-- `accounts.json` - 账户凭证（加密）
-- `logs/` - 请求日志
+- `data.json` - 单一 electron-store 文件，包含配置、提供商、账户、会话、系统提示词、统计与应用日志（并不存在单独的 `providers.json` / `accounts.json`）
+- `request-logs/` - 请求明细日志
+
+凭证保护有两层：整份 `data.json` 使用编译进程序的固定密钥；单个凭证在有系统 `safeStorage` 时再加密一层。系统加密不可用时会以明文写入，仅在控制台告警。
 
 ### 7.2 代理配置
 
@@ -249,7 +249,6 @@ npm run start:sandbox
 - GLM
 - Kimi
 - MiniMax
-- Perplexity
 - Qwen (CN)
 - Qwen AI (Global)
 - Z.ai
@@ -332,7 +331,6 @@ GNU General Public License v3.0。详见 [LICENSE](LICENSE) 文件。
 - Added multi-language support for update UI
 
 ### v1.1.4
-- 新增 Perplexity 提供商支持
 - 改进上下文管理功能
 - 优化模型映射逻辑
 - 修复已知 bug

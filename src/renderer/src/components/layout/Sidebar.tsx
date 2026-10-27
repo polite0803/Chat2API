@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
@@ -9,11 +8,9 @@ import {
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
-  Key,
   Cpu,
-  Info,
-  MessageSquare,
   AlertTriangle,
+  Zap,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -39,20 +36,56 @@ const navItems: NavItem[] = [
   { titleKey: 'nav.providers', href: '/providers', icon: Server },
   { titleKey: 'nav.proxy', href: '/proxy', icon: Settings2 },
   { titleKey: 'nav.models', href: '/models', icon: Cpu },
-  { titleKey: 'nav.session', href: '/session', icon: MessageSquare },
-  { titleKey: 'nav.apiKeys', href: '/api-keys', icon: Key },
   { titleKey: 'nav.logs', href: '/logs', icon: FileText },
   { titleKey: 'nav.settings', href: '/settings', icon: Settings },
-  { titleKey: 'nav.about', href: '/about', icon: Info },
 ]
 
-function Tooltip({ label, children }: { label: string; children: React.ReactNode }) {
+function NavButton({
+  item,
+  collapsed,
+  onNavigate,
+  hasBlockers,
+  isCurrent,
+}: {
+  item: NavItem
+  collapsed: boolean
+  onNavigate: (href: string) => void
+  hasBlockers: boolean
+  isCurrent: boolean
+}) {
+  const { t } = useTranslation()
+  const title = t(item.titleKey)
+
+  const link = (
+    <NavLink
+      to={item.href}
+      aria-label={title}
+      onClick={(event) => {
+        if (hasBlockers && !isCurrent) {
+          event.preventDefault()
+          onNavigate(item.href)
+        }
+      }}
+      className={({ isActive }) =>
+        cn(
+          'sidebar-nav-item',
+          collapsed ? 'collapsed' : 'expanded',
+          isActive ? 'active' : 'inactive'
+        )
+      }
+    >
+      <item.icon className="h-[18px] w-[18px] flex-shrink-0" />
+      {!collapsed && <span className="truncate">{title}</span>}
+    </NavLink>
+  )
+
+  if (!collapsed) return link
+
   return (
     <div className="tooltip-container">
-      {children}
-      <div className="tooltip-content">
-        {label}
-        <div className="tooltip-arrow" />
+      {link}
+      <div className="tooltip-content" role="tooltip">
+        {title}
       </div>
     </div>
   )
@@ -61,109 +94,78 @@ function Tooltip({ label, children }: { label: string; children: React.ReactNode
 export function Sidebar() {
   const { t } = useTranslation()
   const { sidebarCollapsed, toggleSidebar } = useSettingsStore()
-  const { blockers, isDialogOpen, confirmNavigation, cancelNavigation } = useNavigationStore()
+  const { blockers, isDialogOpen, setPendingNavigation, confirmNavigation, cancelNavigation } =
+    useNavigationStore()
   const navigate = useNavigate()
   const location = useLocation()
-  const [pendingHref, setPendingHref] = useState<string | null>(null)
 
   const hasBlockers = blockers.length > 0
 
   const handleNavigation = (href: string) => {
     if (hasBlockers && location.pathname !== href) {
-      setPendingHref(href)
+      setPendingNavigation(() => navigate(href))
     } else {
       navigate(href)
     }
   }
 
-  const handleConfirmNavigation = () => {
-    if (pendingHref) {
-      navigate(pendingHref)
-      setPendingHref(null)
-    }
-    confirmNavigation()
-  }
-
   const handleCancelNavigation = () => {
-    setPendingHref(null)
     cancelNavigation()
-  }
-
-  const NavButton = ({ item }: { item: NavItem }) => {
-    const title = t(item.titleKey)
-    const buttonContent = (
-      <div
-        onClick={(e) => {
-          if (hasBlockers && location.pathname !== item.href) {
-            e.preventDefault()
-            handleNavigation(item.href)
-          }
-        }}
-        className="block"
-      >
-        <NavLink
-          to={item.href}
-          onClick={(e) => {
-            if (hasBlockers && location.pathname !== item.href) {
-              e.preventDefault()
-            }
-          }}
-          className={({ isActive }) =>
-            cn(
-              'sidebar-nav-item',
-              sidebarCollapsed ? 'collapsed' : 'expanded',
-              isActive ? 'active' : 'inactive'
-            )
-          }
-        >
-          <item.icon className="h-5 w-5 flex-shrink-0" />
-          <span
-            className={cn(
-              'whitespace-nowrap transition-all duration-300',
-              sidebarCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'w-auto opacity-100'
-            )}
-          >
-            {title}
-          </span>
-        </NavLink>
-      </div>
-    )
-    
-    if (sidebarCollapsed) {
-      return <Tooltip label={title}>{buttonContent}</Tooltip>
-    }
-    return buttonContent
   }
 
   return (
     <>
       <aside
         className={cn(
-          'glass-sidebar flex flex-col transition-all duration-300 ease-in-out',
-          sidebarCollapsed ? 'w-[72px]' : 'w-64'
+          'glass-sidebar flex shrink-0 flex-col transition-[width] duration-200 ease-out',
+          sidebarCollapsed ? 'w-16' : 'w-[232px]'
         )}
       >
-        <nav className="flex-1 p-3 space-y-1 overflow-x-hidden overflow-y-auto pt-5">
+        <div
+          className={cn(
+            'drag-region flex h-12 items-center border-b border-[var(--glass-border)]',
+            sidebarCollapsed ? 'justify-center px-2' : 'gap-2.5 px-3'
+          )}
+        >
+          <div className="sidebar-logo-icon">
+            <Zap className="h-3.5 w-3.5" />
+          </div>
+          {!sidebarCollapsed && (
+            <span className="sidebar-wordmark">Chat2API</span>
+          )}
+        </div>
+
+        <nav className="flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden px-2 py-2">
           {navItems.map((item) => (
-            <NavButton key={item.href} item={item} />
+            <NavButton
+              key={item.href}
+              item={item}
+              collapsed={sidebarCollapsed}
+              onNavigate={handleNavigation}
+              hasBlockers={hasBlockers}
+              isCurrent={
+                location.pathname === item.href ||
+                (item.href !== '/' && location.pathname.startsWith(`${item.href}/`))
+              }
+            />
           ))}
         </nav>
 
-        <div className="mx-4 border-t border-[var(--glass-border)] opacity-50" />
-
-        <div className="p-3 overflow-hidden flex justify-center">
-          <button
-            className="sidebar-collapse-btn"
-            onClick={toggleSidebar}
-            aria-label={sidebarCollapsed ? t('settings.sidebarCollapsedHelp') : t('settings.sidebarCollapsedHelp')}
-            title={sidebarCollapsed ? t('settings.sidebarCollapsedHelp') : t('settings.sidebarCollapsedHelp')}
-          >
-            {sidebarCollapsed ? (
-              <PanelLeftOpen className="h-5 w-5" />
-            ) : (
-              <PanelLeftClose className="h-5 w-5" />
-            )}
-          </button>
+        <div className="border-t border-[var(--glass-border)] p-2">
+          <div className={cn('flex', sidebarCollapsed ? 'justify-center' : 'justify-end')}>
+            <button
+              className="sidebar-collapse-btn"
+              onClick={toggleSidebar}
+              aria-label={sidebarCollapsed ? t('settings.expandSidebar') : t('settings.collapseSidebar')}
+              title={sidebarCollapsed ? t('settings.expandSidebar') : t('settings.collapseSidebar')}
+            >
+              {sidebarCollapsed ? (
+                <PanelLeftOpen className="h-4 w-4" />
+              ) : (
+                <PanelLeftClose className="h-4 w-4" />
+              )}
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -171,7 +173,7 @@ export function Sidebar() {
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              <AlertTriangle className="h-5 w-5 text-[var(--warning)]" />
               {t('proxy.unsavedChangesTitle')}
             </DialogTitle>
             <DialogDescription>
@@ -182,10 +184,7 @@ export function Sidebar() {
             <Button variant="outline" onClick={handleCancelNavigation}>
               {t('common.cancel')}
             </Button>
-            <Button
-              variant="destructive"
-              onClick={handleConfirmNavigation}
-            >
+            <Button variant="destructive" onClick={confirmNavigation}>
               {t('proxy.discardAndLeave')}
             </Button>
           </DialogFooter>

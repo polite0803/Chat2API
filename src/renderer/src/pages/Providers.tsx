@@ -25,8 +25,18 @@ import type {
   Account,
 } from '@/types/electron'
 import { FilterType, StatusFilter } from '@/components/providers/ProviderFilter'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Server, ArrowLeft } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/layout/PageHeader'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { cn } from '@/lib/utils'
+import { Server, Plus, RefreshCw, AlertTriangle } from 'lucide-react'
 
 type ViewMode = 'providers' | 'accounts' | 'account-detail'
 
@@ -51,6 +61,8 @@ export function Providers() {
   
   const [showModelEditor, setShowModelEditor] = useState(false)
   const [modelEditorProvider, setModelEditorProvider] = useState<{ id: string; name: string } | null>(null)
+
+  const [deleteProviderId, setDeleteProviderId] = useState<string | null>(null)
   
   useEffect(() => {
     if (hasLoadedRef.current) return
@@ -183,6 +195,13 @@ export function Providers() {
     }
   }
 
+  const handleConfirmDeleteProvider = async () => {
+    if (!deleteProviderId) return
+    const id = deleteProviderId
+    setDeleteProviderId(null)
+    await handleDeleteProvider(id)
+  }
+
   const handleDuplicateProvider = async (id: string) => {
     try {
       const newProvider = await window.electronAPI.providers.duplicate(id)
@@ -243,29 +262,55 @@ export function Providers() {
   }
 
   const handleUpdateModels = async (providerId: string) => {
+    toast({
+      title: t('providers.updatingModels'),
+      description: t('providers.updatingModels'),
+    })
+
     try {
-      toast({
-        title: t('providers.updatingModels'),
-        description: t('providers.updatingModels'),
-      })
-      
       const result = await window.electronAPI.providers.updateModels?.(providerId)
-      
-      if (result?.success) {
+
+      if (!result) {
+        toast({
+          title: t('providers.updateModelsFailed'),
+          description: t('common.error'),
+          variant: 'destructive',
+        })
+        return
+      }
+
+      if (result.success) {
         const providers = await window.electronAPI.providers.getAll()
         useProvidersStore.getState().setProviders(providers)
         toast({
-          title: t('providers.modelsUpdated'),
-          description: t('providers.modelsUpdatedDesc'),
+          title: t('providers.updateModelsSuccess'),
+          description: result.addedCount
+            ? t('providers.updateModelsCountDesc', {
+                fetched: result.fetchedCount ?? 0,
+                added: result.addedCount,
+              })
+            : t('providers.updateModelsNoChangeDesc', { fetched: result.fetchedCount ?? 0 }),
         })
-      } else {
-        toast({
-          title: t('providers.updateModelsFailed'),
-          description: result?.error || t('common.error'),
-          variant: 'destructive',
-        })
+        return
       }
+
+      const failureDescriptions: Record<string, string> = {
+        unsupported: t('providers.updateModelsNotSupported'),
+        no_active_account: t('providers.updateModelsNoAccountDesc'),
+        missing_credential_field: t('providers.updateModelsMissingFieldDesc', { detail: result.detail ?? '' }),
+        http_status: t('providers.updateModelsHttpStatusDesc', { detail: result.detail ?? '' }),
+        empty: t('providers.updateModelsEmptyDesc'),
+        unrecognized_shape: t('providers.updateModelsShapeDesc', { detail: result.detail ?? '' }),
+        network_error: t('providers.updateModelsNetworkDesc', { detail: result.detail ?? '' }),
+      }
+
+      toast({
+        title: t('providers.updateModelsFailed'),
+        description: failureDescriptions[result.reason ?? 'network_error'],
+        variant: 'destructive',
+      })
     } catch (error) {
+      console.error('Failed to update models:', error)
       toast({
         title: t('providers.updateModelsFailed'),
         description: t('common.error'),
@@ -604,25 +649,13 @@ export function Providers() {
 
   if (viewMode === 'accounts' && selectedProvider) {
     return (
-      <div className="space-y-6">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={handleBackToProviders}
-            className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="h-5 w-5" />
-            <span>{t('providers.backToProviderList')}</span>
-          </button>
-        </div>
-
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">
-            {selectedProvider.name} - {t('providers.accountManagement')}
-          </h2>
-          <p className="text-muted-foreground">
-            {t('providers.manageAllAccounts')}
-          </p>
-        </div>
+      <div>
+        <PageHeader
+          title={`${selectedProvider.name} · ${t('providers.accountManagement')}`}
+          description={t('providers.manageAllAccounts')}
+          onBack={handleBackToProviders}
+          backLabel={t('providers.backToProviderList')}
+        />
 
         <AccountList
           accounts={providerAccounts}
@@ -655,13 +688,23 @@ export function Providers() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">{t('providers.title')}</h2>
-          <p className="text-muted-foreground">{t('providers.subtitle')}</p>
-        </div>
-      </div>
+    <div>
+      <PageHeader
+        title={t('providers.title')}
+        description={t('providers.subtitle')}
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={handleCheckAllStatus} disabled={isRefreshing}>
+              <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
+              {t('providers.checkStatus')}
+            </Button>
+            <Button size="sm" onClick={() => setShowAddProviderDialog(true)}>
+              <Plus className="h-4 w-4" />
+              {t('providers.addProvider')}
+            </Button>
+          </>
+        }
+      />
 
       <ProviderFilter
         searchQuery={searchQuery}
@@ -670,27 +713,27 @@ export function Providers() {
         onTypeFilterChange={setTypeFilter}
         statusFilter={statusFilter}
         onStatusFilterChange={setStatusFilter}
-        onRefresh={handleCheckAllStatus}
-        onAddProvider={() => setShowAddProviderDialog(true)}
-        isRefreshing={isRefreshing}
         stats={stats}
       />
 
       {filteredProviders.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-          <Server className="h-12 w-12 mb-4 opacity-50" />
-          <p className="text-lg font-medium">{t('providers.noProvidersFound')}</p>
-          <p className="text-sm">
-            {searchQuery || typeFilter !== 'all' || statusFilter !== 'all'
-              ? t('providers.tryAdjustingFilters')
-              : t('providers.clickToAddProvider')}
-          </p>
+        <div className="flex min-h-[320px] items-center justify-center">
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <Server className="h-5 w-5" />
+            </div>
+            <p className="empty-state-title">{t('providers.noProvidersFound')}</p>
+            <p className="empty-state-hint">
+              {searchQuery || typeFilter !== 'all' || statusFilter !== 'all'
+                ? t('providers.tryAdjustingFilters')
+                : t('providers.clickToAddProvider')}
+            </p>
+          </div>
         </div>
       ) : (
-        <ScrollArea className="h-[calc(100vh-280px)]">
-          <div className="grid gap-4 pr-4">
-            {filteredProviders.map((provider) => (
-              <ProviderCard
+        <div className="grid gap-4 xl:grid-cols-2">
+          {filteredProviders.map((provider) => (
+            <ProviderCard
                 key={provider.id}
                 provider={provider}
                 status={store.providerStatuses[provider.id]}
@@ -698,7 +741,7 @@ export function Providers() {
                 activeAccountCount={store.accountCounts[provider.id]?.active || 0}
                 onToggle={handleToggleProvider}
                 onEdit={handleEditProvider}
-                onDelete={handleDeleteProvider}
+                onDelete={(id) => setDeleteProviderId(id)}
                 onDuplicate={handleDuplicateProvider}
                 onCheckStatus={handleCheckProviderStatus}
                 onManageAccounts={handleManageAccounts}
@@ -706,9 +749,33 @@ export function Providers() {
                 onManageModels={handleManageModels}
               />
             ))}
-          </div>
-        </ScrollArea>
+        </div>
       )}
+
+      <Dialog
+        open={deleteProviderId !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteProviderId(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-[var(--warning)]" />
+              {t('providers.deleteProvider')}
+            </DialogTitle>
+            <DialogDescription>{t('providers.confirmDelete')}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setDeleteProviderId(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmDeleteProvider}>
+              {t('providers.deleteProvider')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AddProviderDialog
         open={showAddProviderDialog}

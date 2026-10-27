@@ -12,6 +12,7 @@ export interface NormalizedClientToolRequest {
   toolSource: 'openai' | 'mcp' | 'none'
   tools: NormalizedToolDefinition[]
   toolChoice: NormalizedToolChoice
+  parallelToolCalls?: boolean
   diagnostics: {
     requestedClientAdapterId?: string
     fallbackClientAdapterId?: string

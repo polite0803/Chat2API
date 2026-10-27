@@ -11,6 +11,7 @@ import { parseToolCallsFromText } from '../utils/toolParser'
 import { createBaseChunk } from '../utils/streamToolHandler'
 import { createKimiChatPayload, encodeKimiGrpcFrame } from './providerModelOptions'
 import { getProviderToolProfile } from '../toolCalling/providerProfiles'
+import { extractTextContent } from '../utils/contentText'
 import { ToolStreamParser } from '../toolCalling/ToolStreamParser'
 import type { ToolCallingPlan } from '../toolCalling/types'
 
@@ -49,6 +50,8 @@ interface KimiMessage {
 
 interface ChatCompletionRequest {
   model: string
+  /** Original model name before mapping (used for feature detection like web search, thinking mode) */
+  originalModel?: string
   messages: KimiMessage[]
   stream?: boolean
   temperature?: number
@@ -176,7 +179,7 @@ export class KimiAdapter {
           role: 'user' as const,
           content: toolProfile.formatToolResult({
             toolCallId: msg.tool_call_id,
-            content: String(msg.content || ''),
+            content: extractTextContent(msg.content),
           }),
         }
       }
@@ -571,7 +574,7 @@ export class KimiStreamHandler {
   async handleStream(stream: any): Promise<PassThrough> {
     const transStream = new PassThrough()
     const created = unixTimestamp()
-    let buffer = Buffer.alloc(0)
+    let buffer: Buffer = Buffer.alloc(0)
     let sentRole = false
 
     stream.on('data', (chunk: Buffer) => {
@@ -581,12 +584,12 @@ export class KimiStreamHandler {
 
     stream.once('error', (err: Error) => {
       console.error('[Kimi] Stream error:', err.message)
-      if (!transStream.closed) transStream.end('data: [DONE]\n\n')
+      if (!transStream.writableEnded) transStream.end('data: [DONE]\n\n')
     })
 
     stream.once('close', () => {
       console.log('[Kimi] Stream closed, realChatId:', this.realChatId, 'lastMessageId:', this.lastMessageId)
-      if (!transStream.closed) transStream.end('data: [DONE]\n\n')
+      if (!transStream.writableEnded) transStream.end('data: [DONE]\n\n')
     })
 
     return transStream
@@ -769,7 +772,7 @@ export class KimiStreamHandler {
         choices: [{ index: 0, delta: {}, finish_reason: this.toolStreamParser?.hasEmittedToolCall() ? 'tool_calls' : 'stop' }],
         created,
       })}\n\n`)
-      transStream.end('data: [DONE]\n\n')
+      if (!transStream.writableEnded) transStream.end('data: [DONE]\n\n')
     }
   }
 
@@ -799,7 +802,7 @@ export class KimiStreamHandler {
     const created = unixTimestamp()
     let content = ''
     let reasoningContent = ''
-    let buffer = Buffer.alloc(0)
+    let buffer: Buffer = Buffer.alloc(0)
     let currentPhase: 'thinking' | 'answer' | undefined = undefined
 
     return new Promise((resolve, reject) => {
@@ -900,7 +903,7 @@ export class KimiStreamHandler {
                     message,
                     finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
                   }],
-                  usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+                  usage: null,
                 })
               }
             }
@@ -943,7 +946,7 @@ export class KimiStreamHandler {
             message,
             finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
           }],
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          usage: null,
         })
       })
     })

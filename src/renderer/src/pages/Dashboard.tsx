@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Activity, CheckCircle, Clock, Users, RefreshCw } from 'lucide-react'
+import { Activity, CheckCircle, Clock, Users, RefreshCw, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   StatsCard,
@@ -10,6 +10,7 @@ import {
   QuickActions,
   RecentActivity,
 } from '@/components/dashboard'
+import { PageHeader } from '@/components/layout/PageHeader'
 import { useDashboardStore } from '@/stores/dashboardStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { cn } from '@/lib/utils'
@@ -28,7 +29,7 @@ export function Dashboard() {
     lastUpdated,
     refreshData,
   } = useDashboardStore()
-  const { proxyEnabled, setProxyEnabled } = useSettingsStore()
+  const { setProxyEnabled } = useSettingsStore()
   const hasLoadedRef = useRef(false)
 
   useEffect(() => {
@@ -42,7 +43,7 @@ export function Dashboard() {
     const interval = setInterval(() => {
       useDashboardStore.getState().refreshData()
     }, 60000)
-    
+
     return () => clearInterval(interval)
   }, [])
 
@@ -54,87 +55,68 @@ export function Dashboard() {
 
   useEffect(() => {
     if (!window.electronAPI?.proxy?.onStatusChanged) return
-    
+
     const unsubscribe = window.electronAPI.proxy.onStatusChanged((status) => {
       useDashboardStore.getState().setProxyStatus(status)
       setProxyEnabled(status.isRunning)
     })
-    
+
     return unsubscribe
   }, [setProxyEnabled])
-
-  const handleToggleProxy = useCallback(async () => {
-    if (!window.electronAPI?.proxy) return
-    
-    try {
-      if (proxyStatus?.isRunning) {
-        await window.electronAPI.proxy.stop()
-        setProxyEnabled(false)
-      } else {
-        await window.electronAPI.proxy.start()
-        setProxyEnabled(true)
-      }
-      refreshData()
-    } catch (err) {
-      console.error('Failed to toggle proxy:', err)
-    }
-  }, [proxyStatus, setProxyEnabled, refreshData])
 
   const handleAddAccount = useCallback(() => {
     navigate('/providers')
   }, [navigate])
 
   const handleToolCalling = useCallback(() => {
-    navigate('/models?tab=prompts')
+    navigate('/models?tab=tool-calling')
   }, [navigate])
 
   const handleViewLogs = useCallback(() => {
     navigate('/logs')
   }, [navigate])
 
+  const handleOpenProxy = useCallback(() => {
+    navigate('/proxy')
+  }, [navigate])
+
   const handleActivityClick = useCallback((item: { id: string; type: string; title: string }) => {
-    navigate('/logs?tab=request&highlight=' + item.id)
+    navigate('/logs?highlight=' + item.id)
   }, [navigate])
 
   const isElectron = !!window.electronAPI
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">{t('dashboard.title')}</h1>
-          <p className="text-muted-foreground">
-            {t('dashboard.description')}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {lastUpdated && (
-            <span className="text-xs text-muted-foreground">
-              {t('dashboard.lastUpdated')}: {new Date(lastUpdated).toLocaleTimeString()}
-            </span>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={refreshData}
-            disabled={isLoading}
-          >
-            <RefreshCw className={cn('h-4 w-4 mr-2', isLoading && 'animate-spin')} />
-            {t('dashboard.refresh')}
-          </Button>
-        </div>
-      </div>
+    <div>
+      <PageHeader
+        title={t('dashboard.title')}
+        description={t('dashboard.description')}
+        actions={
+          <>
+            {lastUpdated && (
+              <span className="text-meta text-[var(--text-dim)]">
+                {t('dashboard.lastUpdated')}: {new Date(lastUpdated).toLocaleTimeString()}
+              </span>
+            )}
+            <Button variant="outline" size="sm" onClick={refreshData} disabled={isLoading}>
+              <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
+              {t('dashboard.refresh')}
+            </Button>
+          </>
+        }
+      />
 
       {!isElectron && (
-        <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800 dark:border-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400">
+        <div className="alert-warning mb-4 px-4 py-3 text-body">
           <p className="font-medium">{t('dashboard.browserMode')}</p>
-          <p>{t('dashboard.browserModeDesc')}</p>
+          <p className="mt-0.5 text-[var(--text-muted)]">{t('dashboard.browserModeDesc')}</p>
         </div>
       )}
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-600 dark:border-red-800 dark:bg-red-950 dark:text-red-400">
-          {error}
+        <div className="alert-error mb-4 flex items-start gap-2 px-4 py-3 text-body">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-error" />
+          <span>{error}</span>
         </div>
       )}
 
@@ -161,6 +143,7 @@ export function Dashboard() {
           title={t('dashboard.avgResponseTime')}
           value={`${stats.avgLatency}ms`}
           icon={Clock}
+          trendPolarity="negative"
           trend={{
             value: stats.latencyTrend,
             label: t('dashboard.vsYesterday'),
@@ -177,28 +160,23 @@ export function Dashboard() {
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <RequestChart data={chartData} />
         </div>
         <div>
           <QuickActions
-            proxyRunning={proxyStatus?.isRunning ?? proxyEnabled}
-            onToggleProxy={handleToggleProxy}
             onAddAccount={handleAddAccount}
             onToolCalling={handleToolCalling}
             onViewLogs={handleViewLogs}
-            isLoading={isLoading}
+            onOpenProxy={handleOpenProxy}
           />
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2 items-stretch">
+      <div className="mt-4 grid items-stretch gap-4 lg:grid-cols-2">
         <ProviderStatusCard providers={providers} />
-        <RecentActivity
-          activities={activities}
-          onItemClick={handleActivityClick}
-        />
+        <RecentActivity activities={activities} onItemClick={handleActivityClick} />
       </div>
     </div>
   )

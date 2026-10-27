@@ -14,6 +14,7 @@ export const cherryStudioMcpAdapter: ToolClientAdapter = {
       toolSource: tools.length > 0 ? 'mcp' : 'none',
       tools,
       toolChoice,
+      parallelToolCalls: request.parallel_tool_calls === false ? false : undefined,
       diagnostics: {
         rawToolCount: request.tools?.length ?? 0,
         normalizedToolNames: tools.map((tool) => tool.name),

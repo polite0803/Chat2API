@@ -227,8 +227,8 @@ export function LoginGuideDialog({
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <div className="flex items-center justify-center py-4">
-              <div className="h-16 w-16 rounded-full bg-green-500/20 flex items-center justify-center">
-                <Check className="h-8 w-8 text-green-500" />
+              <div className="h-16 w-16 rounded-full bg-success-soft flex items-center justify-center">
+                <Check className="h-8 w-8 text-success" />
               </div>
             </div>
             <DialogTitle className="text-center">{t('loginGuide.addSuccess')}</DialogTitle>

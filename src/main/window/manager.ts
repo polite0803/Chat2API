@@ -1,8 +1,26 @@
-import { BrowserWindow, app, shell } from 'electron'
+import { BrowserWindow, app, nativeTheme, shell } from 'electron'
 import { join } from 'path'
 import { storeManager } from '../store/store'
 
 let mainWindow: BrowserWindow | null = null
+
+// Windows and Linux get a frameless window with the in-app header acting as the
+// title bar; the system caption buttons stay as an overlay in the top-right.
+// macOS keeps the native traffic lights, so its frame is left untouched.
+const usesOverlayTitleBar = process.platform === 'win32' || process.platform === 'linux'
+
+const TOPBAR_HEIGHT = 48
+
+function titleBarOverlayColors(theme: 'dark' | 'light'): { color: string; symbolColor: string } {
+  return theme === 'dark'
+    ? { color: '#0b0c0e', symbolColor: '#f1f2f4' }
+    : { color: '#f7f7f8', symbolColor: '#18181b' }
+}
+
+export function setTitleBarTheme(theme: 'dark' | 'light'): void {
+  if (!usesOverlayTitleBar) return
+  mainWindow?.setTitleBarOverlay({ ...titleBarOverlayColors(theme), height: TOPBAR_HEIGHT })
+}
 
 export interface WindowOptions {
   width?: number
@@ -39,6 +57,15 @@ export function createWindow(options: WindowOptions = {}): BrowserWindow {
     show,
     autoHideMenuBar: true,
     frame: true,
+    ...(usesOverlayTitleBar
+      ? {
+          titleBarStyle: 'hidden' as const,
+          titleBarOverlay: {
+            ...titleBarOverlayColors(nativeTheme.shouldUseDarkColors ? 'dark' : 'light'),
+            height: TOPBAR_HEIGHT,
+          },
+        }
+      : {}),
     backgroundColor: '#1a1a1a',
     icon: join(__dirname, '../../resources/icon.png'),
   })

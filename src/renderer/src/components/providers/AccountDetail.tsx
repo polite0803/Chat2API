@@ -89,26 +89,26 @@ export function AccountDetail({
   }> = {
     active: {
       labelKey: 'providers.active',
-      color: 'text-green-600',
-      bgColor: 'bg-green-100',
+      color: 'text-success',
+      bgColor: 'bg-success-soft',
       icon: CheckCircle2,
     },
     inactive: {
       labelKey: 'providers.inactive',
-      color: 'text-gray-600',
-      bgColor: 'bg-gray-100',
+      color: 'text-[var(--text-muted)]',
+      bgColor: 'bg-[var(--bg-tertiary)]',
       icon: Clock,
     },
     expired: {
       labelKey: 'providers.expired',
-      color: 'text-orange-600',
-      bgColor: 'bg-orange-100',
+      color: 'text-warning',
+      bgColor: 'bg-warning-soft',
       icon: AlertCircle,
     },
     error: {
       labelKey: 'common.error',
-      color: 'text-red-600',
-      bgColor: 'bg-red-100',
+      color: 'text-error',
+      bgColor: 'bg-error-soft',
       icon: XCircle,
     },
   }
@@ -178,30 +178,30 @@ export function AccountDetail({
       labelKey: 'dashboard.totalRequests',
       value: account.requestCount || 0,
       icon: BarChart3,
-      color: 'text-blue-600',
-      bgColor: 'bg-blue-100',
+      color: 'text-accent',
+      bgColor: 'bg-accent-soft',
     },
     {
       labelKey: 'providers.usedToday',
       value: account.todayUsed || 0,
       subtitle: account.dailyLimit ? `${t('providers.dailyLimit')}: ${account.dailyLimit}` : undefined,
       icon: Zap,
-      color: 'text-amber-600',
-      bgColor: 'bg-amber-100',
+      color: 'text-warning',
+      bgColor: 'bg-warning-soft',
     },
     {
       labelKey: 'providers.lastCheck',
       value: formatRelativeTime(account.lastUsed),
       icon: Clock,
-      color: 'text-purple-600',
-      bgColor: 'bg-purple-100',
+      color: 'text-accent',
+      bgColor: 'bg-accent-soft',
     },
     {
       labelKey: 'apiKeys.createdAt',
       value: formatDate(account.createdAt),
       icon: Calendar,
-      color: 'text-green-600',
-      bgColor: 'bg-green-100',
+      color: 'text-success',
+      bgColor: 'bg-success-soft',
     },
   ]
 
@@ -212,7 +212,7 @@ export function AccountDetail({
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <div className="flex-1">
-          <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+          <h2 className="page-title flex items-center gap-2">
             {account.name}
             <Badge 
               variant="outline" 
@@ -222,7 +222,7 @@ export function AccountDetail({
               {t(config.labelKey)}
             </Badge>
           </h2>
-          <p className="text-muted-foreground">
+          <p className="page-description">
             {provider?.name || t('providers.unknown')}
           </p>
         </div>
@@ -295,12 +295,12 @@ export function AccountDetail({
             </div>
 
             {account.status === 'error' && account.errorMessage && (
-              <div className="mt-4 p-3 bg-red-50 rounded-lg">
+              <div className="mt-4 p-3 bg-error-soft rounded-lg">
                 <div className="flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                  <AlertCircle className="h-4 w-4 text-error mt-0.5 flex-shrink-0" />
                   <div>
-                    <p className="text-sm font-medium text-red-700">{t('common.error')}</p>
-                    <p className="text-sm text-red-600 mt-1">{account.errorMessage}</p>
+                    <p className="text-body font-medium text-error">{t('common.error')}</p>
+                    <p className="text-body text-error mt-1">{account.errorMessage}</p>
                   </div>
                 </div>
               </div>
@@ -341,18 +341,18 @@ export function AccountDetail({
                     {account.todayUsed || 0} / {account.dailyLimit}
                   </span>
                 </div>
-                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                <div className="h-2 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
                   <div 
                     className={cn(
                       'h-full transition-all',
-                      usagePercent >= 90 ? 'bg-red-500' :
-                      usagePercent >= 70 ? 'bg-amber-500' : 'bg-green-500'
+                      usagePercent >= 90 ? 'bg-[var(--error)]' :
+                      usagePercent >= 70 ? 'bg-[var(--warning)]' : 'bg-[var(--success)]'
                     )}
                     style={{ width: `${usagePercent}%` }}
                   />
                 </div>
                 {usagePercent >= 90 && (
-                  <p className="text-xs text-red-500 mt-1">
+                  <p className="text-meta text-error mt-1">
                     {t('providers.nearLimit')}
                   </p>
                 )}
@@ -385,11 +385,11 @@ export function AccountDetail({
             
             {credits && (
               <div className="space-y-4">
-                <div className="p-4 rounded-lg bg-muted/50 text-center">
-                  <p className="text-sm text-muted-foreground mb-1">{t('minimax.remainingCredits')}</p>
-                  <p className="text-3xl font-bold text-green-600">{credits.remainingCredits.toLocaleString()}</p>
+                <div className="p-4 rounded-lg bg-[var(--bg-tertiary)] text-center">
+                  <p className="text-body text-[var(--text-muted)] mb-1">{t('minimax.remainingCredits')}</p>
+                  <p className="text-display font-bold text-success">{credits.remainingCredits.toLocaleString()}</p>
                   {credits.expiresAt && (
-                    <p className="text-xs text-muted-foreground mt-2">
+                    <p className="text-meta text-[var(--text-muted)] mt-2">
                       {t('minimax.creditResetsAt')}: {formatDate(credits.expiresAt)}
                     </p>
                   )}

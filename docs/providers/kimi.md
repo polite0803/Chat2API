@@ -10,9 +10,13 @@
 
 ## 默认模型
 
-| 显示名称 | 实际模型 ID |
-| --- | --- |
-| Kimi-K2.6 | kimi-k2.6 |
+| 显示名称 | 实际模型 ID | 场景 |
+| --- | --- | --- |
+| K3 | k3-agent | SCENARIO_OK_COMPUTER |
+| K2.8 | k28-agent-preview | SCENARIO_OK_COMPUTER |
+| Instant | k2d6-chat | SCENARIO_CHAT |
+
+对话请求本身不带模型 ID，只带场景，所以上表第三列就是发出去的全部区别。
 
 ## 适配状态
 
@@ -25,4 +29,7 @@
 1. 登录 `www.kimi.com`。
 2. 打开 DevTools -> Application -> Cookies，复制 `kimi-auth` 值，或复制可用 JWT/refresh token。
 3. 在供应商管理中添加 Kimi 账号，填入 `token`。
-4. 默认模型仅保留 `Kimi-K2.6`；旧的 `Kimi-K2.5` 不再作为内置默认模型。
+4. 内置模型为官网当日在售的三条（`K3` / `K2.8` / `Instant`，2026-10-27 取自
+   `ConfigService/GetAvailableModels`）。旧的 `Kimi-K2.6` 只保留映射别名，指向 `k2d6-chat`，
+   方便老配置继续可用；`Kimi-K2.5` 已不再映射。
+5. 卡片菜单里的「更新模型」会重新拉这份清单，追加到在线模型里。

@@ -55,17 +55,21 @@ export function RequestChart({ data, className }: RequestChartProps) {
     <Card className={cn('', className)}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-[var(--accent-primary)]/10 flex items-center justify-center">
-            <Activity className="h-4 w-4 text-[var(--accent-primary)]" />
-          </div>
+          <Activity className="h-[15px] w-[15px] text-[var(--text-muted)]" />
           {t('dashboard.requestsTrend')}
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="h-[300px] w-full">
+        <div className="h-[240px] w-full">
           {data.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              {t('common.noData')}
+            <div className="empty-state h-full">
+              <div className="empty-state-icon">
+                <Activity className="h-5 w-5" />
+              </div>
+              <p className="empty-state-title">{t('common.noData')}</p>
+              <p className="empty-state-hint">
+                {t('dashboard.chartEmptyHint', { defaultValue: '' })}
+              </p>
             </div>
           ) : (
             <svg
@@ -89,7 +93,7 @@ export function RequestChart({ data, className }: RequestChartProps) {
                     y={chart.y(tick)}
                     textAnchor="end"
                     dominantBaseline="middle"
-                    className="fill-muted-foreground text-[11px]"
+                    className="fill-[var(--text-muted)] text-caption"
                   >
                     {tick}
                   </text>
@@ -103,7 +107,7 @@ export function RequestChart({ data, className }: RequestChartProps) {
                     x={chart.x(index)}
                     y={CHART_HEIGHT - 10}
                     textAnchor="middle"
-                    className="fill-muted-foreground text-[11px]"
+                    className="fill-[var(--text-muted)] text-caption"
                   >
                     {point.time}
                   </text>
@@ -125,14 +129,16 @@ export function RequestChart({ data, className }: RequestChartProps) {
           )}
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-          {series.map(item => (
-            <div key={item.key} className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-              <span>{item.label}</span>
-            </div>
-          ))}
-        </div>
+        {data.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-caption text-[var(--text-muted)]">
+            {series.map(item => (
+              <div key={item.key} className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
+                <span>{item.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   )

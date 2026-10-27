@@ -14,12 +14,16 @@ export const qwenAiConfig: BuiltinProviderConfig = {
   },
   enabled: true,
   description: 'Qwen AI international version (chat.qwen.ai)',
-  modelsApiEndpoint: 'https://chat.qwen.ai/api/models',
-  modelsApiHeaders: {
-    Accept: 'application/json, text/plain, */*',
-    Referer: 'https://chat.qwen.ai/',
-    source: 'web',
-    Version: '0.2.35',
+  modelsFetch: {
+    url: 'https://chat.qwen.ai/api/models',
+    // 'auto' tolerates both the flat {data:[...]} and wrapped {data:{data:[...]}} forms
+    reader: 'auto',
+    headers: {
+      Accept: 'application/json, text/plain, */*',
+      Referer: 'https://chat.qwen.ai/',
+      source: 'web',
+      Version: '0.2.35',
+    },
   },
   supportedModels: [
     'Qwen3.7-Max',

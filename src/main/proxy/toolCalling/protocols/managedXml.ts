@@ -28,7 +28,7 @@ ${renderToolList(tools)}
 
 When calling tools, respond with only this Chat2API XML block:
 
-<|CHAT2API|tool_calls><|CHAT2API|invoke name="exact_tool_name"><|CHAT2API|parameter name="argument"><![CDATA[value]]></|CHAT2API|parameter></|CHAT2API|invoke></|CHAT2API|tool_calls>
+<|CHAT2API|tool_calls><|CHAT2API|invoke name="exact_tool_name" tool_call_id="call_id"><|CHAT2API|parameter name="argument"><![CDATA[value]]></|CHAT2API|parameter></|CHAT2API|invoke></|CHAT2API|tool_calls>
 
 Tool results will be provided as Chat2API XML result blocks:
 
@@ -44,11 +44,11 @@ Tool results will be provided as Chat2API XML result blocks:
     const allowedNames = toolNames(context.tools)
     const rawMatches: string[] = []
     const invalidToolNames: string[] = []
-    const toolCalls = []
+    const toolCalls: ReturnType<typeof buildToolCall>[] = []
 
     parseBlocks(parseable, {
       blockPattern: /<\|CHAT2API\|tool_calls>([\s\S]*?)<\/\|CHAT2API\|tool_calls>/g,
-      invokePattern: /<\|CHAT2API\|invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/\|CHAT2API\|invoke>/g,
+      invokePattern: /<\|CHAT2API\|invoke\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/\|CHAT2API\|invoke>/g,
       parameterPattern: /<\|CHAT2API\|parameter\s+name="([^"]+)"\s*>([\s\S]*?)<\/\|CHAT2API\|parameter>/g,
       rawMatches,
       invalidToolNames,
@@ -58,7 +58,7 @@ Tool results will be provided as Chat2API XML result blocks:
 
     parseBlocks(parseable, {
       blockPattern: /<tool_calls>([\s\S]*?)<\/tool_calls>/g,
-      invokePattern: /<invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/invoke>/g,
+      invokePattern: /<invoke\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/invoke>/g,
       parameterPattern: /<parameter\s+name="([^"]+)"\s*>([\s\S]*?)<\/parameter>/g,
       rawMatches,
       invalidToolNames,
@@ -89,13 +89,18 @@ Tool results will be provided as Chat2API XML result blocks:
   formatAssistantToolCalls(calls) {
     const invokes = calls.map((call) => {
       const args = safeParseObject(call.arguments)
-      const params = Object.entries(args)
-        .map(([name, value]) => {
-          const text = typeof value === 'string' ? value : JSON.stringify(value)
-          return `<|CHAT2API|parameter name="${escapeXmlAttribute(name)}"><![CDATA[${text}]]></|CHAT2API|parameter>`
-        })
-        .join('')
-      return `<|CHAT2API|invoke name="${escapeXmlAttribute(call.name)}">${params}</|CHAT2API|invoke>`
+      const entries = Object.entries(args)
+      const params = entries.length > 0
+        ? entries
+            .map(([name, value]) => {
+              const text = typeof value === 'string' ? value : JSON.stringify(value)
+              return `<|CHAT2API|parameter name="${escapeXmlAttribute(name)}"><![CDATA[${text}]]></|CHAT2API|parameter>`
+            })
+            .join('')
+        : call.arguments && call.arguments.trim() && call.arguments.trim() !== '{}'
+          ? `<|CHAT2API|parameter name="arguments"><![CDATA[${call.arguments}]]></|CHAT2API|parameter>`
+          : ''
+      return `<|CHAT2API|invoke name="${escapeXmlAttribute(call.name)}" tool_call_id="${escapeXmlAttribute(call.id)}">${params}</|CHAT2API|invoke>`
     })
     return `${CHAT2API_START}${invokes.join('')}${CHAT2API_END}`
   },

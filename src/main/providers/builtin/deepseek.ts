@@ -27,11 +27,12 @@ export const deepseekConfig: BuiltinProviderConfig = {
     'X-Client-Version': '2.0.0',
   },
   enabled: true,
-  description: 'DeepSeek AI assistant, supports deep thinking and web search',
-  supportedModels: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+  description: 'DeepSeek chat assistant; models are its chat modes (快速/专家/识图模式), upstream currently enables 快速模式 only',
+  supportedModels: ['deepseek-default', 'deepseek-expert', 'deepseek-vision'],
   modelMappings: {
-    'deepseek-v4-flash': 'deepseek-v4-flash',
-    'deepseek-v4-pro': 'deepseek-v4-pro',
+    'deepseek-default': 'default',
+    'deepseek-expert': 'expert',
+    'deepseek-vision': 'vision',
   },
   credentialFields: [
     {

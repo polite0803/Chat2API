@@ -174,7 +174,7 @@ export class MiniMaxAdapter extends BaseOAuthAdapter {
       }
     }
 
-    console.log('[MiniMax OAuth] Validating token:', token.substring(0, 50) + '...')
+    console.log('[MiniMax OAuth] Validating token:', token.length)
 
     try {
       // Parse token to extract realUserID and JWT
@@ -190,7 +190,7 @@ export class MiniMaxAdapter extends BaseOAuthAdapter {
         realUserID = this.extractUserIdFromToken(token) || ''
       }
 
-      console.log('[MiniMax OAuth] realUserID:', realUserID, 'jwtToken:', jwtToken.substring(0, 30) + '...')
+      console.log('[MiniMax OAuth] realUserID:', realUserID, 'jwtToken:', jwtToken.length)
 
       // Build request with proper signatures (same as proxy adapter)
       const unix = `${Date.now()}`
@@ -279,8 +279,8 @@ export class MiniMaxAdapter extends BaseOAuthAdapter {
    */
   private extractUserIdFromToken(token: string): string | undefined {
     try {
-      const payload = this.parseJWT(token)
-      return payload?.user?.id as string | undefined || payload?.sub as string | undefined
+      const payload = this.parseJWT(token) as { user?: { id?: string }; sub?: string } | null
+      return payload?.user?.id || payload?.sub
     } catch {
       return undefined
     }

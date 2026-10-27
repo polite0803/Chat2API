@@ -8,28 +8,29 @@ import { ProviderChecker } from '../providers/checker'
 import { CustomProviderManager } from '../providers/custom'
 import { getBuiltinProviders, getBuiltinProvider } from '../providers/builtin'
 import { oauthManager } from '../oauth/manager'
-import { ProxyServer } from '../proxy/server'
+import { fetchProviderModels } from '../providers/modelCatalog'
+import { proxyServer } from '../proxy/server'
 import { proxyStatusManager } from '../proxy/status'
 import { sessionManager } from '../proxy/sessionManager'
 import { TrayManager } from '../tray/TrayManager'
 import { ConfigManager } from '../store/config'
 import { generateManagementSecret } from '../proxy/middleware/managementAuth'
+import { runToolCallingSmoke } from '../proxy/toolCalling/diagnostics'
 import { UpdaterManager } from '../updater'
+import { setTitleBarTheme } from '../window/manager'
 import { DeepSeekAdapter } from '../proxy/adapters/deepseek'
 import { GLMAdapter } from '../proxy/adapters/glm'
 import { KimiAdapter } from '../proxy/adapters/kimi'
 import { MimoAdapter } from '../proxy/adapters/mimo'
 import { MiniMaxAdapter } from '../proxy/adapters/minimax'
-import { PerplexityAdapter } from '../proxy/adapters/perplexity'
 import { QwenAdapter } from '../proxy/adapters/qwen'
 import { QwenAiAdapter } from '../proxy/adapters/qwen-ai'
 import { ZaiAdapter } from '../proxy/adapters/zai'
-import type { Provider, Account, ProxyStatus, ProviderCheckResult, OAuthResult, AuthType, CredentialField, LogLevel, LogEntry, ProviderVendor, AppConfig } from '../../shared/types'
-import type { SystemPrompt, SessionConfig, SessionRecord, ManagementApiConfig } from '../store/types'
+import type { Provider, Account, ProxyStatus, ProviderCheckResult, OAuthResult, AuthType, CredentialField, LogLevel, LogEntry, ProviderVendor } from '../../shared/types'
+import type { SessionConfig, SessionRecord, ManagementApiConfig, AppConfig } from '../store/types'
 import type { ProviderType } from '../oauth/types'
+import type { ModelsFetchFailure } from '../store/types'
 
-let proxyServer: ProxyServer | null = null
-let proxyStartTime: number | null = null
 const updaterManager = UpdaterManager.getInstance()
 
 const clearChatsHandlers: Record<string, (provider: Provider, account: Account) => Promise<boolean>> = {
@@ -38,7 +39,6 @@ const clearChatsHandlers: Record<string, (provider: Provider, account: Account) 
   'qwen-ai': async (provider, account) => new QwenAiAdapter(provider, account).deleteAllChats(),
   minimax: async (provider, account) => new MiniMaxAdapter(provider, account).deleteAllChats(),
   zai: async (provider, account) => new ZaiAdapter(provider, account).deleteAllChats(),
-  perplexity: async (provider, account) => new PerplexityAdapter(provider, account).deleteAllChats(),
   deepseek: async (provider, account) => new DeepSeekAdapter(provider, account).deleteAllChats(),
   glm: async (provider, account) => new GLMAdapter(provider, account).deleteAllChats(),
   mimo: async (provider, account) => new MimoAdapter(provider, account).deleteAllChats(),
@@ -81,10 +81,8 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
     const proxyPort = config.proxyPort
     const proxyHost = config.proxyHost || '127.0.0.1'
     try {
-      proxyServer = new ProxyServer()
       const success = await proxyServer.start(proxyPort, proxyHost)
       if (success) {
-        proxyStartTime = Date.now()
         console.log('[App] Proxy service auto-started successfully, port:', proxyPort)
         const status: ProxyStatus = {
           isRunning: true,
@@ -95,18 +93,16 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
         }
         mainWindow?.webContents.send(IpcChannels.PROXY_STATUS_CHANGED, status)
       } else {
-        proxyServer = null
         console.log('[App] Proxy service auto-start failed')
       }
     } catch (error) {
       console.error('[App] Proxy service auto-start failed:', error)
-      proxyServer = null
     }
   }
 
   ipcMain.handle(IpcChannels.PROXY_START, async (_, port?: number): Promise<boolean> => {
     try {
-      if (proxyServer) {
+      if (proxyServer.isRunning()) {
         console.log('Proxy server is already running')
         return true
       }
@@ -115,11 +111,9 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
       const proxyPort = port || config.proxyPort
       const proxyHost = config.proxyHost || '127.0.0.1'
 
-      proxyServer = new ProxyServer()
       const success = await proxyServer.start(proxyPort, proxyHost)
       
       if (success) {
-        proxyStartTime = Date.now()
         const status: ProxyStatus = {
           isRunning: true,
           port: proxyPort,
@@ -129,21 +123,18 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
         }
         mainWindow?.webContents.send(IpcChannels.PROXY_STATUS_CHANGED, status)
         TrayManager.getInstance().updateProxyStatus(true)
-      } else {
-        proxyServer = null
       }
       
       return success
     } catch (error) {
       console.error('Failed to start proxy:', error)
-      proxyServer = null
       return false
     }
   })
 
   ipcMain.handle(IpcChannels.PROXY_STOP, async (): Promise<boolean> => {
     try {
-      if (!proxyServer) {
+      if (!proxyServer.isRunning()) {
         return true
       }
 
@@ -154,11 +145,9 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
           isRunning: false,
           port: proxyStatusManager.getPort(),
           host: storeManager.getConfig().proxyHost || proxyStatusManager.getHost(),
-          uptime: proxyStartTime ? Date.now() - proxyStartTime : 0,
+          uptime: proxyStatusManager.getRunningStatus().uptime,
           connections: 0,
         }
-        proxyServer = null
-        proxyStartTime = null
         mainWindow?.webContents.send(IpcChannels.PROXY_STATUS_CHANGED, status)
         TrayManager.getInstance().updateProxyStatus(false)
       }
@@ -171,7 +160,7 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
   })
 
   ipcMain.handle(IpcChannels.PROXY_GET_STATUS, async (): Promise<ProxyStatus> => {
-    const isRunning = proxyServer !== null
+    const isRunning = proxyServer.isRunning()
     const port = proxyStatusManager.getPort()
     const host = isRunning
       ? proxyStatusManager.getHost()
@@ -180,7 +169,7 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
       isRunning,
       port,
       host,
-      uptime: proxyStartTime && isRunning ? Date.now() - proxyStartTime : 0,
+      uptime: proxyStatusManager.getRunningStatus().uptime,
       connections: proxyStatusManager.getStatistics().activeConnections,
     }
   })
@@ -341,148 +330,31 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
     return CustomProviderManager.importProvider(jsonData)
   })
 
-  ipcMain.handle(IpcChannels.PROVIDERS_SYNC_MODELS, async (_, providerId: string): Promise<{
-    success: boolean
-    supportedModels?: string[]
-    modelMappings?: Record<string, string>
-    error?: string
-  }> => {
-    try {
-      const result = await ProviderChecker.fetchProviderModels(providerId)
-      
-      const provider = ProviderManager.getById(providerId)
-      if (provider) {
-        ProviderManager.update(providerId, {
-          supportedModels: result.supportedModels,
-          modelMappings: result.modelMappings,
-        })
-      }
-
-      return {
-        success: true,
-        supportedModels: result.supportedModels,
-        modelMappings: result.modelMappings,
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to sync models',
-      }
-    }
-  })
-
   ipcMain.handle(IpcChannels.PROVIDERS_UPDATE_MODELS, async (_, providerId: string): Promise<{
     success: boolean
-    modelsCount?: number
-    error?: string
+    reason?: ModelsFetchFailure
+    detail?: string
+    fetchedCount?: number
+    addedCount?: number
+    fetchedAt?: number
   }> => {
-    try {
-      const provider = ProviderManager.getById(providerId)
-      
-      if (!provider) {
-        return {
-          success: false,
-          error: 'Provider not found',
-        }
-      }
+    const result = await fetchProviderModels(providerId)
 
-      let modelsApiEndpoint: string | undefined
-      let modelsApiHeaders: Record<string, string> | undefined
+    if (!result.ok) {
+      console.warn(
+        '[IPC] Model update for ' + providerId + ' failed: ' + result.reason,
+        result.detail || ''
+      )
+      return { success: false, reason: result.reason, detail: result.detail }
+    }
 
-      if (provider.type === 'builtin') {
-        const builtinConfig = getBuiltinProvider(providerId)
-        if (builtinConfig) {
-          modelsApiEndpoint = builtinConfig.modelsApiEndpoint
-          modelsApiHeaders = builtinConfig.modelsApiHeaders
-        }
-      }
+    const applied = storeManager.applyFetchedModels(providerId, result.models)
 
-      if (!modelsApiEndpoint) {
-        return {
-          success: false,
-          error: 'This provider does not support dynamic model updates',
-        }
-      }
-
-      const accounts = AccountManager.getByProviderId(providerId, true)
-      const activeAccount = accounts.find(a => a.status === 'active')
-      
-      const requestHeaders: Record<string, string> = {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        ...modelsApiHeaders,
-      }
-      
-      if (activeAccount?.credentials?.token) {
-        requestHeaders['Authorization'] = `Bearer ${activeAccount.credentials.token}`
-      }
-      
-      if (activeAccount?.credentials?.cookies) {
-        requestHeaders['Cookie'] = activeAccount.credentials.cookies
-      }
-
-      const response = await axios.get(modelsApiEndpoint, {
-        headers: requestHeaders,
-        timeout: 15000,
-        validateStatus: () => true,
-      })
-
-      if (response.status !== 200) {
-        return {
-          success: false,
-          error: `Failed to fetch models: HTTP ${response.status}`,
-        }
-      }
-
-      const models = response.data.data || response.data
-
-      if (!Array.isArray(models) || models.length === 0) {
-        return {
-          success: false,
-          error: 'No models found in the response',
-        }
-      }
-
-      const supportedModels: string[] = []
-      const modelMappings: Record<string, string> = {}
-
-      models.forEach((model: any) => {
-        if (typeof model === 'string') {
-          supportedModels.push(model)
-          modelMappings[model] = model
-        } else if (model && typeof model === 'object') {
-          const modelId = model.id || model.model_id || model.name
-          const modelName = model.name || model.display_name || modelId
-          
-          if (modelId) {
-            supportedModels.push(modelName || modelId)
-            modelMappings[modelName || modelId] = modelId
-          }
-        }
-      })
-
-      if (supportedModels.length === 0) {
-        return {
-          success: false,
-          error: 'Failed to parse models from the response',
-        }
-      }
-
-      ProviderManager.update(providerId, {
-        supportedModels,
-        modelMappings,
-      })
-
-      return {
-        success: true,
-        modelsCount: supportedModels.length,
-      }
-    } catch (error) {
-      console.error('[IPC] Failed to update models:', error)
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update models',
-      }
+    return {
+      success: true,
+      fetchedCount: applied.fetchedCount,
+      addedCount: applied.addedCount,
+      fetchedAt: applied.fetchedAt,
     }
   })
 
@@ -852,6 +724,11 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
     mainWindow?.hide()
   })
 
+  ipcMain.handle(IpcChannels.APP_SET_TITLE_BAR_THEME, async (_, theme: 'dark' | 'light'): Promise<void> => {
+    if (theme !== 'dark' && theme !== 'light') return
+    setTitleBarTheme(theme)
+  })
+
   ipcMain.handle(IpcChannels.APP_OPEN_EXTERNAL, async (_, url: string): Promise<void> => {
     console.log('[APP_OPEN_EXTERNAL] Opening URL:', url)
     try {
@@ -861,40 +738,6 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
       console.error('[APP_OPEN_EXTERNAL] Error:', error)
       throw error
     }
-  })
-
-  // ==================== System Prompts Handlers ====================
-
-  ipcMain.handle(IpcChannels.PROMPTS_GET_ALL, async (): Promise<SystemPrompt[]> => {
-    return storeManager.getSystemPrompts()
-  })
-
-  ipcMain.handle(IpcChannels.PROMPTS_GET_BUILTIN, async (): Promise<SystemPrompt[]> => {
-    return storeManager.getBuiltinPrompts()
-  })
-
-  ipcMain.handle(IpcChannels.PROMPTS_GET_CUSTOM, async (): Promise<SystemPrompt[]> => {
-    return storeManager.getCustomPrompts()
-  })
-
-  ipcMain.handle(IpcChannels.PROMPTS_GET_BY_ID, async (_, id: string): Promise<SystemPrompt | undefined> => {
-    return storeManager.getSystemPromptById(id)
-  })
-
-  ipcMain.handle(IpcChannels.PROMPTS_ADD, async (_, prompt: Omit<SystemPrompt, 'id' | 'createdAt' | 'updatedAt'>): Promise<SystemPrompt> => {
-    return storeManager.addSystemPrompt(prompt)
-  })
-
-  ipcMain.handle(IpcChannels.PROMPTS_UPDATE, async (_, id: string, updates: Partial<SystemPrompt>): Promise<SystemPrompt | null> => {
-    return storeManager.updateSystemPrompt(id, updates)
-  })
-
-  ipcMain.handle(IpcChannels.PROMPTS_DELETE, async (_, id: string): Promise<boolean> => {
-    return storeManager.deleteSystemPrompt(id)
-  })
-
-  ipcMain.handle(IpcChannels.PROMPTS_GET_BY_TYPE, async (_, type: SystemPrompt['type']): Promise<SystemPrompt[]> => {
-    return storeManager.getSystemPromptsByType(type)
   })
 
   // ==================== Session Management Handlers ====================
@@ -966,6 +809,14 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
     return newSecret
   })
 
+  // ==================== Tool Calling Handlers ====================
+
+  ipcMain.handle(IpcChannels.TOOL_CALLING_RUN_SMOKE, async (_, input?: { clientAdapterId?: string }) => {
+    const config = ConfigManager.get()
+    const clientAdapterId = input?.clientAdapterId ?? config.toolCallingConfig.clientAdapterId
+    return { success: true, data: runToolCallingSmoke(clientAdapterId) }
+  })
+
   // ==================== Context Management Handlers ====================
 
   ipcMain.handle(IpcChannels.CONTEXT_MANAGEMENT_GET_CONFIG, async () => {
@@ -1013,7 +864,7 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
 }
 
 export function getProxyStatus(): ProxyStatus {
-  const isRunning = proxyServer !== null
+  const isRunning = proxyServer.isRunning()
   const port = proxyStatusManager.getPort()
   const host = isRunning
     ? proxyStatusManager.getHost()
@@ -1022,17 +873,8 @@ export function getProxyStatus(): ProxyStatus {
     isRunning,
     port,
     host,
-    uptime: proxyStartTime && isRunning ? Date.now() - proxyStartTime : 0,
+    uptime: proxyStatusManager.getRunningStatus().uptime,
     connections: proxyStatusManager.getStatistics().activeConnections,
-  }
-}
-
-export function setProxyStatus(status: ProxyStatus): void {
-  // Status is managed by proxyServer instance, only update startTime here
-  if (status.isRunning && !proxyStartTime) {
-    proxyStartTime = Date.now()
-  } else if (!status.isRunning) {
-    proxyStartTime = null
   }
 }
 

@@ -20,6 +20,7 @@ import {
   createBaseChunk,
   ToolCallState 
 } from '../utils/streamToolHandler'
+import { debugContent } from '../utils/debugContent.ts'
 
 const AGENT_BASE_URL = 'https://agent.minimaxi.com'
 
@@ -72,6 +73,8 @@ interface MiniMaxMessage {
 
 interface ChatCompletionRequest {
   model: string
+  /** Original model name before mapping (used for feature detection) */
+  originalModel?: string
   messages: MiniMaxMessage[]
   stream?: boolean
   temperature?: number
@@ -219,7 +222,7 @@ export class MiniMaxAdapter {
       }
     }
 
-    console.log('[MiniMax] Token parsed - realUserID:', this.realUserID, 'jwtToken:', this.jwtToken.substring(0, 30) + '...')
+    console.log('[MiniMax] Token parsed - realUserID:', this.realUserID, 'jwtToken:', this.jwtToken.length)
   }
 
   private async requestDeviceInfo(): Promise<DeviceInfo> {
@@ -375,7 +378,7 @@ export class MiniMaxAdapter {
     console.log('[MiniMax] Stream Request - uuid:', realUserID, 'user_id:', realUserID, 'device_id:', deviceInfo.deviceId)
     console.log('[MiniMax] Request body:', dataJson)
     console.log('[MiniMax] Query string:', queryStr)
-    console.log('[MiniMax] Headers - timestamp:', timestamp, 'signature:', signature.substring(0, 16) + '...', 'yy:', yy.substring(0, 16) + '...')
+    console.log('[MiniMax] Headers - timestamp:', timestamp, 'signature:', signature.length, 'yy length:', yy.length)
 
     const session = await new Promise<ClientHttp2Session>((resolve, reject) => {
       const session = http2.connect(AGENT_BASE_URL)
@@ -409,7 +412,7 @@ export class MiniMaxAdapter {
     })
 
     stream.on('data', (chunk) => {
-      console.log('[MiniMax] HTTP/2 data chunk:', chunk.toString().substring(0, 200))
+      debugContent('[MiniMax] HTTP/2 data chunk:', chunk.toString(), 200)
     })
 
     stream.on('error', (err) => {
@@ -670,7 +673,7 @@ export class MiniMaxAdapter {
           },
           finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
         }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        usage: null,
         created: this.created,
       },
     }
@@ -1118,7 +1121,7 @@ export class MiniMaxStreamHandler {
           const eventName = event.event
           if (event.data === '[DONE]') return
 
-          console.log('[MiniMax] SSE event:', eventName, 'data:', event.data?.substring(0, 100))
+          debugContent(`[MiniMax] SSE event: ${eventName}`, event.data, 100)
 
           const result = JSON.parse(event.data)
           const { type, base_resp, statusInfo, data: _data } = result
@@ -1171,7 +1174,7 @@ export class MiniMaxStreamHandler {
             )
             content += chunk
 
-            console.log('[MiniMax] Stream chunk:', chunk.substring(0, 50), 'isEnd:', isEnd)
+            debugContent(`[MiniMax] Stream chunk isEnd=${isEnd}`, chunk, 50)
 
             // Process tool call interception
             const baseChunk = createBaseChunk(this.chatId, this.model, this.created)
@@ -1222,7 +1225,7 @@ export class MiniMaxStreamHandler {
     stream.on('data', (chunk: Buffer) => {
       hasReceivedData = true
       const chunkStr = chunk.toString()
-      console.log('[MiniMax] Raw chunk:', chunkStr.substring(0, 200))
+      debugContent('[MiniMax] Raw chunk:', chunkStr, 200)
 
       // Try to parse as SSE first
       if (chunkStr.includes('event:') || chunkStr.includes('data:')) {
@@ -1291,7 +1294,7 @@ export class MiniMaxStreamHandler {
               )
               content += chunk
 
-              console.log('[MiniMax] Stream chunk:', chunk.substring(0, 50), 'isEnd:', isEnd)
+              debugContent(`[MiniMax] Stream chunk isEnd=${isEnd}`, chunk, 50)
 
               transStream.write(
                 `data: ${JSON.stringify({
@@ -1358,7 +1361,7 @@ export class MiniMaxStreamHandler {
           }, 
           finish_reason: 'stop' 
         }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        usage: null,
         created: this.created,
       }
 

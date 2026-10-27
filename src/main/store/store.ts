@@ -7,6 +7,8 @@
 import { app, safeStorage, BrowserWindow } from 'electron'
 import { homedir } from 'os'
 import { join } from 'path'
+import { copyFileSync, existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'fs'
+import { randomBytes } from 'crypto'
 import {
   StoreSchema,
   AppConfig,
@@ -16,7 +18,6 @@ import {
   DEFAULT_CONFIG,
   BUILTIN_PROVIDERS,
   LogLevel,
-  SystemPrompt,
   SessionRecord,
   SessionConfig,
   DEFAULT_SESSION_CONFIG,
@@ -31,16 +32,26 @@ import {
   DEFAULT_USER_MODEL_OVERRIDES,
   UserModelOverrides,
   CustomModel,
+  FetchedModel,
   DEFAULT_REQUEST_LOG_CONFIG,
   createDefaultModelMappings,
   normalizeModelMappingsWithDefaults,
   sanitizeDeepSeekModelOverrides,
 } from './types'
-import { BUILTIN_PROMPTS } from '../data/builtin-prompts'
 import { RequestLogManager } from '../requestLogs/manager'
 import { normalizeRequestLogConfig } from '../requestLogs/types'
+import { setContentLoggingEnabled } from '../proxy/utils/debugContent'
+import {
+  compareStoreSnapshot,
+  legacyBackupCandidates,
+  orphanedPromptPayload,
+  planKeySetup,
+} from './keyMigration'
 import { normalizeToolCallingConfig } from '../../shared/toolCalling'
+import { DEFAULT_AUTO_ROUTING_CONFIG } from '../../shared/types'
+import type { AutoRoutingConfig } from '../../shared/types'
 import { AppLogManager } from '../appLogs/manager'
+import { syncBuiltinProvider } from './providerSync'
 import type { AppLogFilter } from '../appLogs/types'
 
 // Dynamically import electron-store (ESM module)
@@ -50,6 +61,25 @@ let Store: any = null
  * Storage Instance Type Definition
  */
 type StoreType = any
+
+/**
+ * Normalize the virtual `auto` model routing configuration, clamping numeric fields
+ * so a hand-edited data.json cannot push the router into absurd values.
+ */
+function normalizeAutoRoutingConfig(input?: Partial<AutoRoutingConfig>): AutoRoutingConfig {
+  const merged = { ...DEFAULT_AUTO_ROUTING_CONFIG, ...(input || {}) }
+  const attempts = Number(merged.maxAttempts)
+  const sticky = Number(merged.stickyMinutes)
+  return {
+    enabled: merged.enabled !== false,
+    maxAttempts: Number.isFinite(attempts)
+      ? Math.min(5, Math.max(1, Math.round(attempts)))
+      : DEFAULT_AUTO_ROUTING_CONFIG.maxAttempts,
+    stickyMinutes: Number.isFinite(sticky)
+      ? Math.min(1440, Math.max(0, Math.round(sticky)))
+      : DEFAULT_AUTO_ROUTING_CONFIG.stickyMinutes,
+  }
+}
 
 /**
  * Storage Manager Class
@@ -62,6 +92,9 @@ class StoreManager {
   private initializationError: Error | null = null
   private requestLogManager: RequestLogManager | null = null
   private appLogManager: AppLogManager | null = null
+  private encryptionKey: string | undefined = undefined
+  private keyFilePath: string | null = null
+  private dataFileExistedBeforeInit = false
 
   setMainWindow(window: BrowserWindow | null): void {
     this.mainWindow = window
@@ -99,12 +132,14 @@ class StoreManager {
     const storagePath = this.getStoragePath()
 
     try {
+      this.encryptionKey = this.resolveEncryptionKey(storagePath)
       this.store = new Store({
         name: 'data',
         cwd: storagePath,
         defaults: this.getDefaultData(),
-        encryptionKey: this.getEncryptionKey(),
+        encryptionKey: this.encryptionKey,
       })
+      this.orphanSystemPrompts(storagePath)
 
       await this.initializeAppLogManager(storagePath)
       await this.initializeRequestLogManager(storagePath)
@@ -116,6 +151,15 @@ class StoreManager {
       console.error('[Store] Failed to initialize storage:', error)
       this.initializationError = error instanceof Error ? error : new Error(String(error))
       
+      // Never replace a data file that held real data: a wrong or missing key
+      // would turn "cannot decrypt" into "silently wiped".
+      if (this.dataFileExistedBeforeInit && this.keyFilePath) {
+        console.error(
+          '[Store] Existing data.json could not be read. Move it aside manually to start over; refusing to replace it.',
+        )
+        throw this.initializationError
+      }
+
       // Try to recover by backing up corrupted data and reinitializing
       try {
         await this.recoverFromCorruptedData(storagePath)
@@ -123,7 +167,7 @@ class StoreManager {
           name: 'data',
           cwd: storagePath,
           defaults: this.getDefaultData(),
-          encryptionKey: this.getEncryptionKey(),
+          encryptionKey: this.encryptionKey,
         })
         await this.initializeAppLogManager(storagePath)
         await this.initializeRequestLogManager(storagePath)
@@ -169,25 +213,200 @@ class StoreManager {
     return join(homedir(), '.chat2api')
   }
 
+  /** Key used by every release before machine-bound keys; only read during migration */
+  private static readonly LEGACY_ENCRYPTION_KEY = 'chat2api-fixed-encryption-key-v1'
+
   /**
-   * Get Encryption Key
-   * Returns a fixed encryption key for electron-store
-   * Note: electron-store uses this key to encrypt/decrypt the data file,
-   * so it must be stable across app restarts
+   * Resolves the key that encrypts data.json.
+   *
+   * The key is random per install and sealed with the OS keystore, so a copied
+   * data.json cannot be decrypted on another machine. A data file written by an
+   * older release is migrated once: read with the legacy key, backed up, then
+   * rewritten with the new key and verified before the old file is dropped.
    */
-  private getEncryptionKey(): string | undefined {
+  private resolveEncryptionKey(storagePath: string): string | undefined {
+    const keyPath = join(storagePath, 'store.key')
+    const dataPath = join(storagePath, 'data.json')
+    this.dataFileExistedBeforeInit = existsSync(dataPath)
+
+    let keystoreAvailable = false
     try {
-      if (safeStorage.isEncryptionAvailable()) {
-        // Use a fixed key - electron-store will use this to encrypt/decrypt data
-        // The key itself is not stored in the data file, only used for encryption
-        return 'chat2api-fixed-encryption-key-v1'
-      }
+      keystoreAvailable = safeStorage.isEncryptionAvailable()
     } catch (error) {
-      console.warn('Encryption unavailable, using unencrypted storage:', error)
+      console.warn('[Store] OS keystore probe failed, falling back to unencrypted storage:', error)
     }
-    return undefined
+
+    const plan = planKeySetup({
+      keystoreAvailable,
+      keyFileExists: existsSync(keyPath),
+      dataFileExists: this.dataFileExistedBeforeInit,
+    })
+
+    if (plan === 'unencrypted') {
+      if (this.dataFileExistedBeforeInit) {
+        console.warn('[Store] OS keystore unavailable; data.json is stored unencrypted')
+      }
+      return undefined
+    }
+
+    this.keyFilePath = keyPath
+    if (plan === 'reuse') {
+      const key = this.readKeyFile(keyPath)
+      this.restoreMissingDataFile(storagePath, key)
+      return key
+    }
+    if (plan === 'create') return this.createKeyFile(keyPath)
+    return this.migrateLegacyKey(storagePath, this.createKeyFile(keyPath))
   }
 
+  private readKeyFile(keyPath: string): string {
+    const sealed = readFileSync(keyPath, 'utf8').trim()
+    const key = safeStorage.decryptString(Buffer.from(sealed, 'base64'))
+    if (!key) throw new Error('store.key decrypted to an empty key')
+    return key
+  }
+
+  private createKeyFile(keyPath: string): string {
+    const key = randomBytes(32).toString('hex')
+    writeFileSync(keyPath, safeStorage.encryptString(key).toString('base64'), { mode: 0o600 })
+    return key
+  }
+
+  private nextBackupPath(dataPath: string): string {
+    const base = `${dataPath}.pre-key-migration.bak`
+    return existsSync(base) ? `${base}.${Date.now()}` : base
+  }
+
+  private migrateLegacyKey(storagePath: string, key: string): string {
+    this.rewriteWithKey(storagePath, join(storagePath, 'data.json'), key)
+    return key
+  }
+
+  /**
+   * data.json can go missing two ways: a downgrade cannot read it and renames it
+   * to data.corrupted.<ts>.json, or an interrupted migration leaves only a .bak.
+   * Rather than start empty, put the newest copy back - as-is when it is already
+   * under this install's key, or re-encrypted when it is the older fixed-key file.
+   */
+  private restoreMissingDataFile(storagePath: string, key: string): void {
+    const dataPath = join(storagePath, 'data.json')
+    if (existsSync(dataPath)) return
+
+    let candidates: string[] = []
+    try {
+      candidates = legacyBackupCandidates(readdirSync(storagePath))
+    } catch (error) {
+      console.warn('[Store] Could not list the data directory while looking for a copy to restore:', error)
+      return
+    }
+
+    for (const name of candidates) {
+      const sourcePath = join(storagePath, name)
+      copyFileSync(sourcePath, dataPath)
+      if (this.canReadWith(dataPath, storagePath, key)) {
+        console.warn('[Store] data.json was missing; restored it as-is from', name)
+        return
+      }
+      try {
+        this.rewriteWithKey(storagePath, sourcePath, key)
+        console.warn('[Store] data.json was missing; restored it from', name)
+        return
+      } catch (error) {
+        console.warn('[Store] Could not restore', name, '-', error instanceof Error ? error.message : error)
+        unlinkSync(dataPath)
+      }
+    }
+  }
+
+  /** Read-only probe: succeeds when the file on disk decrypts with this key. */
+  private canReadWith(dataPath: string, storagePath: string, key: string): boolean {
+    try {
+      const probe = new Store({
+        name: 'data',
+        cwd: storagePath,
+        defaults: {},
+        encryptionKey: key,
+      })
+      void probe.store
+      return true
+    } catch {
+      return false
+    }
+  }
+  /**
+   * Reads a legacy-encrypted file with the old fixed key and writes the same
+   * payload back under `key`, keeping a byte copy first. Any failure restores
+   * the live file from that copy.
+   */
+  private rewriteWithKey(storagePath: string, sourcePath: string, key: string): void {
+    const dataPath = join(storagePath, 'data.json')
+    const backupPath = this.nextBackupPath(dataPath)
+
+    let snapshot: Record<string, unknown>
+    try {
+      const legacy = new Store({
+        name: 'data',
+        cwd: storagePath,
+        defaults: {},
+        encryptionKey: StoreManager.LEGACY_ENCRYPTION_KEY,
+      })
+      snapshot = legacy.store
+      if (!snapshot || Object.keys(snapshot).length === 0) {
+        throw new Error('legacy store decrypted to an empty object')
+      }
+    } catch (error) {
+      throw new Error(
+        `Existing ${sourcePath.endsWith('data.json') ? 'data.json' : sourcePath} cannot be read with the legacy key, refusing to migrate: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+
+    copyFileSync(sourcePath, dataPath)
+    copyFileSync(dataPath, backupPath)
+    // the legacy file must be out of the way: the new store would otherwise try to
+    // decrypt it with the new key at construction. The backup above is the copy.
+    unlinkSync(dataPath)
+
+    try {
+      const rewritten = new Store({
+        name: 'data',
+        cwd: storagePath,
+        defaults: {},
+        encryptionKey: key,
+      })
+      rewritten.store = snapshot
+      const check = compareStoreSnapshot(snapshot, rewritten.store)
+      if (!check.ok) throw new Error(`verification failed: ${check.detail}`)
+      console.log('[Store] Wrote data.json under the machine-bound key; backup at', backupPath)
+    } catch (error) {
+      copyFileSync(backupPath, dataPath)
+      throw new Error(
+        `Key rewrite failed and data.json was restored from backup: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+  }
+
+  /**
+   * The prompt library was removed; keep whatever a user had written next to the
+   * data file instead of silently dropping it from the store.
+   */
+  private orphanSystemPrompts(storagePath: string): void {
+    const leftovers = this.store?.get('systemPrompts')
+    const payload = orphanedPromptPayload(leftovers)
+    if (!payload) return
+
+    const target = join(storagePath, 'system-prompts.orphaned.json')
+    try {
+      if (!existsSync(target)) writeFileSync(target, payload, 'utf8')
+      this.store!.delete('systemPrompts')
+      console.log('[Store] Moved leftover system prompts out of data.json to', target)
+    } catch (error) {
+      console.warn('[Store] Could not move leftover system prompts aside; leaving them in place:', error)
+    }
+  }
   /**
    * Get Default Data Structure
    */
@@ -198,7 +417,6 @@ class StoreManager {
       config: DEFAULT_CONFIG,
       logs: [],
       requestLogs: [],
-      systemPrompts: [],
       sessions: [],
       statistics: DEFAULT_STATISTICS,
       userModelOverrides: DEFAULT_USER_MODEL_OVERRIDES,
@@ -211,6 +429,7 @@ class StoreManager {
       storageDir: join(storagePath, 'request-logs'),
       config: config.requestLogConfig,
     })
+    setContentLoggingEnabled(config.requestLogConfig.includeBodies)
     await this.requestLogManager.initialize()
 
     const legacyRequestLogs = this.store?.get('requestLogs') || []
@@ -256,6 +475,7 @@ class StoreManager {
       ),
       toolCallingConfig: normalizeToolCallingConfig(rawToolCallingConfig),
       toolPromptConfig: undefined,
+      autoRouting: normalizeAutoRoutingConfig(rawConfig.autoRouting),
     }
   }
 
@@ -297,30 +517,21 @@ class StoreManager {
     let userModelOverridesChanged = false
     
     const updatedProviders = validProviders.map((p: Provider) => {
-      if (p.type === 'builtin') {
-        const builtinConfig = BUILTIN_PROVIDERS.find(bp => bp.id === p.id)
-        if (builtinConfig) {
-          if (p.id === 'deepseek') {
-            const sanitizedOverrides = sanitizeDeepSeekModelOverrides(userModelOverrides[p.id])
-            if (JSON.stringify(sanitizedOverrides) !== JSON.stringify(userModelOverrides[p.id])) {
-              userModelOverrides[p.id] = sanitizedOverrides
-              userModelOverridesChanged = true
-            }
-          }
+      const builtinConfig = BUILTIN_PROVIDERS.find(bp => bp.id === p.id)
+      if (!builtinConfig) return p
 
-          return { 
-            ...p, 
-            apiEndpoint: builtinConfig.apiEndpoint,
-            chatPath: builtinConfig.chatPath,
-            supportedModels: builtinConfig.supportedModels,
-            modelMappings: builtinConfig.modelMappings,
-            headers: builtinConfig.headers,
-            credentialFields: builtinConfig.credentialFields,
-            description: builtinConfig.description,
-          }
+      if (p.id === 'deepseek') {
+        const sanitizedOverrides = sanitizeDeepSeekModelOverrides(userModelOverrides[p.id])
+        if (JSON.stringify(sanitizedOverrides) !== JSON.stringify(userModelOverrides[p.id])) {
+          userModelOverrides[p.id] = sanitizedOverrides
+          userModelOverridesChanged = true
         }
       }
-      return p
+
+      if (p.type !== 'builtin') {
+        console.warn('[Store] Repairing builtin provider record:', p.id, '(stored type:', p.type ?? 'missing', ')')
+      }
+      return syncBuiltinProvider(p, builtinConfig)
     })
     
     if (userModelOverridesChanged) {
@@ -355,6 +566,7 @@ class StoreManager {
           description: builtinConfig.description,
           supportedModels: builtinConfig.supportedModels,
           modelMappings: builtinConfig.modelMappings,
+          supportsModelFetch: Boolean(builtinConfig.modelsFetch),
         }
         providers.push(newProvider)
         this.store!.set('providers', providers)
@@ -410,20 +622,18 @@ class StoreManager {
    * @returns Encrypted string
    */
   encryptData(data: string): string {
+    if (!safeStorage.isEncryptionAvailable()) {
+      console.warn('[Store] System keychain unavailable - credentials will be stored unencrypted')
+      return data
+    }
     try {
-      console.log('[Store] encryptData input length:', data.length, 'content:', data.substring(0, 20) + '...')
-      if (safeStorage.isEncryptionAvailable()) {
-        // Create new Buffer to store encryption result
-        const encrypted = Buffer.from(safeStorage.encryptString(data))
-        const result = encrypted.toString('base64')
-        console.log('[Store] encryptData output length:', result.length, 'content:', result.substring(0, 20) + '...')
-        // Verify encryption is correct
-        const decrypted = safeStorage.decryptString(encrypted)
-        console.log('[Store] encryptData verify decryption:', decrypted.substring(0, 20) + '...', 'match:', decrypted === data)
-        return result
-      } else {
-        console.log('[Store] Encryption unavailable, returning original data')
+      const encrypted = Buffer.from(safeStorage.encryptString(data))
+      // Some keychains report available but fail to round-trip (headless Linux without libsecret)
+      if (safeStorage.decryptString(encrypted) !== data) {
+        console.error('[Store] Encryption round-trip failed - credentials will be stored unencrypted')
+        return data
       }
+      return encrypted.toString('base64')
     } catch (error) {
       console.error('Failed to encrypt data:', error)
     }
@@ -745,13 +955,22 @@ class StoreManager {
   }
 
   /**
+   * Applies request-log settings and mirrors the body-logging switch to the
+   * content debug logger, so both stay one decision.
+   */
+  private applyRequestLogConfig(config: RequestLogConfig): void {
+    this.requestLogManager?.setConfig(config)
+    setContentLoggingEnabled(config.includeBodies)
+  }
+
+  /**
    * Set Application Configuration
    */
   setConfig(config: AppConfig): void {
     this.ensureInitialized()
     const normalized = this.normalizeConfig(config)
     this.store!.set('config', normalized)
-    this.requestLogManager?.setConfig(normalized.requestLogConfig)
+    this.applyRequestLogConfig(normalized.requestLogConfig)
   }
 
   /**
@@ -798,10 +1017,17 @@ class StoreManager {
       })
     }
 
+    if (updates.autoRouting) {
+      newConfig.autoRouting = normalizeAutoRoutingConfig({
+        ...currentConfig.autoRouting,
+        ...updates.autoRouting,
+      })
+    }
+
     const normalized = this.normalizeConfig(newConfig)
     this.store!.set('config', normalized)
     this.appLogManager?.setMaxEntries(this.getMaxLogEntries(normalized))
-    this.requestLogManager?.setConfig(normalized.requestLogConfig)
+    this.applyRequestLogConfig(normalized.requestLogConfig)
     return normalized
   }
 
@@ -812,7 +1038,7 @@ class StoreManager {
     this.ensureInitialized()
     this.store!.set('config', DEFAULT_CONFIG)
     this.appLogManager?.setMaxEntries(this.getMaxLogEntries(DEFAULT_CONFIG))
-    this.requestLogManager?.setConfig(DEFAULT_CONFIG.requestLogConfig)
+    this.applyRequestLogConfig(DEFAULT_CONFIG.requestLogConfig)
     return DEFAULT_CONFIG
   }
 
@@ -828,6 +1054,7 @@ class StoreManager {
       accountId?: string
       providerId?: string
       requestId?: string
+      deletedAccounts?: number
       data?: Record<string, unknown>
       model?: string
       actualModel?: string
@@ -1160,122 +1387,6 @@ class StoreManager {
 
   // ==================== System Prompts Operations ====================
 
-  /**
-   * Get All System Prompts
-   * Merges built-in prompts with custom prompts
-   */
-  getSystemPrompts(): SystemPrompt[] {
-    this.ensureInitialized()
-    const customPrompts = this.store!.get('systemPrompts') || []
-    return [...BUILTIN_PROMPTS, ...customPrompts]
-  }
-
-  /**
-   * Get Built-in System Prompts
-   */
-  getBuiltinPrompts(): SystemPrompt[] {
-    return BUILTIN_PROMPTS
-  }
-
-  /**
-   * Get Custom System Prompts
-   */
-  getCustomPrompts(): SystemPrompt[] {
-    this.ensureInitialized()
-    return this.store!.get('systemPrompts') || []
-  }
-
-  /**
-   * Get System Prompt By ID
-   */
-  getSystemPromptById(id: string): SystemPrompt | undefined {
-    return this.getSystemPrompts().find(p => p.id === id)
-  }
-
-  /**
-   * Add Custom System Prompt
-   */
-  addSystemPrompt(prompt: Omit<SystemPrompt, 'id' | 'createdAt' | 'updatedAt'>): SystemPrompt {
-    this.ensureInitialized()
-    const prompts = this.store!.get('systemPrompts') || []
-    
-    const newPrompt: SystemPrompt = {
-      ...prompt,
-      id: this.generateId(),
-      isBuiltin: false,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    }
-    
-    prompts.push(newPrompt)
-    this.store!.set('systemPrompts', prompts)
-    
-    return newPrompt
-  }
-
-  /**
-   * Update Custom System Prompt
-   * Cannot update built-in prompts
-   */
-  updateSystemPrompt(id: string, updates: Partial<SystemPrompt>): SystemPrompt | null {
-    this.ensureInitialized()
-    
-    // Check if it's a built-in prompt
-    if (BUILTIN_PROMPTS.some(p => p.id === id)) {
-      console.warn('Cannot update built-in prompt:', id)
-      return null
-    }
-    
-    const prompts = this.store!.get('systemPrompts') || []
-    const index = prompts.findIndex((p: SystemPrompt) => p.id === id)
-    
-    if (index === -1) {
-      return null
-    }
-    
-    prompts[index] = {
-      ...prompts[index],
-      ...updates,
-      updatedAt: Date.now(),
-    }
-    
-    this.store!.set('systemPrompts', prompts)
-    return prompts[index]
-  }
-
-  /**
-   * Delete Custom System Prompt
-   * Cannot delete built-in prompts
-   */
-  deleteSystemPrompt(id: string): boolean {
-    this.ensureInitialized()
-    
-    // Check if it's a built-in prompt
-    if (BUILTIN_PROMPTS.some(p => p.id === id)) {
-      console.warn('Cannot delete built-in prompt:', id)
-      return false
-    }
-    
-    const prompts = this.store!.get('systemPrompts') || []
-    const index = prompts.findIndex((p: SystemPrompt) => p.id === id)
-    
-    if (index === -1) {
-      return false
-    }
-    
-    prompts.splice(index, 1)
-    this.store!.set('systemPrompts', prompts)
-    
-    return true
-  }
-
-  /**
-   * Get System Prompts By Type
-   */
-  getSystemPromptsByType(type: SystemPrompt['type']): SystemPrompt[] {
-    return this.getSystemPrompts().filter(p => p.type === type)
-  }
-
   // ==================== Session Operations ====================
 
   /**
@@ -1551,6 +1662,7 @@ class StoreManager {
           displayName,
           actualModelId,
           isCustom: false,
+          source: 'builtin',
         })
       }
     })
@@ -1560,10 +1672,58 @@ class StoreManager {
         displayName: customModel.displayName,
         actualModelId: customModel.actualModelId,
         isCustom: true,
+        source: 'custom',
+      })
+    })
+
+    // Last online sync fills in models the shipped list does not carry; a name the user
+    // already sees from the built-in list or added by hand is never duplicated here.
+    const knownNames = new Set(effectiveModels.map(model => model.displayName))
+    ;(overrides.fetchedModels || []).forEach(fetchedModel => {
+      if (knownNames.has(fetchedModel.displayName)) return
+      if (overrides.excludedModels.includes(fetchedModel.displayName)) return
+      effectiveModels.push({
+        displayName: fetchedModel.displayName,
+        actualModelId: fetchedModel.actualModelId,
+        isCustom: false,
+        source: 'fetched',
       })
     })
 
     return effectiveModels
+  }
+
+  /**
+   * Store a freshly fetched online model list for a provider
+   */
+  applyFetchedModels(
+    providerId: string,
+    models: FetchedModel[]
+  ): { fetchedCount: number; addedCount: number; fetchedAt: number; effectiveModels: EffectiveModel[] } {
+    this.ensureInitialized()
+
+    const before = new Set(this.getEffectiveModels(providerId).map(model => model.displayName))
+    const overrides = this.getUserModelOverrides()
+
+    if (!overrides[providerId]) {
+      overrides[providerId] = {
+        addedModels: [],
+        excludedModels: [],
+      }
+    }
+
+    const fetchedAt = Date.now()
+    overrides[providerId].fetchedModels = models.map(model => ({
+      displayName: model.displayName,
+      actualModelId: model.actualModelId,
+    }))
+    overrides[providerId].fetchedAt = fetchedAt
+    this.setUserModelOverrides(overrides)
+
+    const effectiveModels = this.getEffectiveModels(providerId)
+    const addedCount = effectiveModels.filter(model => !before.has(model.displayName)).length
+
+    return { fetchedCount: models.length, addedCount, fetchedAt, effectiveModels }
   }
 
   /**
@@ -1626,6 +1786,10 @@ class StoreManager {
       }
     } else {
       overrides[providerId].addedModels = overrides[providerId].addedModels.filter(
+        m => m.displayName !== modelName
+      )
+      // Otherwise deleting a row that came from the last online sync would do nothing
+      overrides[providerId].fetchedModels = (overrides[providerId].fetchedModels || []).filter(
         m => m.displayName !== modelName
       )
     }
@@ -1700,38 +1864,6 @@ class StoreManager {
     this.store!.clear()
     this.requestLogManager?.clearRequestLogs()
     this.requestLogManager?.flushSync()
-  }
-
-  /**
-   * Export Data (for backup)
-   * Does not include encrypted credential data
-   */
-  exportData(): Omit<StoreSchema, 'accounts'> & { accounts: Omit<Account, 'credentials'>[] } {
-    this.ensureInitialized()
-    const providers = this.store!.get('providers') || []
-    const accounts = (this.store!.get('accounts') || []).map((a: Account) => {
-      const { credentials, ...rest } = a
-      return rest
-    })
-    const config = this.store!.get('config') || DEFAULT_CONFIG
-    const logs = this.getAppLogManager().exportLogs()
-    const requestLogs = this.getRequestLogManager().exportRequestLogs()
-    const systemPrompts = this.store!.get('systemPrompts') || []
-    const sessions = this.store!.get('sessions') || []
-    const statistics = this.store!.get('statistics') || DEFAULT_STATISTICS
-    const userModelOverrides = this.store!.get('userModelOverrides') || DEFAULT_USER_MODEL_OVERRIDES
-    
-    return {
-      providers,
-      accounts,
-      config,
-      logs,
-      requestLogs,
-      systemPrompts,
-      sessions,
-      statistics,
-      userModelOverrides,
-    }
   }
 
   /**
