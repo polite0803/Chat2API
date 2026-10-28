@@ -574,8 +574,8 @@ Expected output includes:
 ```json
 {
   "provider": "github",
-  "owner": "xiaoY233",
-  "repo": "Chat2API"
+  "owner": "polite0803",
+  "repo": "ModelPort"
 }
 ```
 

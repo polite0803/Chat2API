@@ -17,10 +17,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { 
-  ExternalLink, 
-  User, 
+import {
+  User,
   AlertCircle,
   Loader2,
   CheckCircle2,
@@ -29,80 +27,7 @@ import {
   Copy,
   Check
 } from 'lucide-react'
-import type { Provider, CredentialField, Account, BuiltinProviderConfig, ProviderVendor } from '@/types/electron'
-
-/**
- * Map OAuth credentials to provider credential field names
- * OAuth returns credentials with keys like 'chatglm_refresh_token', but providers expect 'refresh_token'
- * DeepSeek stores token as JSON: {"value":"..."}
- */
-function mapOAuthCredentials(providerId: string | undefined, credentials: Record<string, string>): Record<string, string> {
-  if (!providerId) return credentials
-
-  const credentialKeyMap: Record<string, string> = {
-    'glm': 'chatglm_refresh_token',
-    'deepseek': 'userToken',
-    'qwen': 'tongyi_sso_ticket',
-    'qwen-ai': 'tongyi_sso_ticket',
-    'zai': 'tongyi_sso_ticket',
-    'mimo': 'serviceToken',
-  }
-
-  const providerFieldNames: Record<string, string> = {
-    'glm': 'refresh_token',
-    'deepseek': 'token',
-    'qwen': 'ticket',
-    'qwen-ai': 'ticket',
-    'zai': 'ticket',
-    'mimo': 'service_token',
-  }
-
-  const oauthKey = credentialKeyMap[providerId]
-  if (oauthKey && credentials[oauthKey]) {
-    const fieldName = providerFieldNames[providerId]
-    if (fieldName) {
-      // Handle JSON-wrapped tokens (DeepSeek stores token as {"value":"..."})
-      let tokenValue = credentials[oauthKey]
-      if (providerId === 'deepseek' && tokenValue && tokenValue.startsWith('{') && tokenValue.endsWith('}')) {
-        try {
-          const parsed = JSON.parse(tokenValue)
-          if (parsed.value) {
-            tokenValue = parsed.value
-          }
-        } catch (e) {
-          console.error('[AddAccountDialog] Error parsing JSON token:', e)
-        }
-      }
-      return { [fieldName]: tokenValue }
-    }
-  }
-
-
-  // For Mimo, map all three tokens
-  if (providerId === 'mimo') {
-    const result: Record<string, string> = {}
-    // OAuth already returns credentials in correct format (service_token, user_id, ph_token)
-    // Check for final format first
-    if (credentials['service_token']) {
-      result['service_token'] = credentials['service_token']
-    } else if (credentials['serviceToken']) {
-      result['service_token'] = credentials['serviceToken']
-    }
-    if (credentials['user_id']) {
-      result['user_id'] = credentials['user_id']
-    } else if (credentials['userId']) {
-      result['user_id'] = credentials['userId']
-    }
-    if (credentials['ph_token']) {
-      result['ph_token'] = credentials['ph_token']
-    } else if (credentials['xiaomichatbot_ph']) {
-      result['ph_token'] = credentials['xiaomichatbot_ph']
-    }
-    return result
-  }
-
-  return credentials
-}
+import type { Provider, CredentialField, Account, BuiltinProviderConfig } from '@/types/electron'
 
 interface AddAccountDialogProps {
   open: boolean
@@ -138,7 +63,6 @@ export function AddAccountDialog({
   onUpdateAccount,
 }: AddAccountDialogProps) {
   const { t } = useTranslation()
-  const [activeTab, setActiveTab] = useState<string>('manual')
   const [name, setName] = useState('')
   const [dailyLimit, setDailyLimit] = useState<string>('')
   const [credentials, setCredentials] = useState<Record<string, string>>({})
@@ -154,13 +78,10 @@ export function AddAccountDialog({
     }
   }>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isOAuthLoading, setIsOAuthLoading] = useState(false)
-  const [oauthStatus, setOAuthStatus] = useState<string>('')
 
   const isEditing = !!editingAccount
   const builtinProvider = provider as BuiltinProviderConfig | null
   const credentialFields: CredentialField[] = builtinProvider?.credentialFields || getDefaultCredentialFields(provider?.authType, t)
-  const supportsOAuth = provider && ['deepseek', 'glm', 'kimi', 'mimo', 'minimax', 'qwen', 'qwen-ai', 'zai'].includes(provider.id)
 
   useEffect(() => {
     if (open) {
@@ -168,7 +89,6 @@ export function AddAccountDialog({
         setName(editingAccount.name)
         setDailyLimit(editingAccount.dailyLimit?.toString() || '')
         setCredentials(editingAccount.credentials || {})
-        setActiveTab('manual')
       } else {
         resetForm()
       }
@@ -180,9 +100,6 @@ export function AddAccountDialog({
     setDailyLimit('')
     setCredentials({})
     setValidationResult({})
-    setActiveTab('manual')
-    setIsOAuthLoading(false)
-    setOAuthStatus('')
   }
 
   const handleCredentialChange = (fieldName: string, value: string) => {
@@ -252,16 +169,9 @@ export function AddAccountDialog({
     setIsSubmitting(true)
 
     try {
-      // For MiniMax, ensure realUserID is passed correctly
-      let finalCredentials = { ...credentials }
-      if (provider?.id === 'minimax' && credentials.realUserID && credentials.realUserID.trim()) {
-        // realUserID is provided separately, keep both fields
-        console.log('[AddAccountDialog] MiniMax realUserID provided:', credentials.realUserID)
-      }
-
       const data = {
         name: name.trim(),
-        credentials: finalCredentials,
+        credentials,
         dailyLimit: dailyLimit ? parseInt(dailyLimit, 10) : undefined,
       }
 
@@ -280,51 +190,6 @@ export function AddAccountDialog({
       })
     } finally {
       setIsSubmitting(false)
-    }
-  }
-
-  const handleOpenOAuthBrowser = async () => {
-    if (!provider) return
-    
-    setIsOAuthLoading(true)
-    setOAuthStatus(t('providers.openingLoginWindow'))
-    
-    try {
-      const result = await window.electronAPI?.oauth.startInAppLogin(
-        provider.id,
-        provider.id as ProviderVendor
-      )
-      
-      if (result?.success && result.credentials) {
-        // Map OAuth credentials to provider credential field names
-        const mappedCredentials = mapOAuthCredentials(provider?.id, result.credentials)
-        setCredentials(mappedCredentials)
-        setOAuthStatus(t('providers.loginSuccess'))
-        
-        if (result.accountInfo?.name) {
-          setName(result.accountInfo.name)
-        }
-        
-        setValidationResult({
-          valid: true,
-          userInfo: result.accountInfo
-        })
-      } else {
-        const errorMsg = result?.error || ''
-        const translatedError = errorMsg === 'Login window was closed' 
-          ? t('providers.loginWindowClosed')
-          : errorMsg === 'A login window is already open'
-            ? t('providers.loginWindowAlreadyOpen')
-            : errorMsg.includes('Guest account') 
-              ? t('providers.guestAccountNotAllowed')
-              : errorMsg || t('providers.loginFailed')
-        setOAuthStatus(translatedError)
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : t('providers.loginFailed')
-      setOAuthStatus(errorMessage)
-    } finally {
-      setIsOAuthLoading(false)
     }
   }
 
@@ -366,68 +231,12 @@ export function AddAccountDialog({
               />
             </div>
 
-            {supportsOAuth && !isEditing && (
-              <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="manual">{t('providers.manualInput')}</TabsTrigger>
-                  <TabsTrigger value="oauth">{t('providers.oauthLogin')}</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="manual" className="mt-4">
-                  <CredentialFieldsForm
-                    fields={credentialFields}
-                    credentials={credentials}
-                    onChange={handleCredentialChange}
-                    t={t}
-                    providerId={provider?.id}
-                  />
-                </TabsContent>
-
-                <TabsContent value="oauth" className="mt-4">
-                  <div className="flex flex-col items-center justify-center py-6 space-y-4">
-                    <div className="text-center">
-                      <p className="text-sm text-muted-foreground mb-4">
-                        {t('providers.clickToOpenOAuth')}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {t('providers.oauthAutoCapture')}
-                      </p>
-                    </div>
-                    <Button 
-                      onClick={handleOpenOAuthBrowser}
-                      disabled={isOAuthLoading}
-                    >
-                      {isOAuthLoading ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          {oauthStatus || t('providers.loggingIn')}
-                        </>
-                      ) : (
-                        <>
-                          <ExternalLink className="mr-2 h-4 w-4" />
-                          {t('providers.openOAuthLogin')}
-                        </>
-                      )}
-                    </Button>
-                    {oauthStatus && !isOAuthLoading && (
-                      <p className={`text-sm ${validationResult.valid ? 'text-success' : 'text-error'}`}>
-                        {oauthStatus}
-                      </p>
-                    )}
-                  </div>
-                </TabsContent>
-              </Tabs>
-            )}
-
-            {(!supportsOAuth || isEditing) && (
-              <CredentialFieldsForm
-                fields={credentialFields}
-                credentials={credentials}
-                onChange={handleCredentialChange}
-                t={t}
-                providerId={provider?.id}
-              />
-            )}
+            <CredentialFieldsForm
+              fields={credentialFields}
+              credentials={credentials}
+              onChange={handleCredentialChange}
+              t={t}
+            />
 
             {validationResult.error && (
               <div className="flex items-center gap-2 text-sm text-error bg-error-soft p-3 rounded-lg">
@@ -501,10 +310,9 @@ interface CredentialFieldsFormProps {
   credentials: Record<string, string>
   onChange: (fieldName: string, value: string) => void
   t: (key: string) => string
-  providerId?: string
 }
 
-function CredentialFieldsForm({ fields, credentials, onChange, t, providerId }: CredentialFieldsFormProps) {
+function CredentialFieldsForm({ fields, credentials, onChange, t }: CredentialFieldsFormProps) {
   const [visibleFields, setVisibleFields] = useState<Record<string, boolean>>({})
   const [copiedFields, setCopiedFields] = useState<Record<string, boolean>>({})
 
@@ -529,92 +337,6 @@ function CredentialFieldsForm({ fields, credentials, onChange, t, providerId }: 
   }
 
   const getFieldTranslation = (field: CredentialField) => {
-    if (!providerId) return { label: field.label, placeholder: field.placeholder, helpText: field.helpText }
-
-    const translations: Record<string, Record<string, { label: string; placeholder: string; helpText: string }>> = {
-      deepseek: {
-        token: {
-          label: t('deepseek.userToken'),
-          placeholder: t('deepseek.userTokenPlaceholder'),
-          helpText: t('deepseek.userTokenHelp'),
-        },
-      },
-      glm: {
-        refresh_token: {
-          label: t('glm.refreshToken'),
-          placeholder: t('glm.refreshTokenPlaceholder'),
-          helpText: t('glm.refreshTokenHelp'),
-        },
-      },
-      kimi: {
-        token: {
-          label: t('kimi.accessToken'),
-          placeholder: t('kimi.accessTokenPlaceholder'),
-          helpText: t('kimi.accessTokenHelp'),
-        },
-      },
-      minimax: {
-        token: {
-          label: t('minimax.token'),
-          placeholder: t('minimax.tokenPlaceholder'),
-          helpText: t('minimax.tokenHelp'),
-        },
-        realUserID: {
-          label: t('minimax.realUserID'),
-          placeholder: t('minimax.realUserIDPlaceholder'),
-          helpText: t('minimax.realUserIDHelp'),
-        },
-      },
-      qwen: {
-        ticket: {
-          label: t('qwen.ssoTicket'),
-          placeholder: t('qwen.ssoTicketPlaceholder'),
-          helpText: t('qwen.ssoTicketHelp'),
-        },
-      },
-      'qwen-ai': {
-        token: {
-          label: t('qwen-ai.token'),
-          placeholder: t('qwen-ai.tokenPlaceholder'),
-          helpText: t('qwen-ai.tokenHelp'),
-        },
-        cookies: {
-          label: t('qwen-ai.cookies'),
-          placeholder: t('qwen-ai.cookiesPlaceholder'),
-          helpText: t('qwen-ai.cookiesHelp'),
-        },
-      },
-      zai: {
-        token: {
-          label: t('zai.token'),
-          placeholder: t('zai.tokenPlaceholder'),
-          helpText: t('zai.tokenHelp'),
-        },
-      },
-      mimo: {
-        service_token: {
-          label: t('mimo.serviceToken'),
-          placeholder: t('mimo.serviceTokenPlaceholder'),
-          helpText: t('mimo.serviceTokenHelp'),
-        },
-        user_id: {
-          label: t('mimo.userId'),
-          placeholder: t('mimo.userIdPlaceholder'),
-          helpText: t('mimo.userIdHelp'),
-        },
-        ph_token: {
-          label: t('mimo.phToken'),
-          placeholder: t('mimo.phTokenPlaceholder'),
-          helpText: t('mimo.phTokenHelp'),
-        },
-      },
-    }
-
-    const providerTranslations = translations[providerId]
-    if (providerTranslations && providerTranslations[field.name]) {
-      return providerTranslations[field.name]
-    }
-
     return { label: field.label, placeholder: field.placeholder, helpText: field.helpText }
   }
 

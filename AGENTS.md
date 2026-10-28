@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Project Overview
 
-Chat2API Manager is an Electron desktop application that provides an OpenAI-compatible API proxy for eight built-in AI chat services (DeepSeek, GLM, Kimi, Mimo, MiniMax, Qwen, Qwen AI, Z.ai). It enables using any OpenAI-compatible client with these services across macOS, Windows, and Linux.
+ModelPort is an Electron desktop application that provides an OpenAI-compatible API proxy for standard HTTP model endpoints. It ships four provider classes: the `opencode` local runtime, a 73-entry aggregate catalogue of key-based / key-less endpoints (see "Aggregate Provider Catalogue"), the ten account channels served by the vendored channel pack (see "Account Channels"), and user-defined custom providers. It runs on macOS, Windows, and Linux.
 
 ## Build Commands
 
@@ -78,8 +78,11 @@ src/
 │   │   ├── manager.ts      # OAuth flow orchestration
 │   │   ├── inAppLogin.ts   # In-app browser login with token auto-extraction
 │   │   └── adapters/       # Provider-specific OAuth adapters
+│   ├── channelPack/         # Vendor channel-pack host: worker.ts + compat shims + bridge.ts
 │   ├── providers/          # Provider configurations
 │   │   ├── builtin/        # Built-in provider configs (one file per provider)
+│   │   ├── aggregate/      # Aggregate catalogue (registry data + manager)
+│   │   ├── accountChannels/ # Ten login channels: catalogue, vault, manager, runtimeState
 │   │   └── custom.ts       # Custom provider support
 │   ├── store/              # Persistent storage (electron-store)
 │   │   ├── store.ts        # Main store manager with IPC bridge
@@ -114,78 +117,40 @@ To add a new provider:
 2. Register it in `src/main/providers/builtin/index.ts` (both `builtinProviders` and `builtinProviderMap`)
 3. Create OAuth adapter in `src/main/oauth/adapters/<provider>.ts` and register it in that folder's `index.ts` (two switches)
 4. Create proxy adapter in `src/main/proxy/adapters/<provider>.ts`; keep its stream handler class in the
-   same file (only deepseek keeps a separate `-stream.ts`) and export it from `adapters/index.ts`
+   same file (no provider keeps a separate `-stream.ts` any more) and export it from `adapters/index.ts`
 5. Add one entry to the `providerForwarders` array in `src/main/proxy/forwarder.ts`
 6. Add the UI icon mapping and i18n entries
 
 `src/main/store/types.ts` needs no edit: it re-exports `builtinProviders` as `BUILTIN_PROVIDERS`.
 
 ### Online Model List Update
-A builtin provider opts in by declaring `modelsFetch` in `src/main/providers/builtin/<provider>.ts`
-(`url`, optional `method`/`body`, `reader`, `auth`, extra `headers`).
-`src/main/providers/modelCatalog.ts` makes the request; `modelListReaders.ts` turns the payload into
-`{ displayName, actualModelId }` pairs and `modelListRequest.ts` builds the request. `{uuid}` inside the
-url or a string body value is replaced with a fresh `crypto.randomUUID()` per call, for the providers
-that key their list on a client-generated install id (千问国内站's `ut`).
+Only two model-list sources exist after the web-provider retirement, and
+`src/main/providers/modelListSource.ts` decides between them in this order:
 
-`auth` is a list of rules moving one `account.credentials` field into the request:
-`{ from, into: 'header', header, prefix }`, `{ from, into: 'cookie', cookie }`, or
-`{ from: 'cookies', into: 'cookie-map' }`. Declaring any rule means an active account is required; an
-absent `auth` list means the endpoint answers anonymously. Every rule must resolve - a partial cookie
-set is refused locally as `missing_credential_field` (naming the fields, never their values) instead of
-going out and coming back as an upstream 401. Rules apply in order, first writer wins, so listing the
-`auth` is unused by any shipped provider right now - the one adapter that needed a stored cookie map was Perplexity, and that provider has been removed. A later rule cannot overwrite a cookie or header an earlier rule set.
-cookies.
+- `runtime` - a builtin that declares `runtimeModels: true` (today only `opencode`). The list
+  comes from the local runtime, not from an endpoint, so it has no `modelsFetch` at all.
+- `http` - a builtin that declares `modelsFetch` (`url`, optional `method`/`body`, `reader`,
+  `auth`, extra `headers`). `src/main/providers/modelCatalog.ts` makes the request;
+  `modelListReaders.ts` turns the payload into `{ displayName, actualModelId }` pairs.
+- `unsupported` - everything else. Startup writes `supportsModelFetch` from this, so a provider
+  with neither source shows "does not support dynamic model updates".
 
-Six readers exist, tried in this order under `reader: 'auto'`: `openai-list` (`data: [{id, name?}]`),
-`qwen-double-data` (`data: {data: [...]}`), `kimi-available-models` (`availableModels: [{id, displayName?}]`,
-deduped by id), `qwen-cn-model-list` (`data: [{modelCode, displayModelName, show}]`, `show: false` dropped),
-`minimax-cloud-config` (`{base_resp, models: [{model_id, display_name}]}`) and `mimo-bot-config`
-(`data.modelConfigList`, keeping only `isInPromptNameList === true`).
-An unrecognised payload reports `unrecognized_shape` instead of returning an empty list, so an upstream
-change never looks like "this provider has no models".
+Two readers exist, tried in this order under `reader: 'auto'`: `openai-list`
+(`data: [{id, name?}]`, also `{models: [...]}`-shaped payloads that carry `id`) and
+`openai-free-list` (the same payload filtered to `isFree === true`, used for the Kilo free pool;
+a catalogue with no free model reports `empty`, never a paid model). An unrecognised payload
+reports `unrecognized_shape` instead of returning an empty list, so an upstream change never
+looks like "this provider has no models".
 
-Status of the eight web-chat providers (verified 2026-10-27 by anonymous requests, plus logged-in session
-replays): `qwen-ai` (`data:[{id,name}]`) and `kimi` (`availableModels:[{id,displayName}]`, POST)
-answer anonymously; `minimax` answers anonymously at
-`GET https://agent.minimax.cn/minimax-cloud/api/v1/config?biz_id=3&app_id=3001&client=web` with the
-`{base_resp, models:[{model_id, display_name}]}` envelope - note that host is `agent.minimax.cn`, not the
-`agent.minimaxi.com` its `apiEndpoint` declares, and the site today lists `MiniMax-M3.1-Flash` and
-`MiniMax-M3` while the shipped list still says `MiniMax-M2.7`; `zai` returns `{data:[{id,name}]}` for
-`GET /api/models` with an account JWT (403 without a token, 401 with a bad one); `qwen` (千问国内站)
-answers anonymously at `chat2-api.qianwen.com` - a different host from its `apiEndpoint` - with the
-`{code,msg,success,data:[{modelCode,displayModelName,show}]}` envelope; `mimo` answers anonymously at
-`GET https://aistudio.xiaomimimo.com/open-apis/bot/config` with
-`{code,msg,data:{modelConfigList:[{model,name,isInPromptNameList}]}}` - that array carries ~15 entries whose
-`name` values collide (four share `mimo-omni`) because most are internal or retired, so the reader keeps
-only `isInPromptNameList === true`, which is exactly the three the site offers today
-(`MiMo-V2.6-Flash`, `MiMo-V2.6-Pro`, `MiMo-V2.6-Pro-UltraSpeed`) and is also what stops two models landing
-on one display name.
-Not declared, with the reading behind each: **deepseek has no list to sync** - its UI exposes only the
-thinking/search switches, and `client/settings?scope=model` (also `main`, `provider`) returns
-`biz_code:1 SETTINGS_NOT_FOUND` even with the site's own registered `did` replayed inside a logged-in
-session, so there is nothing to fetch rather than a fetch we are blocked from; **glm does have a list
-endpoint, but a plain HTTP client cannot reach it** -
-`GET https://chatglm.cn/chatglm/agent-api/operation/detail?tag=available_models` replies
-`{status, message, result:{default:{agent,am,guest,non_vip,svip,vip}, models:[{selected_model, display_name,
-chat_switch, am_switch, description, am_description, display_tag, reasoning_efforts:[{am_effort, display_name,
-description, effort}]}]}, rid}`, read live through the site's own `Home/GetAvailableModels` action, and the
-current list is `glm-5.3` + `glm-5.3-flash` - the two codes `builtin/glm.ts` already maps. The result is
-persisted to `localStorage.vuex → Home.models`, which is why opening its model switcher makes no network call
-and why an earlier pass of this document wrongly called those options a bundled constant. What blocks wiring
-it is the request contract, not login: every call carries a per-request signature (`X-Timestamp`, `X-Nonce`,
-`X-Sign` = `md5("<obfuscated ms>-<uuid v4 without dashes>-<salt inlined in main.*.js>")`) plus `App-Name`,
-`X-Device-Id` (localStorage `chatglm-deid`), `X-Request-Id` and the `X-App-*` set, and the whole origin sits
-behind a RiverSecurity-style WAF (`ssxmod_itna`/`ssxmod_itna2` cookies, `_waf_*` storage). Unsigned requests
-fail the same way with logged-in cookies and without them (`400`, `status 40001`), and a request signed from
-this machine with the reconstructed formula also fails (`400`, `status 40003`), so the gate is bot detection
-rather than authentication: a static `modelsFetch` rule cannot satisfy it, and a bespoke signer would be
-guessing a salt that the site can rotate at any build. GLM therefore keeps `supportsModelFetch` off, shows the
-"does not support dynamic model updates" line, and its drift is fixed by editing `builtin/glm.ts` with the
-codes read from a real chat request body.
-**perplexity was removed as a provider on 2026-10-27** - its site could not be reached from the
-development machine at all (connection failure, no model list call observed), so nothing about its
-list could be verified and the config shipped a single placeholder model named `Auto`.
+The `auth` rule list (`{ from, into: 'header', header, prefix }`, `{ from, into: 'cookie', cookie }`,
+`{ from: 'cookies', into: 'cookie-map' }`) is unchanged and unused by any shipped provider: no
+builtin declares `modelsFetch` now. `{uuid}` placeholders in the url/body are still substituted
+with a fresh `crypto.randomUUID()` per call for any future declaration.
+
+Aggregate providers do not use `modelsFetch`; their discovery path lives in
+`providers/aggregate/manager.ts` and requests the catalogue's `modelsUrl` directly with the
+stored key, then rewrites the provider's namespaced model list (see "Aggregate Provider Catalogue").
+
 
 Fetched models are stored in `userModelOverrides[providerId].fetchedModels` (+ `fetchedAt`), **not** in
 `provider.supportedModels` - the startup sync rewrites that field from code. They merge into
@@ -197,6 +162,127 @@ The action is the single `providers:updateModels` channel. The card menu renders
 provider record carries `supportsModelFetch`, which startup derives from the shipped config. Failures
 return a typed `reason` (`unsupported`, `no_active_account`, `http_status`, `empty`,
 `unrecognized_shape`, `network_error`), each with its own message in the UI.
+
+### Aggregate Provider Catalogue
+
+`src/main/providers/aggregate/registry.ts` is data transcribed from the reference registry:
+73 entries / 473 models after deliberately dropping `openai` and `github_copilot` (browser-login
+account channels - the class that was retired) and `fleetrelay_t1` (responses-only relay).
+`openai_api` stays and is served over the chat wire. `vertex` / `vertex-partner` are listed with
+`authKind: 'unsupported'` because Google ADC cannot be produced here.
+
+- `manager.ts` only writes a provider record when the user saves one, so the provider list never
+  carries 70+ unusable rows. The record is `type: 'aggregate'`, `id` = registry id, and carries
+  `wire`, `authHeader`/`authPrefix`, `aggregateId`, `supportedModels`, `modelMappings`.
+  `initializeDefaultProviders()` only repairs `type === 'builtin'` records, so aggregate records
+  survive a restart.
+- Accounts: a keyed entry gets exactly one account holding `credentials.apiKey`; a key-less entry
+  (`kilo`, `ollama`, `lmstudio`, `llamacpp`) gets a credential-less active account so the load
+  balancer can route it.
+- Display names are `<providerId>/<modelId>`. `save()` writes `provider.modelMappings`
+  (displayName -> upstream id) and a global `config.modelMappings` entry with
+  `preferredProviderId`, which is what makes `loadbalancer` route a name to exactly one entry.
+  Removing the provider drops both.
+- Wires: `openai-chat` reuses the forwarder's default branch (70 entries).
+  `anthropic-messages` (`anthropic`, `glm`'s `/api/anthropic`, `minimax-cn`) uses
+  `proxy/adapters/anthropic.ts`, which converts messages/system/tool_use blocks and re-emits the
+  SSE stream as OpenAI chunks with `skipTransform`. `openai-responses` is not implemented.
+- Auth header: `Authorization: Bearer` by default, `x-api-key` for the anthropic wire, `api-key`
+  for `azure_openai`; `forwarder.buildHeaders()` reads `provider.authHeader`/`authPrefix`.
+- A baseUrl containing `{placeholders}` is never expanded: the user has to override it. `test`
+  probes `modelsUrl`; `discoverModels` rewrites the exposed list from the same payload. `kilo`
+  uses the `openai-free-list` reader, so only `isFree: true` models are exposed.
+- Parametpolicy passes every parameter through for any `type !== 'builtin'` provider, so aggregate
+  requests are never silently stripped.
+
+### Account Channels
+
+Ten browser/device-code login channels - `lobsterai`, `qoder`, `qodercn`, `trae`, `cline`, `loomy`,
+`raccoon`, `minimax`, `zcode`, `gemini` - are not HTTP endpoints either. Each one is a DSH
+"channel pack" provider that owns its own login flow, account pool, daily credit claim and model
+gating. The upstream implementation is **vendored as source**, not as a bundle:
+
+- `vendor/channel-pack/src/` is the upstream tree (149 TS files), replaced wholesale on upgrade.
+- `src/main/channelPack/compat/` holds the shims for the private packages the upstream imports
+  (`virtual:*`, `@deepseek-ai/*`, `undici`, `image-pricing`). They are only reachable through
+  esbuild aliases; `src/main/types/channelPack.d.ts` declares the virtual modules so `tsc` never
+  walks into the vendor tree.
+- `scripts/build-channel-pack.mjs` bundles `src/main/channelPack/worker.ts` into
+  `resources/channel-pack/worker.mjs` (gitignored; the `.wasm` / `LICENSE` / `NOTICE.md` next to it
+  are vendored and tracked). `npm run build` and both dev scripts run it first.
+- The worker **cannot live inside the asar**: `package.json` copies `resources/channel-pack` to
+  `extraResources`, and `bridge.ts` resolves it from `process.resourcesPath` when packaged
+  (`resources/channel-pack` in dev).
+- Two env vars are mandatory at spawn. `DSH_CHANNEL_PACK_STATE_DIR=<dataDir>` (the pack appends
+  its own `channel-pack/` subdirectory, so state lands next to our `credentials.json`); without it
+  the pack writes its accounts into the user's real `~/.dsh`; and
+  `DSH_OPENAI_GATEWAY_ENABLED=0`, otherwise the pack mounts its own fixed-port (8326) OpenAI
+  gateway and the second instance dies with `EADDRINUSE`.
+
+Flow: `bridge.ts` (main) spawns the worker and shuttles
+`credential | log | changed | ready | sse | completion | done | result | error` up and
+`credential-result | cancel | close | models | rpc | complete` down. Credentials never travel by
+message value: the worker asks, `vault.ts` resolves from
+`<dataDir>/channel-pack/credentials.json` (values encrypted through `storeManager`), and only
+`{value}` / `undefined` goes back. Provider management is an in-worker HTTP route (`/api/channel-pack`)
+whose result is `{ok:true,value}` / `{ok:false,error}`; the methods used here are `provider.status`,
+`provider.setEnabled`, `account.list|create|update|delete`, `login.poll`, `credits.balances`,
+`credits.claimAll`, `model.list` and `usage.autoCheckin` (the global one-switch daily auto-claim: no
+argument reads its state, a boolean writes it).
+
+The model catalogue comes from `model.list`, **not** from `bridge.models()`. The latter is the
+OpenAI-shaped `/v1/models` view: its `name` carries no multiplier and it cannot express `disabled` /
+`dead`. `model.list` returns `{models: [{id, name, disabled, dead, isFree?}]}` and is the only place
+that knows a model's **credit weight** - there is no numeric field for it, the multiplier is appended
+to the display name in one of three shapes:
+
+```
+MiniMax M3 · x4.0          rate only          (loomy / lobsterai / qoder)
+GLM-5-3-Flash · x0.2→x0.1  base → effective   (qoder promo / raccoon)
+Qwen3.8-Flash · 免费        free               (qoder priceFactor 0 / cline / raccoon)
+```
+
+`providers/accountChannels/modelCatalog.ts` is the single parser (`splitModelLabel` +
+`readModelList`); everything else reads `ChannelModelInfo`. Two rules: a missing `weight` stays
+`undefined`, **never** `0` - trae / minimax report no rate at all, and treating "unknown" as free
+would make a user pick a metered model expecting a free quota; and an upstream `isFree: true` wins
+over the label, so a model is free when `isFree` is set **or** the weight parses to 0.
+
+The IPC surface is `channels:models` (one channel's catalogue, 30s cache),
+`channels:refreshModels` (re-read online, then rewrite the provider record and the global model
+mappings; failures return `reason: 'empty'` while keeping the old record), and the two model
+mutations `channels:setModelDisabled` / `channels:clearDeadModels` (`model.setDisabled` /
+`model.clearDead`, both returning the fresh catalogue). All three clear the **whole** catalogue cache
+and run a full `syncProviders()` rather than refreshing one channel: a partial cache would make
+`syncProviders` see the other channels as having no models, and an enabled record with an empty model
+list becomes a wildcard route target.
+
+`syncProviders` writes only the models that are neither `disabled` nor `dead` into
+`supportedModels` / `modelMappings`. `model.list` deliberately keeps both in the catalogue - a model
+the user switched off has to stay visible or it can never be switched back on, and a dead model needs
+to stay visible for `model.clearDead` - but exposing them as routable would send requests to models
+that are guaranteed to fail (disabled) or that the pack pruned for repeatedly failing (dead; the only
+self-heal is a 30-day TTL, so the clear button is the sole manual recovery). Account credentials are
+renewed through `channels:rpc('account.refresh', {accountId})` and the pool order through
+`channels:rpc('account.reorder', {provider, orderedIds})` - the load balancer hands requests out in
+pool order, so reordering is how a user picks the preferred account.
+
+`manager.ts` mirrors that state into provider records. It only writes one when the channel has at
+least one account, so the provider list never grows ten unusable rows; records are
+`type: 'account'`, `apiEndpoint: channel://<id>` (a placeholder that is never requested),
+`supportsModelFetch: false`, an identity `supportedModels` / `modelMappings` plus the global
+`config.modelMappings` entry carrying `preferredProviderId`, and a credential-less local account so
+the load balancer can route. Two rules are easy to get wrong: **zero accounts means the record is
+deleted**, and **accounts but an empty model list means `enabled: false`** - an enabled provider with
+no models is treated as a wildcard by `providerSupportsModel` and would swallow every model name.
+Model ids are `<channel>/<model>`; the worker splits on the first `/`, so nothing plain-prefixes
+them twice.
+
+`checker.ts` answers `online` / `unknown` for these from `accountChannels/runtimeState.ts` - it must
+never send HTTP to the `channel://` endpoint and never start the worker as a side effect of a status
+check. The request path is one `providerForwarders` entry (`provider.type === 'account'`) that hands
+the body to `bridge.complete` / `bridge.openStream`; the stream is already OpenAI-shaped, so it
+returns `skipTransform: true`.
 
 ### Runtime-backed Providers (OpenCode)
 OpenCode does not talk HTTP: a builtin can declare `runtimeModels: true` in `builtin/<provider>.ts`,
@@ -266,9 +352,9 @@ field and no `parentMessageId` handling in `SessionConfig`.
 
 ### Tool Prompt Injection
 Tool calling for clients without native support is handled by `src/main/proxy/toolCalling/`
-(the engine plus per-client protocol adapters under `protocols/`) and, for the Qwen and Z.ai
-adapters, by `src/main/proxy/promptToolUse.ts`. `services/promptInjectionService.ts` and
-`proxy/prompt/` are not wired into the live request path.
+(the engine plus per-client protocol adapters under `protocols/`). Only `opencode` has a
+`providerProfiles` entry today; other providers are treated as native-tool providers.
+`services/promptInjectionService.ts` and `proxy/prompt/` are not wired into the live request path.
 
 ### Session Management Flow
 Context continuity travels in the request itself: the forwarder hands the client's message history
@@ -295,31 +381,37 @@ that path.
   `max_tokens`, `top_p`, `stop`, `frequency_penalty` and `presence_penalty` in
   `proxy/parameterPolicy.ts`, because OpenAI-compatible clients send them by default and a `400`
   would take the whole client offline; only `n > 1` changes the response shape and still returns
-  `400 unsupported_parameter`. Custom providers keep passing all of them through. None of the web
-  upstreams exposes a token-limit field or a truncation signal, so the proxy never forwards
-  `max_tokens` and can never emit `finish_reason:"length"`.
-- qwen-ai only accepts a single user message per request, so its adapter renders the whole
-  conversation (including assistant and tool turns) into one transcript via
-  `utils/transcript.ts`; zai already sends the full `messages` array.
+  `400 unsupported_parameter`. Custom and aggregate providers keep passing all of them through.
+  No endpoint exposes a token-limit field or a truncation signal, so the proxy never fabricates
+  one and can never emit `finish_reason:"length"` on its own.
 - A `tool_choice:"required"` / forced call that the model did not make is reported on the
   non-stream response as `X-Chat2API-Tool-Violation: required`, and in streaming mode as an
   additive `x_chat2api_tool_violation: "required"` field on the finish chunk (clients that ignore
   it see an unchanged stream).
 - Every `/v1/*` response carries `X-Request-Id`; it matches the request log row.
 - Tool call ids are `call_<requestId>-<n>`. Managed markup that fails to parse is stripped from
-  content while the surrounding text is preserved; qwen-ai / zai / minimax streams are post-processed
-  by `toolCalling/streamPlanWrapper.ts` so plan-less stream handlers can still emit `tool_calls`.
+  content while the surrounding text is preserved. The anthropic wire maps upstream `tool_use`
+  blocks to native OpenAI `tool_calls`; `opencode` streams go through
+  `toolCalling/streamPlanWrapper.ts`.
 - `/v0/management/sessions*` is retired and answers 501: there is no server-side session table.
 
 ## Data Storage
 
-Application data lives in `~/.chat2api/`:
+Application data lives in `~/.chat2api/`. The Electron profile directory is pinned to
+`<appData>/chat2api` by `app.setPath('userData', ...)` in `src/main/index.ts` and must stay pinned:
+`safeStorage` seals `store.key` and every credential against that profile, so letting the path follow
+`package.json`'s `name` (which is what Electron does by default) makes an existing install unreadable
+the moment the package is renamed.
+
 - `data.json` - one electron-store file holding config, providers, accounts, sessions, statistics and
   app logs (there is no separate `providers.json` / `accounts.json`)
 - `store.key` - this install's data key, sealed by the OS keystore
 - `system-prompts.orphaned.json` - written once by the first start after the prompt library was
   removed: whatever a user had saved is moved here and the `systemPrompts` key is dropped
 - `request-logs/` - detailed request logs
+- `channel-pack/` - the channel pack's own state (its account pool, whatever the upstream pack
+  writes under `DSH_CHANNEL_PACK_STATE_DIR`) plus `credentials.json`, which holds the login
+  credentials handed to the worker, one encrypted value per account
 
 Credential protection has two layers, both with known limits: the store file is encrypted with a
 random per-install key kept as `store.key`, sealed by the OS `safeStorage` (`resolveEncryptionKey()`
@@ -408,7 +500,7 @@ Adding a new provider requires modifications across 4 layers: Provider Config, O
 | File | Purpose |
 |------|---------|
 | `src/main/proxy/adapters/<provider>.ts` | Proxy adapter implementation |
-| `src/main/proxy/adapters/<provider>-stream.ts` | Only if you want a separate stream handler file (only deepseek does; the rest keep the handler class inside the adapter) |
+| `src/main/proxy/adapters/<provider>-stream.ts` | Only if you want a separate stream handler file (no shipped provider does; all keep the handler class inside the adapter) |
 | `src/main/proxy/adapters/index.ts` | Export adapter |
 | `src/main/proxy/forwarder.ts` | Add `forward<Provider>()` method **and** one entry in the `providerForwarders` registry |
 
@@ -762,13 +854,11 @@ const providerIcons: Record<string, string> = {
 
 ### AuthType Reference
 
-| Type | Description | Providers | Credential Field |
+| Type | Description | Used by | Credential Field |
 |------|-------------|-----------|------------------|
-| `userToken` | User Token | DeepSeek | `token` |
-| `jwt` | JWT Token | Kimi, MiniMax, Qwen AI, Z.ai | `token` |
-| `refresh_token` | Refresh Token | GLM | `refresh_token` |
-| `tongyi_sso_ticket` | SSO Ticket | Qwen | `ticket` |
-| `cookie` | Cookie Auth | Mimo (three cookie fields) | `service_token`, `user_id`, `ph_token` |
+| `token` | generic API key | aggregate providers, custom | `apiKey` (aggregate) / `token` (custom) |
+| `userToken` | single opaque token | `opencode` (runtime-backed; the local account is credential-less) | `token` |
+| `cookie` | cookie bundle | custom cookie-based endpoints | provider-defined |
 
 ### Web Search Mode Implementation
 
@@ -868,7 +958,6 @@ builtin provider, force-overwrites `apiEndpoint`, `chatPath`, `supportedModels`,
   `userModelOverrides`);
 - a builtin provider whose id no longer exists in code is deleted from the store at startup.
 
-Example: to change the Z.ai model list, edit only `src/main/providers/builtin/zai.ts`:
-```typescript
-supportedModels: ['GLM-5.1', 'GLM-5-Turbo', 'GLM-5V-Turbo', ...]
-```
+Example: to change the `opencode` model list, edit only `src/main/providers/builtin/opencode.ts`.
+Aggregate entries are data, not code: edit `src/main/providers/aggregate/registry.ts` (and the
+counts asserted in `tests/aggregate/registry.test.ts`).

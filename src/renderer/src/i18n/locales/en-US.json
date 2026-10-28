@@ -4,12 +4,14 @@
     "switchToChinese": "Switch to Chinese"
   },
   "app": {
-    "name": "Chat2API",
+    "name": "ModelPort",
     "description": "AI API Proxy Management System"
   },
   "nav": {
     "dashboard": "Dashboard",
     "providers": "Providers",
+    "aggregate": "Aggregate Channels",
+    "channels": "Account Channels",
     "proxy": "Proxy Settings",
     "models": "Models",
     "apiKeys": "API Keys",
@@ -236,127 +238,12 @@
     "updateModelsShapeDesc": "Unrecognised response shape, nothing was stored: {{detail}}",
     "updateModelsNetworkDesc": "Requesting the upstream list failed: {{detail}}"
   },
-  "loginGuide": {
-    "getToken": "Get {{provider}} Credentials",
-    "getTokenDesc": "Please follow these steps to get authentication credentials",
-    "steps": "Steps:",
-    "openWebsite": "Open {{provider}} Website",
-    "paste": "Paste",
-    "confirmAdd": "Confirm Add",
-    "addSuccess": "Added Successfully",
-    "accountAddedDesc": "{{provider}} account has been successfully added",
-    "done": "Done",
-    "fillRequiredFields": "Please fill in all required fields",
-    "addFailed": "Add failed, please try again",
-    "openBrowserFailed": "Failed to open browser",
-    "openBrowserFailedDesc": "Please manually visit: {{url}}",
-    "pasteFailed": "Paste failed",
-    "pasteFailedDesc": "Please paste manually"
-  },
-  "deepseek": {
-    "name": "DeepSeek",
-    "description": "DeepSeek AI assistant, supports deep thinking and web search",
-    "userToken": "User Token",
-    "userTokenPlaceholder": "Enter DeepSeek User Token",
-    "userTokenHelp": "Authentication Token from DeepSeek web version, found in browser DevTools Application -> Local Storage -> userToken",
-    "models": {
-      "deepseek-default": "DeepSeek Default",
-      "deepseek-expert": "DeepSeek Expert",
-      "deepseek-vision": "DeepSeek Vision"
-    }
-  },
-  "glm": {
-    "name": "GLM",
-    "description": "Zhipu Qingyan AI Assistant, supports GLM-5.3 flagship model, deep thinking and web search",
-    "refreshToken": "Refresh Token",
-    "refreshTokenPlaceholder": "Enter chatglm_refresh_token",
-    "refreshTokenHelp": "Get chatglm_refresh_token from Zhipu Qingyan web version, found in browser DevTools Application -> Cookie"
-  },
-  "kimi": {
-    "name": "Kimi",
-    "description": "Kimi AI assistant, supports long text processing and web search",
-    "accessToken": "Access Token",
-    "accessTokenPlaceholder": "Enter Kimi Access Token or Refresh Token",
-    "accessTokenHelp": "The kimi-auth value from browser cookies (recommended), or JWT Token / refresh_token"
-  },
-  "minimax": {
-    "name": "MiniMax",
-    "description": "MiniMax Hailuo AI, supports voice conversation and agents",
-    "token": "JWT Token",
-    "tokenPlaceholder": "Enter MiniMax JWT Token (starts with eyJ)",
-    "tokenHelp": "JWT Token obtained from browser developer tools",
-    "jwtToken": "JWT Token",
-    "jwtTokenPlaceholder": "Enter JWT Token (starts with eyJ)",
-    "jwtTokenHelp": "Get from browser DevTools -> Application -> Local Storage -> agent.minimaxi.com -> _token",
-    "realUserID": "Real User ID (Optional)",
-    "realUserIDPlaceholder": "Enter Real User ID (optional)",
-    "realUserIDHelp": "If left empty, will extract from JWT Token. If authentication fails, please enter the correct Real User ID manually",
-    "userId": "User ID",
-    "credits": "Credits",
-    "totalCredits": "Total Credits",
-    "usedCredits": "Used Credits",
-    "remainingCredits": "Remaining Credits",
-    "getCredits": "Get Credits",
-    "creditsInfo": "Credits Info",
-    "creditResetsAt": "Credit resets at"
-  },
-  "qwen": {
-    "name": "Qwen",
-    "description": "Tongyi Qianwen AI assistant by Alibaba Cloud, supports deep thinking and code modes",
-    "ssoTicket": "SSO Ticket",
-    "ssoTicketPlaceholder": "Enter tongyi_sso_ticket",
-    "ssoTicketHelp": "SSO Ticket obtained from Qwen website (www.qianwen.com), found in browser DevTools Application -> Cookies as tongyi_sso_ticket",
-    "deepThinking": "Deep Thinking",
-    "deepThinkingDesc": "Enable deep thinking mode for more thorough reasoning analysis",
-    "codeMode": "Code Mode",
-    "codeModeDesc": "Use Qwen-Coder model, specialized for programming tasks",
-    "models": {
-      "Qwen3.6": "Qwen",
-      "Qwen3.7-Max": "Qwen3.7-Max",
-      "Qwen3.5-Flash": "Qwen3.5-Flash",
-      "Qwen3-Max": "Qwen3-Max",
-      "Qwen3-Max-Thinking-Preview": "Qwen3-Max-Thinking-Preview",
-      "Qwen3-Coder": "Qwen3-Coder"
-    }
-  },
-  "qwen-ai": {
-    "name": "Qwen AI (International)",
-    "description": "Qwen AI international version (chat.qwen.ai), supports thinking mode with reasoning output",
-    "token": "Auth Token",
-    "tokenPlaceholder": "Enter JWT token from chat.qwen.ai",
-    "tokenHelp": "JWT token obtained from chat.qwen.ai Local Storage (key: \"token\")",
-    "cookies": "Cookies (Optional)",
-    "cookiesPlaceholder": "Optional cookies for enhanced compatibility",
-    "cookiesHelp": "Full cookie string from browser DevTools (optional but recommended)",
-    "thinkingMode": "Thinking Mode",
-    "thinkingModeDesc": "Enable thinking mode to get reasoning process before answer"
-  },
   "opencode": {
     "name": "OpenCode",
     "description": "OpenCode free model pool driven by a local OpenCode runtime - no credential needed, ~30-60s per reply",
     "token": "Not required",
     "tokenPlaceholder": "The free pool needs no credential; just add an account",
     "tokenHelp": "The first request starts a local OpenCode runtime (installed binary first, npx as fallback); models are filtered by zero cost"
-  },
-  "zai": {
-    "name": "Z.ai",
-    "description": "Z.ai - Free AI Chatbot powered by GLM-5.1, GLM-5, and GLM-4.7",
-    "token": "Access Token",
-    "tokenPlaceholder": "Enter Z.ai JWT Token",
-    "tokenHelp": "Get token from Z.ai web version, found in browser DevTools Application -> Cookie, starts with \"eyJ...\""
-  },
-  "mimo": {
-    "name": "Mimo",
-    "description": "XiaomiMIMO - Xiaomi General Intelligence Foundation Model",
-    "serviceToken": "Service Token",
-    "serviceTokenPlaceholder": "Enter serviceToken",
-    "serviceTokenHelp": "Get from browser DevTools -> Application -> Cookies -> serviceToken",
-    "userId": "User ID",
-    "userIdPlaceholder": "Enter userId",
-    "userIdHelp": "Get from browser DevTools -> Application -> Cookies -> userId",
-    "phToken": "PH Token",
-    "phTokenPlaceholder": "Enter xiaomichatbot_ph",
-    "phTokenHelp": "Get from browser DevTools -> Application -> Cookies -> xiaomichatbot_ph"
   },
   "proxy": {
     "title": "Proxy Settings",
@@ -753,7 +640,7 @@
     "resetFailed": "Failed to reset application",
     "about": "About",
     "aboutDesc": "Application information and version",
-    "appName": "Chat2API",
+    "appName": "ModelPort",
     "appDesc": "Multi-platform AI Service Unified Management Tool",
     "appVersion": "App Version",
     "currentVersion": "Current Version",
@@ -952,7 +839,7 @@
     "tagline": "Multi-platform AI Service Unified Management Tool",
     "links": "Links",
     "github": "GitHub Repository",
-    "documentation": "Documentation",
+    "releases": "Releases",
     "reportIssue": "Report Issue",
     "appUpdates": "Application Updates",
     "credits": "Made with ❤️ by the Open Source Community",
@@ -1035,6 +922,135 @@
       "customPrompt": "Custom Summary Prompt (Optional)",
       "customPromptPlaceholder": "Enter custom summary prompt...",
       "customPromptHint": "Leave empty to use default prompt"
+    }
+  },
+  "aggregate": {
+    "title": "Aggregate Channels",
+    "description": "Standard key-based endpoints and key-less free pools. Add a channel to turn it into a provider; models are exposed as provider/model.",
+    "searchPlaceholder": "Search providers or models",
+    "allCategories": "All categories",
+    "category": {
+      "apikey": "API Key",
+      "freeTier": "Free Tier",
+      "local": "Local"
+    },
+    "columnProvider": "Provider",
+    "columnCategory": "Category",
+    "columnWire": "Wire",
+    "columnModels": "Models",
+    "notConfigured": "Not configured",
+    "active": "Active",
+    "disabled": "Disabled",
+    "unsupported": "Unsupported auth",
+    "add": "Add",
+    "configure": "Configure",
+    "test": "Test",
+    "discover": "Discover models",
+    "deleteConfirm": "Remove {{name}} and its accounts?",
+    "dialog": {
+      "title": "Configure {{name}}",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "Paste the API key",
+      "apiKeyKeep": "A key is stored; leave empty to keep it",
+      "apiKeyHint": "Stored encrypted and used only for this provider.",
+      "baseUrl": "Base URL",
+      "baseUrlHint": "Required when the catalogue has no usable default (placeholders are not expanded).",
+      "models": "Models",
+      "modelsHint": "One upstream model id per line. Leave empty to use the catalogue list.",
+      "enabled": "Enabled",
+      "enabledHint": "Disabled providers are not routed and not listed on /v1/models."
+    },
+    "result": {
+      "saved": "Saved {{name}}",
+      "removed": "Removed {{name}}",
+      "testOk": "Endpoint answered with {{count}} models",
+      "discovered": "Discovered {{count}} models"
+    },
+    "reasons": {
+      "unknown": "Unknown error",
+      "unknown_entry": "Unknown catalogue entry",
+      "unsupported_auth": "This endpoint needs an auth this app cannot produce",
+      "missing_base_url": "Base URL is required",
+      "placeholder_base_url": "Base URL still contains placeholders",
+      "invalid_base_url": "Base URL must start with http:// or https://",
+      "missing_api_key": "API key is required",
+      "not_configured": "Add the provider first",
+      "no_model_list": "This endpoint does not list models",
+      "http_status": "The endpoint rejected the request",
+      "empty": "The endpoint returned no models",
+      "unrecognized_shape": "Unrecognised model list payload",
+      "network_error": "Network error",
+      "save_failed": "Could not save the discovered models"
+    }
+  },
+  "channels": {
+    "title": "Account Channels",
+    "description": "Sign in to third-party coding assistants and pool their free quotas. {{connected}} of {{total}} channels connected.",
+    "connected": "Connected",
+    "notConnected": "Not connected",
+    "statAccounts": "Accounts",
+    "statModels": "Models",
+    "statCredits": "Credits",
+    "addAccount": "Add account",
+    "claim": "Claim credits",
+    "claimDone": "Credits claimed",
+    "claimSummary": "New {{claimed}}, already claimed {{already}}, failed {{failed}}, +{{total}} total",
+    "claimFailed": "Could not claim credits",
+    "autoCheckin": {
+      "title": "Auto-claim daily credits",
+      "description": "Once a day, claim the check-in credits of every account on every connected channel (one round per calendar day).",
+      "on": "On",
+      "off": "Off",
+      "running": "Claiming…",
+      "ranToday": "Already claimed today ({{date}})",
+      "last": "Last run: {{result}} · {{time}}",
+      "never": "Never ran yet",
+      "unavailable": "The channel runtime is not running, so this switch cannot be read"
+    },
+    "models": {
+      "title": "Models",
+      "refresh": "Refresh online",
+      "refreshed": "Models updated",
+      "refreshedCount": "{{count}} models available",
+      "refreshFailed": "Could not refresh the model list",
+      "updateFailed": "Could not update the model",
+      "disableModel": "Turn this model off",
+      "enableModel": "Turn this model on",
+      "restoreModel": "Show it again",
+      "restored": "Dead model restored",
+      "restoredCount": "{{count}} model(s) restored",
+      "free": "Free",
+      "disabled": "Off",
+      "dead": "Dead",
+      "empty": "No models yet — add an account, then refresh online"
+    },
+    "refreshAccount": "Refresh credentials",
+    "refreshedAccount": "Credentials refreshed",
+    "refreshAccountFailed": "Could not refresh credentials",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "reorderFailed": "Could not reorder accounts",
+    "removeConfirm": "Remove every account of {{name}}?",
+    "removed": "Removed {{name}}",
+    "loginKind": {
+      "browser": "Browser login",
+      "device-code": "Device code",
+      "sms": "SMS verification",
+      "oauth": "OAuth"
+    },
+    "login": {
+      "title": "Sign in to {{name}}",
+      "starting": "Opening the sign-in page…",
+      "waiting": "Waiting for you to finish signing in…",
+      "success": "Account added",
+      "failed": "Sign-in failed",
+      "timeout": "Sign-in timed out, please retry",
+      "hint": {
+        "browser": "The authorisation page was opened in your system browser. This page updates as soon as you finish.",
+        "device-code": "Finish the device authorisation in the page that opened. This page updates automatically.",
+        "sms": "Complete the SMS verification in the page that opened. This page updates automatically.",
+        "oauth": "The authorisation page was opened in your system browser. This page updates once you approve."
+      }
     }
   }
 }

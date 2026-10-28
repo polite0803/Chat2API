@@ -72,14 +72,14 @@ export function CustomProviderForm({
 
   const defaultCredentialFields: Record<AuthType, CredentialField[]> = {
     token: [{ name: 'apiKey', label: 'API Key', type: 'password', required: true }],
-    userToken: [{ name: 'token', label: t('deepseek.userToken'), type: 'password', required: true }],
-    refresh_token: [{ name: 'refresh_token', label: t('glm.refreshToken'), type: 'password', required: true }],
+    userToken: [{ name: 'token', label: 'User Token', type: 'password', required: true }],
+    refresh_token: [{ name: 'refresh_token', label: 'Refresh Token', type: 'password', required: true }],
     jwt: [{ name: 'token', label: 'JWT Token', type: 'password', required: true }],
     realUserID_token: [
-      { name: 'realUserID', label: t('minimax.userId'), type: 'text', required: true },
-      { name: 'token', label: t('minimax.jwtToken'), type: 'password', required: true },
+      { name: 'realUserID', label: 'User ID', type: 'text', required: true },
+      { name: 'token', label: 'Token', type: 'password', required: true },
     ],
-    tongyi_sso_ticket: [{ name: 'ticket', label: t('qwen.ssoTicket'), type: 'password', required: true }],
+    tongyi_sso_ticket: [{ name: 'ticket', label: 'SSO Ticket', type: 'password', required: true }],
     cookie: [{ name: 'cookie', label: 'Cookie', type: 'textarea', required: true }],
     oauth: [],
   }

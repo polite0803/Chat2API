@@ -6,10 +6,16 @@ out/
 dist/
 build/entitlements.mac.plist
 
+# Channel pack worker bundle (built by scripts/build-channel-pack.mjs;
+# the .wasm / LICENSE / NOTICE next to it are vendored and must stay tracked)
+resources/channel-pack/worker.mjs
+
 # TypeScript
 *.tsbuildinfo
 src/**/*.js
 src/**/*.d.ts
+# ... except hand-written ambient declarations (the rules above target compiled output)
+!src/main/types/*.d.ts
 electron.vite.config.js
 electron.vite.config.d.ts
 vite.config.js
@@ -58,6 +64,9 @@ src/renderer/next-app/
 
 # Backup
 backup/
+
+# Local reference material dropped in by tooling (not part of the app)
+.uploads/
 
 # npx artifact cache created in the repo root by the local npm config
 .npm-cache/

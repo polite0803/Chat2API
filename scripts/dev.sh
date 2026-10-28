@@ -1,8 +1,12 @@
 #!/bin/bash
-# Chat2API 开发启动脚本
+# ModelPort 开发启动脚本
 # 自动处理 root 用户环境下的沙箱问题和无显示环境
 
 cd "$(dirname "$0")/.."
+
+# 渠道 Worker 产物不在仓库里（worker.mjs 由构建生成）：开发启动前先打一次。
+node scripts/build-channel-pack.mjs
+
 
 # 检测操作系统
 OS="$(uname -s)"

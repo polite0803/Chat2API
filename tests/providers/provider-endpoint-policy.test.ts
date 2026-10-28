@@ -10,14 +10,11 @@ import {
 } from '../../src/main/providers/endpointPolicy.ts'
 import { resolveModelListSource } from '../../src/main/providers/modelListSource.ts'
 import { opencodeConfig } from '../../src/main/providers/builtin/opencode.ts'
-import { kimiConfig } from '../../src/main/providers/builtin/kimi.ts'
-import { deepseekConfig } from '../../src/main/providers/builtin/deepseek.ts'
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
 
 test('只有内置的运行时供应商可以绕过 http/https 的 endpoint 规则', () => {
   assert.equal(isRuntimeBackedProvider('opencode', 'builtin'), true)
-  assert.equal(isRuntimeBackedProvider('deepseek', 'builtin'), false)
   // 自定义供应商自称 builtin 也不行：判定只看内置配置里的 runtimeModels
   assert.equal(isRuntimeBackedProvider('opencode', 'custom'), false)
   assert.equal(isRuntimeBackedProvider(undefined, 'builtin'), false)
@@ -61,9 +58,10 @@ test('添加供应商时把运行时豁免接进了 endpoint 校验', () => {
 
 test('模型清单来源：本机运行时优先于 HTTP 端点', () => {
   assert.equal(resolveModelListSource(opencodeConfig), 'runtime')
-  assert.equal(resolveModelListSource(kimiConfig), 'http')
-  // DeepSeek 根本没有清单接口（只有思考/搜索开关），所以是 unsupported
-  assert.equal(resolveModelListSource(deepseekConfig), 'unsupported')
+  assert.equal(
+    resolveModelListSource({ ...opencodeConfig, runtimeModels: undefined, modelsFetch: { url: 'https://x.test/models', reader: 'auto' } }),
+    'http',
+  )
   assert.equal(resolveModelListSource({}), 'unsupported')
   assert.equal(resolveModelListSource(undefined), 'unsupported')
   // 运行时供应商本来就没有 modelsFetch，顺序反了会被判成"不支持在线更新"

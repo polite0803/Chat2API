@@ -7,6 +7,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 
 const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })))
 const Providers = lazy(() => import('@/pages/Providers').then(m => ({ default: m.Providers })))
+const Aggregate = lazy(() => import('@/pages/Aggregate').then(m => ({ default: m.Aggregate })))
+const Channels = lazy(() => import('@/pages/Channels').then(m => ({ default: m.Channels })))
 const ProxySettings = lazy(() => import('@/pages/ProxySettings').then(m => ({ default: m.ProxySettings })))
 const Models = lazy(() => import('@/pages/Models').then(m => ({ default: m.Models })))
 const Logs = lazy(() => import('@/pages/Logs'))
@@ -33,6 +35,8 @@ function App() {
         <Route element={<MainLayout />}>
           <Route path="/" element={<Suspense fallback={<PageLoader />}><Dashboard /></Suspense>} />
           <Route path="/providers" element={<Suspense fallback={<PageLoader />}><Providers /></Suspense>} />
+          <Route path="/aggregate" element={<Suspense fallback={<PageLoader />}><Aggregate /></Suspense>} />
+          <Route path="/channels" element={<Suspense fallback={<PageLoader />}><Channels /></Suspense>} />
           <Route path="/proxy" element={<Suspense fallback={<PageLoader />}><ProxySettings /></Suspense>} />
           <Route path="/models" element={<Suspense fallback={<PageLoader />}><Models /></Suspense>} />
           <Route path="/logs" element={<Suspense fallback={<PageLoader />}><Logs /></Suspense>} />

@@ -1,11 +1,19 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import { join } from 'path'
+import { homedir } from 'os'
 import { createWindow, getMainWindow, loadUrl, loadFile, openDevTools } from './window/manager'
 import { createTrayManager, TrayManager } from './tray/TrayManager'
 import { registerIpcHandlers } from './ipc/handlers'
 import { UpdaterManager } from './updater'
 import { storeManager } from './store/store'
 import { opencodeService } from './opencode/service'
+
+// Keep the Electron profile directory stable across product renames.
+// safeStorage seals store.key and every stored credential against this profile
+// (Windows keeps the wrapped key in `Local State`, macOS in the login keychain
+// entry tied to it), so deriving it from package.json's `name` would make an
+// existing install unreadable the moment the package is renamed.
+app.setPath('userData', join(app.getPath('appData'), 'chat2api'))
 
 // Prevent uncaught exceptions from crashing the app
 process.on('uncaughtException', (error) => {
@@ -87,7 +95,7 @@ async function setupApp(): Promise<void> {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    title: 'Chat2API',
+    title: 'ModelPort',
     show: false,
   })
 
@@ -97,9 +105,49 @@ async function setupApp(): Promise<void> {
 
   await loadAppContent(mainWindow)
 
+  // 渲染层在挂载前无法收到 STORE_INIT_ERROR（那时 webContents 还没加载），
+  // 所以存储不可用时必须用原生对话框把原因和处置办法直接摆到用户面前。
+  if (storeManager.hasInitializationError()) {
+    await showStorageFailureDialog(mainWindow)
+  }
+
   if (process.env.NODE_ENV === 'development') {
     openDevTools()
   }
+}
+
+async function showStorageFailureDialog(mainWindow: BrowserWindow | null): Promise<void> {
+  const dataDir = join(homedir(), '.chat2api')
+  const reason = storeManager.getInitializationError()?.message ?? 'unknown error'
+  const options = {
+    type: 'error' as const,
+    title: '本地数据无法读取',
+    message: '应用数据初始化失败，配置与账号暂不可用',
+    detail: [
+      reason,
+      '',
+      `数据目录：${dataDir}`,
+      'store.key 解密失败通常意味着系统凭据/账户密码被重置。',
+      '处理办法：先备份，再把 store.key 与 data.json 移到别处后重启应用；',
+      '如需恢复旧数据，可用同目录的 data.json.pre-key-migration.bak 覆盖 data.json。',
+    ].join('\n'),
+    buttons: ['打开数据目录', '退出'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  }
+
+  const { response } = mainWindow
+    ? await dialog.showMessageBox(mainWindow, options)
+    : await dialog.showMessageBox(options)
+
+  if (response === 0) {
+    await shell.openPath(dataDir)
+    return
+  }
+
+  app.isQuitting = true
+  app.quit()
 }
 
 async function loadAppContent(mainWindow: BrowserWindow): Promise<void> {

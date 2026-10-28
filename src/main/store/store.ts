@@ -34,9 +34,7 @@ import {
   CustomModel,
   FetchedModel,
   DEFAULT_REQUEST_LOG_CONFIG,
-  createDefaultModelMappings,
   normalizeModelMappingsWithDefaults,
-  sanitizeDeepSeekModelOverrides,
 } from './types'
 import { RequestLogManager } from '../requestLogs/manager'
 import { normalizeRequestLogConfig } from '../requestLogs/types'
@@ -48,7 +46,7 @@ import {
   planKeySetup,
 } from './keyMigration'
 import { normalizeToolCallingConfig } from '../../shared/toolCalling'
-import { DEFAULT_AUTO_ROUTING_CONFIG } from '../../shared/types'
+import { DEFAULT_AUTO_ROUTING_CONFIG, RETIRED_PROVIDER_IDS } from '../../shared/types'
 import type { AutoRoutingConfig } from '../../shared/types'
 import { AppLogManager } from '../appLogs/manager'
 import { syncBuiltinProvider } from './providerSync'
@@ -469,7 +467,6 @@ class StoreManager {
     return {
       ...rawConfig,
       modelMappings: normalizeModelMappingsWithDefaults(rawConfig.modelMappings),
-      defaultModelMappingsSeeded: config.defaultModelMappingsSeeded,
       requestLogConfig: normalizeRequestLogConfig(
         rawConfig.requestLogConfig || DEFAULT_REQUEST_LOG_CONFIG,
       ),
@@ -481,19 +478,7 @@ class StoreManager {
 
   private initializeDefaultModelMappings(): void {
     const rawConfig = this.store?.get('config') || DEFAULT_CONFIG
-    const config = this.normalizeConfig(rawConfig)
-    if (config.defaultModelMappingsSeeded) {
-      this.store?.set('config', config)
-      return
-    }
-    this.store?.set('config', this.normalizeConfig({
-      ...config,
-      modelMappings: {
-        ...createDefaultModelMappings(),
-        ...(config.modelMappings || {}),
-      },
-      defaultModelMappingsSeeded: true,
-    }))
+    this.store?.set('config', this.normalizeConfig(rawConfig))
   }
 
   /**
@@ -515,18 +500,25 @@ class StoreManager {
       ...(this.store?.get('userModelOverrides') || {}),
     }
     let userModelOverridesChanged = false
-    
+
+    // Retired providers leave accounts (cookies, refresh tokens, SSO tickets)
+    // and per-model switches behind. Delete them instead of keeping orphans.
+    const retiredIds = new Set<string>(RETIRED_PROVIDER_IDS)
+    const accounts = (this.store?.get('accounts') || []) as Account[]
+    const keptAccounts = accounts.filter(account => !retiredIds.has(account.providerId))
+    if (keptAccounts.length !== accounts.length) {
+      this.store?.set('accounts', keptAccounts)
+    }
+    for (const id of RETIRED_PROVIDER_IDS) {
+      if (id in userModelOverrides) {
+        delete userModelOverrides[id]
+        userModelOverridesChanged = true
+      }
+    }
+
     const updatedProviders = validProviders.map((p: Provider) => {
       const builtinConfig = BUILTIN_PROVIDERS.find(bp => bp.id === p.id)
       if (!builtinConfig) return p
-
-      if (p.id === 'deepseek') {
-        const sanitizedOverrides = sanitizeDeepSeekModelOverrides(userModelOverrides[p.id])
-        if (JSON.stringify(sanitizedOverrides) !== JSON.stringify(userModelOverrides[p.id])) {
-          userModelOverrides[p.id] = sanitizedOverrides
-          userModelOverridesChanged = true
-        }
-      }
 
       if (p.type !== 'builtin') {
         console.warn('[Store] Repairing builtin provider record:', p.id, '(stored type:', p.type ?? 'missing', ')')

@@ -35,9 +35,10 @@ export interface ToolClientAdapterMeta {
 }
 
 export interface ToolProviderSupportMeta {
-  providerId: 'deepseek' | 'kimi' | 'glm' | 'qwen' | 'mimo'
+  providerId: string
   label: string
-  managed: true
+  /** 上游自己产出工具调用（OpenCode 信封协议）时为 false，托管层不介入 */
+  managed: boolean
   protocolId: 'managed_xml'
   status: 'supported'
 }
@@ -67,11 +68,7 @@ export const P0_TOOL_CLIENT_ADAPTERS: ToolClientAdapterMeta[] = [
 ]
 
 export const P0_TOOL_PROVIDER_SUPPORT: ToolProviderSupportMeta[] = [
-  { providerId: 'deepseek', label: 'DEEPSEEK', managed: true, protocolId: 'managed_xml', status: 'supported' },
-  { providerId: 'kimi', label: 'KIMI', managed: true, protocolId: 'managed_xml', status: 'supported' },
-  { providerId: 'glm', label: 'GLM', managed: true, protocolId: 'managed_xml', status: 'supported' },
-  { providerId: 'qwen', label: 'QWEN', managed: true, protocolId: 'managed_xml', status: 'supported' },
-  { providerId: 'mimo', label: 'MIMO', managed: true, protocolId: 'managed_xml', status: 'supported' },
+  { providerId: 'opencode', label: 'OPENCODE', managed: false, protocolId: 'managed_xml', status: 'supported' },
 ]
 
 function isRecord(value: unknown): value is Record<string, unknown> {

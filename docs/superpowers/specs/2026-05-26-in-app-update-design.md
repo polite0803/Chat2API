@@ -112,8 +112,8 @@ About 页面改为 updater 状态机：
 ```json
 "publish": {
   "provider": "github",
-  "owner": "xiaoY233",
-  "repo": "Chat2API"
+  "owner": "polite0803",
+  "repo": "ModelPort"
 }
 ```
 

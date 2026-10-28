@@ -27,8 +27,7 @@ import { useProxyStore } from '@/stores/proxyStore'
 import { useNavigationStore } from '@/stores/navigationStore'
 import { useToast } from '@/hooks/use-toast'
 import type { ModelMapping, Provider, Account } from '@/types/electron'
-import { ArrowRight, Plus, Pencil, Trash2, Search, Sparkles, Save, RotateCcw, AlertTriangle, Lock } from 'lucide-react'
-import { DEFAULT_DEEPSEEK_MODEL_MAPPINGS as DEFAULT_MODEL_MAPPINGS } from '@shared/types'
+import { ArrowRight, Plus, Pencil, Trash2, Search, Sparkles, Save, RotateCcw, AlertTriangle } from 'lucide-react'
 
 interface ModelMappingConfigProps {
   onConfigChange?: () => void
@@ -59,9 +58,6 @@ const parseModelOptionValue = (value: string): { providerId: string; model: stri
   }
 }
 
-
-const DEFAULT_MODEL_MAPPING_KEYS = new Set(Object.keys(DEFAULT_MODEL_MAPPINGS))
-
 export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) {
   const { t } = useTranslation()
   const {
@@ -79,7 +75,6 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
   const [accounts, setAccounts] = useState<Account[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [isRestoreDialogOpen, setIsRestoreDialogOpen] = useState(false)
   const [editingMapping, setEditingMapping] = useState<ModelMapping | null>(null)
   const [hasChanges, setHasChanges] = useState(false)
   const isInitializedRef = useRef(false)
@@ -158,10 +153,6 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
   )
 
   const handleOpenDialog = (mapping?: ModelMapping) => {
-    if (mapping && DEFAULT_MODEL_MAPPING_KEYS.has(mapping.requestModel)) {
-      return
-    }
-
     if (mapping) {
       setEditingMapping(mapping)
       setFormData({
@@ -238,10 +229,6 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
   }
 
   const handleDeleteMapping = (requestModel: string) => {
-    if (DEFAULT_MODEL_MAPPING_KEYS.has(requestModel)) {
-      return
-    }
-
     const updatedMappings = mappings.filter(m => m.requestModel !== requestModel)
     setMappings(updatedMappings)
     setHasChanges(true)
@@ -286,31 +273,6 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
     toast({
       description: t('proxy.changesDiscarded'),
     })
-  }
-
-  const handleRestoreDefaults = async () => {
-    const defaultMappings = Object.values(DEFAULT_MODEL_MAPPINGS)
-    const success = await saveAppConfig({
-      modelMappings: DEFAULT_MODEL_MAPPINGS,
-    })
-
-    if (success) {
-      setMappings(defaultMappings)
-      setModelMappings(defaultMappings)
-      setOriginalMappings(defaultMappings)
-      setHasChanges(false)
-      setIsRestoreDialogOpen(false)
-      toast({
-        title: t('providers.updateSuccess'),
-        description: t('proxy.defaultsRestored'),
-      })
-    } else {
-      toast({
-        title: t('providers.updateFailed'),
-        description: t('proxy.configSaveFailed'),
-        variant: 'destructive',
-      })
-    }
   }
 
   const selectedProviderId = formData.preferredProviderId === AUTO_SELECT_VALUE ? '' : formData.preferredProviderId
@@ -467,10 +429,6 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
             />
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => setIsRestoreDialogOpen(true)}>
-              <RotateCcw className="h-4 w-4 mr-2" />
-              {t('proxy.restoreDefaults')}
-            </Button>
             <Button onClick={() => handleOpenDialog()}>
               <Plus className="h-4 w-4 mr-2" />
               {t('proxy.addMapping')}
@@ -486,7 +444,6 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
                   <TableHead>{t('proxy.requestModel')}</TableHead>
                   <TableHead className="w-[50px]"></TableHead>
                   <TableHead>{t('proxy.actualModel')}</TableHead>
-                  <TableHead className="w-[110px] whitespace-nowrap">{t('proxy.mappingSource')}</TableHead>
                   <TableHead>{t('proxy.preferredProvider')}</TableHead>
                   <TableHead>{t('proxy.preferredAccount')}</TableHead>
                   <TableHead className="w-[100px]">{t('common.actions')}</TableHead>
@@ -497,7 +454,6 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
                   const provider = providers.find(p => p.id === mapping.preferredProviderId)
                   const account = accounts.find(a => a.id === mapping.preferredAccountId)
                   const isWildcardMapping = mapping.requestModel.includes('*')
-                  const isBuiltInMapping = DEFAULT_MODEL_MAPPING_KEYS.has(mapping.requestModel)
                   
                   return (
                     <TableRow key={mapping.requestModel}>
@@ -514,16 +470,6 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
                       </TableCell>
                       <TableCell>
                         <code className="text-sm">{mapping.actualModel}</code>
-                      </TableCell>
-                      <TableCell>
-                        {isBuiltInMapping ? (
-                          <Badge variant="secondary" className="gap-1 whitespace-nowrap">
-                            <Lock className="h-3 w-3 shrink-0" />
-                            {t('proxy.builtInMapping')}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground text-sm whitespace-nowrap">{t('proxy.customMapping')}</span>
-                        )}
                       </TableCell>
                       <TableCell>
                         {provider ? (
@@ -545,9 +491,8 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
                             variant="ghost"
                             size="icon"
                             onClick={() => handleOpenDialog(mapping)}
-                            disabled={isBuiltInMapping}
                             className="h-8 w-8"
-                            title={isBuiltInMapping ? t('proxy.builtInMappingReadonly') : t('common.edit')}
+                            title={t('common.edit')}
                           >
                             <Pencil className="h-4 w-4" />
                           </Button>
@@ -555,9 +500,8 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
                             variant="ghost"
                             size="icon"
                             onClick={() => handleDeleteMapping(mapping.requestModel)}
-                            disabled={isBuiltInMapping}
                             className="h-8 w-8 text-destructive hover:text-destructive"
-                            title={isBuiltInMapping ? t('proxy.builtInMappingReadonly') : t('common.delete')}
+                            title={t('common.delete')}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -698,26 +642,6 @@ export function ModelMappingConfig({ onConfigChange }: ModelMappingConfigProps) 
             </Button>
             <Button onClick={handleSaveMapping}>
               {editingMapping ? t('providers.updateSuccess') : t('common.add')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isRestoreDialogOpen} onOpenChange={setIsRestoreDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('proxy.restoreDefaults')}</DialogTitle>
-            <DialogDescription>
-              {t('proxy.confirmRestoreDefaults')}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsRestoreDialogOpen(false)}>
-              {t('common.cancel')}
-            </Button>
-            <Button onClick={handleRestoreDefaults} disabled={isLoading}>
-              <RotateCcw className="h-4 w-4 mr-2" />
-              {t('proxy.restoreDefaults')}
             </Button>
           </DialogFooter>
         </DialogContent>

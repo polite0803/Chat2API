@@ -13,15 +13,42 @@ import type {
   ModelsFetchFailure,
   ModelsFetchResult,
   AutoRoutingConfig,
+  AggregateWire,
 } from '../../shared/types.ts'
 import { DEFAULT_AUTO_ROUTING_CONFIG } from '../../shared/types.ts'
 import type { LegacyToolPromptConfig, ToolCallingConfig } from '../../shared/toolCalling.ts'
 import { DEFAULT_TOOL_CALLING_CONFIG } from '../../shared/toolCalling.ts'
-import {
-  DEEPSEEK_PRIMARY_MODELS,
-  DEEPSEEK_LEGACY_MODEL_MAPPING_NAMES,
-  DEFAULT_DEEPSEEK_MODEL_MAPPINGS,
-} from '../../shared/types.ts'
+import { RETIRED_PROVIDER_IDS } from '../../shared/types.ts'
+
+/** Request names the retired DeepSeek integration used; stored mappings using them are dropped. */
+const DEEPSEEK_LEGACY_MODEL_MAPPING_NAMES = [
+  'deepseek-chat',
+  'deepseek-reasoner',
+  'DeepSeek-V3.2',
+  'DeepSeek-Search',
+  'DeepSeek-R1',
+  'DeepSeek-R1-Search',
+  'deepseek-default',
+  'deepseek-expert',
+  'deepseek-vision',
+  'deepseek-default-think',
+  'deepseek-default-search',
+  'deepseek-default-think-search',
+  'deepseek-expert-think',
+  'deepseek-expert-search',
+  'deepseek-expert-think-search',
+  'deepseek-vision-think',
+  'deepseek-vision-search',
+  'deepseek-vision-think-search',
+  'deepseek-v4-flash',
+  'deepseek-v4-pro',
+  'deepseek-v4-flash-think',
+  'deepseek-v4-flash-search',
+  'deepseek-v4-flash-think-search',
+  'deepseek-v4-pro-think',
+  'deepseek-v4-pro-search',
+  'deepseek-v4-pro-think-search',
+]
 
 /**
  * Account Status Enum
@@ -31,7 +58,7 @@ export type AccountStatus = 'active' | 'inactive' | 'expired' | 'error'
 /**
  * Provider Type Enum
  */
-export type ProviderType = 'builtin' | 'custom'
+export type ProviderType = 'builtin' | 'custom' | 'aggregate' | 'account'
 
 /**
  * Authentication Type Enum
@@ -178,6 +205,14 @@ export interface Provider {
   modelMappings?: Record<string, string>
   /** Credential fields the account form renders */
   credentialFields?: CredentialField[]
+  /** Catalogue entry this record came from, for `type: 'aggregate'` records */
+  aggregateId?: string
+  /** Wire protocol of an aggregate endpoint; builtin/custom leave it unset */
+  wire?: AggregateWire
+  /** Header that carries the API key; defaults to Authorization */
+  authHeader?: string
+  /** Prefix placed before the key inside authHeader; defaults to "Bearer " */
+  authPrefix?: string
   /** Set at startup from the shipped provider config: this provider has an online model list source */
   supportsModelFetch?: boolean
   /** Provider status */
@@ -213,8 +248,6 @@ export interface AppConfig {
   loadBalanceStrategy: LoadBalanceStrategy
   /** Model mapping configuration */
   modelMappings: Record<string, ModelMapping>
-  /** Default model mappings have been seeded into editable config */
-  defaultModelMappingsSeeded?: boolean
   /** UI theme */
   theme: Theme
   /** Auto start on boot */
@@ -558,15 +591,6 @@ export interface ProviderModelOverrides {
  */
 export type UserModelOverrides = Record<string, ProviderModelOverrides>
 
-export {
-  DEEPSEEK_PRIMARY_MODELS,
-  DEEPSEEK_LEGACY_MODEL_MAPPING_NAMES,
-  DEFAULT_DEEPSEEK_MODEL_MAPPINGS,
-  DEEPSEEK_MODEL_BASES,
-  DEEPSEEK_MODEL_SUFFIXES,
-  DEEPSEEK_RETIRED_MODELS,
-} from '../../shared/types.ts'
-
 /**
  * Effective Model Information
  * Defined once in shared/types, shared with preload and the renderer
@@ -657,49 +681,25 @@ export const DEFAULT_REQUEST_LOG_CONFIG: RequestLogConfig = {
 }
 
 export function createDefaultModelMappings(): Record<string, ModelMapping> {
-  return Object.fromEntries(
-    Object.entries(DEFAULT_DEEPSEEK_MODEL_MAPPINGS).map(([key, mapping]) => [key, { ...mapping }]),
-  )
+  return {}
 }
 
-export function isDefaultModelMapping(requestModel: string): boolean {
-  return requestModel in DEFAULT_DEEPSEEK_MODEL_MAPPINGS
-}
-
+/**
+ * Drop mappings that point at a retired provider or carry one of its old
+ * request names. Everything the user wrote for a provider that still exists is
+ * kept verbatim.
+ */
 export function normalizeModelMappingsWithDefaults(
   mappings?: Record<string, ModelMapping>
 ): Record<string, ModelMapping> {
+  const retired = new Set<string>(RETIRED_PROVIDER_IDS)
   const legacyModelNames = new Set(DEEPSEEK_LEGACY_MODEL_MAPPING_NAMES)
-  const customMappings = Object.fromEntries(
-    Object.entries(mappings || {}).filter(([requestModel]) =>
-      !isDefaultModelMapping(requestModel) && !legacyModelNames.has(requestModel)
+  return Object.fromEntries(
+    Object.entries(mappings || {}).filter(([requestModel, mapping]) =>
+      !legacyModelNames.has(requestModel) &&
+      !(mapping.preferredProviderId && retired.has(mapping.preferredProviderId))
     ),
   )
-
-  return {
-    ...createDefaultModelMappings(),
-    ...customMappings,
-  }
-}
-
-export function sanitizeDeepSeekModelOverrides(
-  overrides?: ProviderModelOverrides
-): ProviderModelOverrides {
-  const migratedModelNames = new Set([
-    ...DEEPSEEK_PRIMARY_MODELS,
-    ...DEEPSEEK_LEGACY_MODEL_MAPPING_NAMES,
-    ...Object.keys(DEFAULT_DEEPSEEK_MODEL_MAPPINGS),
-  ])
-
-  return {
-    ...(overrides || {}),
-    addedModels: (overrides?.addedModels || []).filter(model =>
-      !migratedModelNames.has(model.displayName)
-    ),
-    excludedModels: (overrides?.excludedModels || []).filter(model =>
-      DEEPSEEK_PRIMARY_MODELS.includes(model)
-    ),
-  }
 }
 
 /**
@@ -709,8 +709,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   proxyPort: 8080,
   proxyHost: '127.0.0.1',
   loadBalanceStrategy: 'round-robin',
-  modelMappings: createDefaultModelMappings(),
-  defaultModelMappingsSeeded: true,
+  modelMappings: {},
   theme: 'system',
   autoStart: false,
   autoStartProxy: false,

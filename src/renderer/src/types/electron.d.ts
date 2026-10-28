@@ -24,6 +24,21 @@ import type {
   RequestLogEntry,
   ModelsFetchFailure,
 } from '../../../shared/types'
+import type {
+  AggregateListResult,
+  AggregateOperationResult,
+  AggregateSaveInput,
+} from '../../../shared/aggregate'
+import type {
+  ChannelAutoCheckinResult,
+  ChannelCredits,
+  ChannelModelsResult,
+  ChannelModelUpdateResult,
+  ChannelOperationResult,
+  ChannelRefreshResult,
+  ChannelRpcResult,
+  ChannelView,
+} from '../../../shared/channels'
 
 export type { 
   Provider, 
@@ -153,13 +168,23 @@ interface AccountsAPI {
   }>
   getById: (id: string, includeCredentials?: boolean) => Promise<Account | null>
   getByProvider: (providerId: string) => Promise<Account[]>
-  getCredits: (accountId: string) => Promise<{
-    totalCredits: number
-    usedCredits: number
-    remainingCredits: number
-    expiresAt?: number // Credit reset timestamp (milliseconds)
-  } | null>
-  clearChats: (accountId: string) => Promise<{ success: boolean; error?: string }>
+}
+
+interface AggregateAPI {
+  list: () => Promise<AggregateListResult>
+  save: (input: AggregateSaveInput) => Promise<{
+    success: boolean
+    provider?: Provider
+    reason?: string
+  }>
+  setEnabled: (id: string, enabled: boolean) => Promise<{
+    success: boolean
+    provider?: Provider
+    reason?: string
+  }>
+  remove: (id: string) => Promise<{ success: boolean }>
+  test: (id: string) => Promise<AggregateOperationResult>
+  discoverModels: (id: string) => Promise<AggregateOperationResult>
 }
 
 interface OAuthAPI {
@@ -184,9 +209,6 @@ interface OAuthAPI {
     refreshToken?: string
   } | null>
   getStatus: () => Promise<string>
-  startInAppLogin: (providerId: string, providerType: ProviderVendor, timeout?: number) => Promise<OAuthResult>
-  cancelInAppLogin: () => Promise<void>
-  isInAppLoginOpen: () => Promise<boolean>
   onCallback: (callback: (result: OAuthResult) => void) => () => void
   onProgress: (callback: (event: {
     status: 'idle' | 'pending' | 'success' | 'error' | 'cancelled'
@@ -476,11 +498,27 @@ interface OpencodeAPI {
   }>
 }
 
+interface ChannelsAPI {
+  list: () => Promise<{ success: boolean; reason?: string; channels: ChannelView[] }>
+  rpc: (method: string, payload?: unknown) => Promise<ChannelRpcResult>
+  credits: (id: string) => Promise<ChannelCredits>
+  setEnabled: (id: string, enabled: boolean) => Promise<ChannelOperationResult>
+  remove: (id: string) => Promise<ChannelOperationResult>
+  autoCheckin: (enabled?: boolean) => Promise<ChannelAutoCheckinResult>
+  models: (id: string) => Promise<ChannelModelsResult>
+  refreshModels: (id: string) => Promise<ChannelRefreshResult>
+  setModelDisabled: (id: string, modelId: string, disabled: boolean) => Promise<ChannelModelUpdateResult>
+  clearDeadModels: (id: string, modelId?: string) => Promise<ChannelModelUpdateResult>
+  onChanged: (callback: () => void) => () => void
+}
+
 interface ElectronAPI {
   proxy: ProxyAPI
   store: StoreAPI
   providers: ProvidersAPI
   opencode: OpencodeAPI
+  aggregate: AggregateAPI
+  channels: ChannelsAPI
   accounts: AccountsAPI
   oauth: OAuthAPI
   logs: LogsAPI

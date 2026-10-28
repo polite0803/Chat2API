@@ -8,11 +8,9 @@ import {
   buildRequestUrl,
 } from '../../src/main/providers/modelListRequest.ts'
 
-// The fixtures below are captured payloads, not invented ones:
-//   qwen-ai  GET  https://chat.qwen.ai/api/models
-//   kimi     POST https://www.kimi.com/apiv2/kimi.gateway.config.v1.ConfigService/GetAvailableModels
-//   qwen cn  GET  https://chat2-api.qianwen.com/api/v1/model/list
-//   zai      GET  https://chat.z.ai/api/models (session required)
+// The remaining fixture is a captured OpenAI-style payload; the retired
+// web-chat envelopes (qwen-ai double-data, kimi gateway, qwen-cn, minimax,
+// mimo) were removed together with those providers' readers.
 
 test('auto reads the flat OpenAI-style list', () => {
   const result = readModelList({
@@ -49,24 +47,6 @@ test('auto reads qwen-ai model list as captured', () => {
   ])
 })
 
-test('auto unwraps the double data envelope chat.qwen.ai wraps in', () => {
-  const result = readModelList({
-    data: {
-      data: [
-        { id: 'qwen3.7-max', name: 'Qwen3.7-Max', object: 'model' },
-        { id: 'qwen3.8-omni-flash', name: 'Qwen3.8-Omni-Flash', object: 'model' },
-      ],
-    },
-  })
-
-  assert.equal(result.ok, true)
-  assert.equal(result.models.length, 2)
-  assert.deepEqual(result.models[0], {
-    displayName: 'Qwen3.7-Max',
-    actualModelId: 'qwen3.7-max',
-  })
-})
-
 test('auto reads z.ai list, including a name that equals no code', () => {
   const result = readModelList({
     data: [
@@ -80,124 +60,6 @@ test('auto reads z.ai list, including a name that equals no code', () => {
     { displayName: 'GLM-5.3-Flash', actualModelId: 'x-preview-l' },
     { displayName: 'GLM-5.3', actualModelId: 'glm-5.3' },
   ])
-})
-
-test('auto reads kimi gateway availableModels as captured and dedupes by id', () => {
-  const result = readModelList({
-    availableModels: [
-      { scenario: 'SCENARIO_OK_COMPUTER', displayName: 'K3', key: 'k3', id: 'k3-agent' },
-      { scenario: 'SCENARIO_OK_COMPUTER', displayName: 'K2.8', key: 'k28-preview', id: 'k28-agent-preview' },
-      { scenario: 'SCENARIO_CHAT', displayName: 'Instant', key: 'k2d6', id: 'k2d6-chat' },
-      { scenario: 'SCENARIO_AGENT', displayName: 'Instant', key: 'k2d6', id: 'k2d6-chat' },
-    ],
-    defaultScenario: 'SCENARIO_CHAT',
-  })
-
-  assert.equal(result.ok, true)
-  assert.deepEqual(result.models, [
-    { displayName: 'K3', actualModelId: 'k3-agent' },
-    { displayName: 'K2.8', actualModelId: 'k28-agent-preview' },
-    { displayName: 'Instant', actualModelId: 'k2d6-chat' },
-  ])
-})
-
-test('auto reads the qwen-cn envelope and honours its show flag', () => {
-  const result = readModelList({
-    trace_id: 'abc',
-    code: 0,
-    msg: '',
-    success: true,
-    httpCode: 200,
-    data: [
-      { displayModelName: 'Qwen3.7-千问', modelCode: 'Qwen', show: true },
-      { displayModelName: 'Qwen3.7-Max', modelCode: 'tongyi-qwen37-max-model', show: true },
-      { displayModelName: 'Hidden One', modelCode: 'hidden-code', show: false },
-    ],
-  })
-
-  assert.equal(result.ok, true)
-  assert.deepEqual(result.models, [
-    { displayName: 'Qwen3.7-千问', actualModelId: 'Qwen' },
-    { displayName: 'Qwen3.7-Max', actualModelId: 'tongyi-qwen37-max-model' },
-  ])
-})
-
-test('auto reads the minimax-cloud config envelope as captured', () => {
-  const result = readModelList({
-    base_resp: { status_code: 0, status_msg: 'ok' },
-    models: [
-      {
-        supported_variants: ['', 'thinking'],
-        effort_options: ['default', 'low', 'medium', 'high', 'xhigh', 'max'],
-        display_name: 'M3.1-Flash',
-        provider_id: 'minimax',
-        model_id: 'MiniMax-M3.1-Flash',
-        context_limit: 512000,
-      },
-      {
-        thinking_config: { default_value: 'true', mode: 'switchable' },
-        provider_id: 'minimax',
-        model_id: 'MiniMax-M3',
-        display_name: 'M3',
-        context_limit: 400000,
-      },
-    ],
-  })
-
-  assert.equal(result.ok, true)
-  assert.deepEqual(result.models, [
-    { displayName: 'M3.1-Flash', actualModelId: 'MiniMax-M3.1-Flash' },
-    { displayName: 'M3', actualModelId: 'MiniMax-M3' },
-  ])
-})
-
-test('the minimax envelope is not swallowed by the generic list reader', () => {
-  const result = readModelList(
-    { base_resp: { status_code: 0 }, models: [{ model_id: 'MiniMax-M3', display_name: 'M3' }] },
-    'openai-list'
-  )
-
-  assert.equal(result.ok, false)
-  assert.equal(result.reason, 'empty')
-})
-
-test('mimo bot config keeps only the flagged entries, whose names do not collide', () => {
-  const result = readModelList({
-    code: 0,
-    msg: '成功',
-    data: {
-      modelConfigList: [
-        { name: 'MiMo-V2.6-Flash', model: 'mimo-v2.6-flash', isInPromptNameList: true },
-        { name: 'MiMo-V2.6-Pro', model: 'mimo-v2.6-pro', isInPromptNameList: true },
-        { name: 'MiMo-V2.6-Pro-UltraSpeed', model: 'mimo-v2.6-pro-ultraspeed-studio', isInPromptNameList: true },
-        // unflagged internal entries, several sharing one name
-        { name: 'mimo-omni', model: 'mimo-v2-omni' },
-        { name: 'mimo-omni', model: 'mimo-v2.5' },
-        { name: 'mimo-omni', model: 'clawm-alpha' },
-        { name: 'mimo-v2.1-pro', model: 'mimo-v2.1-pro' },
-        { name: 'mimo-v2.1-pro', model: 'mimo-v2.1-pro-preview' },
-      ],
-    },
-  })
-
-  assert.equal(result.ok, true)
-  assert.deepEqual(result.models, [
-    { displayName: 'MiMo-V2.6-Flash', actualModelId: 'mimo-v2.6-flash' },
-    { displayName: 'MiMo-V2.6-Pro', actualModelId: 'mimo-v2.6-pro' },
-    { displayName: 'MiMo-V2.6-Pro-UltraSpeed', actualModelId: 'mimo-v2.6-pro-ultraspeed-studio' },
-  ])
-  const names = result.models.map(m => m.displayName)
-  assert.equal(new Set(names).size, names.length)
-})
-
-test('a mimo payload with nothing flagged reports empty rather than a blank list', () => {
-  const result = readModelList(
-    { code: 0, data: { modelConfigList: [{ name: 'mimo-omni', model: 'mimo-v2-omni' }] } },
-    'mimo-bot-config'
-  )
-
-  assert.equal(result.ok, false)
-  assert.equal(result.reason, 'empty')
 })
 
 test('an unrecognised payload is reported instead of an empty success', () => {
@@ -239,6 +101,35 @@ test('blank and whitespace-only names fall back to the id', () => {
 
   assert.equal(result.ok, true)
   assert.deepEqual(result.models, [{ displayName: 'only-id', actualModelId: 'only-id' }])
+})
+
+test('openai-free-list keeps only the free slice of a mixed gateway catalogue', () => {
+  const result = readModelList({
+    data: [
+      { id: 'kilo-auto/free', name: 'Kilo Auto Free', isFree: true },
+      { id: 'paid/model', name: 'Paid Model', isFree: false },
+      { id: 'paid/other', name: 'Other Paid' },
+      { id: 'nvidia/nemotron:free', name: 'Nemotron (Free)', isFree: true },
+    ],
+  }, 'openai-free-list')
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.models, [
+    { displayName: 'Kilo Auto Free', actualModelId: 'kilo-auto/free' },
+    { displayName: 'Nemotron (Free)', actualModelId: 'nvidia/nemotron:free' },
+  ])
+})
+
+test('a catalogue with no free model is an empty pool, not a success', () => {
+  const result = readModelList({
+    data: [
+      { id: 'a', name: 'A', isFree: false },
+      { id: 'b', name: 'B', isFree: false },
+    ],
+  }, 'openai-free-list')
+
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'empty')
 })
 
 test('qwen-cn envelope does not leak through the generic list reader', () => {

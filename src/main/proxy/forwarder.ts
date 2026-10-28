@@ -16,17 +16,9 @@ import {
 import { proxyStatusManager } from './status'
 import { storeManager } from '../store/store'
 import { wrapStreamWithPlan } from './toolCalling/streamPlanWrapper'
-import { DeepSeekAdapter } from './adapters/deepseek'
-import { DeepSeekStreamHandler } from './adapters/deepseek-stream'
-import { GLMAdapter, GLMStreamHandler } from './adapters/glm'
-import { KimiAdapter, KimiStreamHandler } from './adapters/kimi'
-import { MimoAdapter, MimoStreamHandler } from './adapters/mimo'
 import { OpencodeAdapter, buildCompletion, createDeferredCompletionStream } from './adapters/opencode'
+import { AnthropicAdapter } from './adapters/anthropic'
 import { renderTranscript } from '../opencode/prompt.ts'
-import { QwenAdapter, QwenStreamHandler } from './adapters/qwen'
-import { QwenAiAdapter, QwenAiStreamHandler } from './adapters/qwen-ai'
-import { ZaiAdapter, ZaiStreamHandler } from './adapters/zai'
-import { MiniMaxAdapter, MiniMaxStreamHandler } from './adapters/minimax'
 import { ToolCallingEngine } from './toolCalling/ToolCallingEngine'
 import type { ToolCallingTransformResult } from './toolCalling/types'
 import { sessionManager } from './sessionManager'
@@ -35,6 +27,7 @@ import { autoRouter, type AutoCandidate } from './autoRouter'
 import { accountRuntime } from './accountRuntime'
 import { stripUnsupportedForBuiltin } from './parameterPolicy'
 import { createContextManagementService, SummaryGenerator } from './services/contextManagementService'
+import { accountChannelManager } from '../providers/accountChannels/manager'
 
 function shouldDeleteSession(): boolean {
   return sessionManager.shouldDeleteAfterChat()
@@ -64,58 +57,22 @@ export class RequestForwarder {
 
   private readonly providerForwarders: ProviderForwarder[] = [
     {
-      name: 'deepseek',
-      matches: DeepSeekAdapter.isDeepSeekProvider,
-      forward: (request, account, provider, actualModel, startTime) =>
-        this.forwardDeepSeek(request, account, provider, actualModel, startTime),
-    },
-    {
-      name: 'glm',
-      matches: GLMAdapter.isGLMProvider,
-      forward: (request, account, provider, actualModel, startTime) =>
-        this.forwardGLM(request, account, provider, actualModel, startTime),
-    },
-    {
-      name: 'kimi',
-      matches: KimiAdapter.isKimiProvider,
-      forward: (request, account, provider, actualModel, startTime) =>
-        this.forwardKimi(request, account, provider, actualModel, startTime),
-    },
-    {
-      name: 'qwen',
-      matches: QwenAdapter.isQwenProvider,
-      forward: (request, account, provider, actualModel, startTime) =>
-        this.forwardQwen(request, account, provider, actualModel, startTime),
-    },
-    {
-      name: 'qwen-ai',
-      matches: QwenAiAdapter.isQwenAiProvider,
-      forward: (request, account, provider, actualModel, startTime) =>
-        this.forwardQwenAi(request, account, provider, actualModel, startTime),
-    },
-    {
-      name: 'zai',
-      matches: ZaiAdapter.isZaiProvider,
-      forward: (request, account, provider, actualModel, startTime) =>
-        this.forwardZai(request, account, provider, actualModel, startTime),
-    },
-    {
-      name: 'minimax',
-      matches: MiniMaxAdapter.isMiniMaxProvider,
-      forward: (request, account, provider, actualModel, startTime) =>
-        this.forwardMiniMax(request, account, provider, actualModel, startTime),
-    },
-    {
       name: 'opencode',
       matches: OpencodeAdapter.isOpencodeProvider,
       forward: (request, account, provider, actualModel, startTime) =>
         this.forwardOpencode(request, account, provider, actualModel, startTime),
     },
     {
-      name: 'mimo',
-      matches: MimoAdapter.isMimoProvider,
-      forward: (request, account, provider, actualModel, startTime) =>
-        this.forwardMimo(request, account, provider, actualModel, startTime),
+      name: 'anthropic-messages',
+      matches: AnthropicAdapter.isAnthropicProvider,
+      forward: (request, account, provider, actualModel) =>
+        new AnthropicAdapter(provider, account).chatCompletion(request, actualModel),
+    },
+    {
+      name: 'account-channel',
+      matches: (provider: Provider) => provider.type === 'account',
+      forward: (request, _account, _provider, actualModel) =>
+        this.forwardAccountChannel(request, actualModel),
     },
   ]
 
@@ -402,6 +359,62 @@ export class RequestForwarder {
   }
 
   /**
+   * 账号渠道（account channel）转发。
+   *
+   * 上游协议、账号池、积分与重试全部在渠道 Worker 里；这里只做两件事：
+   * 把内部字段（`requestId` / `signal` / `originalModel`）摘掉后交出 OpenAI 形状的
+   * 请求体，以及把 Worker 的 SSE 文本原样接到响应流上（`skipTransform`）。
+   * 不做工具提示注入：渠道适配器都支持原生工具调用。
+   */
+  private async forwardAccountChannel(
+    request: ChatCompletionRequest,
+    actualModel: string
+  ): Promise<ForwardResult> {
+    const startTime = Date.now()
+    const requestId = request.requestId ?? `channel-${startTime}`
+    const {
+      requestId: _internalRequestId,
+      signal: _signal,
+      originalModel: _originalModel,
+      ...rest
+    } = request
+    const openAi = { ...rest, model: actualModel } as Record<string, unknown>
+
+    try {
+      if (request.stream !== true) {
+        const body = await accountChannelManager.complete({ requestId, model: actualModel, openAi })
+        return {
+          success: true,
+          status: 200,
+          body,
+          latency: Date.now() - startTime,
+          providerSessionId: requestId,
+        }
+      }
+      const stream = await accountChannelManager.openStream({ requestId, model: actualModel, openAi })
+      return {
+        success: true,
+        status: 200,
+        stream,
+        // SSE 已由渠道包按 OpenAI 规范投影，这里再转一次只会让流形状漂移。
+        skipTransform: true,
+        // 响应头先回、正文随后（首字要等上游），耗时口径按整笔计。
+        deferred: true,
+        latency: Date.now() - startTime,
+        providerSessionId: requestId,
+      }
+    } catch (error) {
+      const failure = error as { message?: string; status?: number }
+      return {
+        success: false,
+        status: failure.status ?? 502,
+        error: failure.message ?? '渠道请求失败',
+        latency: Date.now() - startTime,
+      }
+    }
+  }
+
+  /**
    * Execute Forward
    */
   private async doForward(
@@ -488,703 +501,6 @@ export class RequestForwarder {
   }
 
   /**
-   * DeepSeek Dedicated Forward
-   */
-  private async forwardDeepSeek(
-    request: ChatCompletionRequest,
-    account: Account,
-    provider: Provider,
-    actualModel: string,
-    startTime: number
-  ): Promise<ForwardResult> {
-    try {
-      const transformed = this.transformRequestForPromptToolUse(request, provider)
-      const transformedRequest = {
-        ...request,
-        messages: transformed.messages,
-        tools: transformed.tools,
-      }
-
-      const adapter = new DeepSeekAdapter(provider, account)
-      
-      const { response, sessionId } = await adapter.chatCompletion({
-        model: request.model,
-        messages: transformedRequest.messages as any,
-        stream: transformedRequest.stream,
-        temperature: transformedRequest.temperature,
-        web_search: transformedRequest.web_search,
-        reasoning_effort: transformedRequest.reasoning_effort,
-      })
-
-      const latency = Date.now() - startTime
-
-      if (response.status >= 400) {
-        let errorMessage = `HTTP ${response.status}`
-        if (response.data) {
-          if (typeof response.data === 'string') {
-            errorMessage = response.data
-          } else if (response.data.msg) {
-            errorMessage = response.data.msg
-          } else if (response.data.error?.message) {
-            errorMessage = response.data.error.message
-          }
-        }
-        return {
-          success: false,
-          status: response.status,
-          error: errorMessage,
-          latency,
-        }
-      }
-
-      // Prepare callback for deleting session
-      const deleteSessionCallback = shouldDeleteSession()
-        ? async () => {
-            try {
-              await adapter.deleteSession(sessionId)
-            } catch (error) {
-              console.error('[DeepSeek] Failed to delete session:', error)
-            }
-          }
-        : undefined
-
-      // DeepSeek always returns streaming response
-      const handler = new DeepSeekStreamHandler(
-        actualModel,
-        sessionId,
-        deleteSessionCallback,
-        transformedRequest.web_search,
-        transformedRequest.reasoning_effort,
-        transformed.plan,
-        request.model
-      )
-      
-      if (request.stream) {
-        const transformedStream = await handler.handleStream(response.data)
-        
-        return {
-          success: true,
-          status: response.status,
-          headers: this.extractHeaders(response.headers),
-          stream: transformedStream,
-          skipTransform: true,
-          latency,
-          providerSessionId: sessionId,
-        }
-      }
-
-      // Non-streaming requests need to collect stream data and convert
-      const result = await handler.handleNonStream(response.data)
-      
-      this.applyToolCallsToResponse(result, transformed)
-      
-      if (deleteSessionCallback) {
-        await deleteSessionCallback()
-      }
-
-      return {
-        success: true,
-        status: response.status,
-        headers: this.extractHeaders(response.headers),
-        body: result,
-        latency,
-        providerSessionId: sessionId,
-      }
-    } catch (error) {
-      const latency = Date.now() - startTime
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        latency,
-      }
-    }
-  }
-
-  /**
-   * GLM Dedicated Forward
-   */
-  private async forwardGLM(
-    request: ChatCompletionRequest,
-    account: Account,
-    provider: Provider,
-    actualModel: string,
-    startTime: number
-  ): Promise<ForwardResult> {
-    try {
-      const transformed = this.transformRequestForPromptToolUse(request, provider)
-      const transformedRequest = {
-        ...request,
-        messages: transformed.messages,
-        tools: transformed.tools,
-      }
-
-      const adapter = new GLMAdapter(provider, account)
-      const { response, conversationId } = await adapter.chatCompletion({
-        model: actualModel,
-        originalModel: request.model,
-        messages: transformedRequest.messages,
-        stream: transformedRequest.stream,
-        temperature: transformedRequest.temperature,
-        web_search: transformedRequest.web_search,
-        reasoning_effort: transformedRequest.reasoning_effort,
-        deep_research: transformedRequest.deep_research,
-      })
-
-      const latency = Date.now() - startTime
-
-      if (response.status >= 400) {
-        let errorMessage = `HTTP ${response.status}`
-        if (response.data) {
-          if (typeof response.data === 'string') {
-            errorMessage = response.data
-          } else if (response.data.msg) {
-            errorMessage = response.data.msg
-          } else if (response.data.message) {
-            errorMessage = response.data.message
-          } else if (response.data.error?.message) {
-            errorMessage = response.data.error.message
-          }
-        }
-        return {
-          success: false,
-          status: response.status,
-          error: errorMessage,
-          latency,
-        }
-      }
-
-      const handler = new GLMStreamHandler(actualModel, undefined, undefined, transformed.plan)
-      
-      if (request.stream) {
-        const transformedStream = await handler.handleStream(response.data)
-        
-        // If delete session after chat is enabled, we need to handle it after stream ends
-        if (shouldDeleteSession()) {
-          const originalEnd = transformedStream.end.bind(transformedStream)
-          transformedStream.end = function(chunk?: any, encoding?: any, callback?: any) {
-            const convId = handler.getConversationId()
-            if (convId) {
-              adapter.deleteConversation(convId).catch(err => {
-                console.error('[GLM] Failed to delete session:', err)
-              })
-            }
-            return originalEnd(chunk, encoding, callback)
-          }
-        }
-        
-        return {
-          success: true,
-          status: response.status,
-          headers: this.extractHeaders(response.headers),
-          stream: transformedStream,
-          skipTransform: true,
-          latency,
-          providerSessionId: handler.getConversationId(),
-        }
-      }
-
-      const result = await handler.handleNonStream(response.data)
-      
-      this.applyToolCallsToResponse(result, transformed)
-      
-      if (shouldDeleteSession()) {
-        const convId = handler.getConversationId()
-        if (convId) {
-          await adapter.deleteConversation(convId)
-        }
-      }
-
-      return {
-        success: true,
-        status: response.status,
-        headers: this.extractHeaders(response.headers),
-        body: result,
-        latency,
-        providerSessionId: handler.getConversationId() ?? undefined,
-      }
-    } catch (error) {
-      const latency = Date.now() - startTime
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        latency,
-      }
-    }
-  }
-
-  private async forwardKimi(
-    request: ChatCompletionRequest,
-    account: Account,
-    provider: Provider,
-    actualModel: string,
-    startTime: number
-  ): Promise<ForwardResult> {
-    try {
-      const transformed = this.transformRequestForPromptToolUse(request, provider)
-      
-      const adapter = new KimiAdapter(provider, account)
-      const { response, conversationId } = await adapter.chatCompletion({
-        model: actualModel,
-        originalModel: request.model,
-        messages: transformed.messages,
-        stream: request.stream,
-        temperature: request.temperature,
-        enableThinking: !!request.reasoning_effort,
-        enableWebSearch: !!request.web_search,
-      })
-
-      const latency = Date.now() - startTime
-
-      if (response.status >= 400) {
-        let errorMessage = `HTTP ${response.status}`
-        return {
-          success: false,
-          status: response.status,
-          error: errorMessage,
-          latency,
-        }
-      }
-
-      const handler = new KimiStreamHandler(actualModel, conversationId, !!request.reasoning_effort, transformed.plan)
-      
-      if (request.stream) {
-        const transformedStream = await handler.handleStream(response.data)
-        
-        // Add delete conversation callback if needed
-        if (shouldDeleteSession()) {
-          const originalEnd = transformedStream.end.bind(transformedStream)
-          transformedStream.end = function(chunk?: any, encoding?: any, callback?: any) {
-            const realChatId = handler.getConversationId()
-            if (realChatId) {
-              adapter.deleteConversation(realChatId).catch(err => {
-                console.error('[Kimi] Failed to delete conversation:', err)
-              })
-            }
-            return originalEnd(chunk, encoding, callback)
-          }
-        }
-        
-        return {
-          success: true,
-          status: response.status,
-          headers: this.extractHeaders(response.headers),
-          stream: transformedStream,
-          skipTransform: true,
-          latency,
-          providerSessionId: undefined,
-        }
-      }
-
-      const result = await handler.handleNonStream(response.data)
-
-      this.applyToolCallsToResponse(result, transformed)
-
-      if (shouldDeleteSession()) {
-        const realChatId = handler.getConversationId()
-        if (realChatId) {
-          await adapter.deleteConversation(realChatId)
-        }
-      }
-
-      return {
-        success: true,
-        status: response.status,
-        headers: this.extractHeaders(response.headers),
-        body: result,
-        latency,
-        providerSessionId: handler.getConversationId() ?? undefined,
-      }
-    } catch (error) {
-      const latency = Date.now() - startTime
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        latency,
-      }
-    }
-  }
-
-  /**
-   * Qwen Dedicated Forward
-   */
-  private async forwardQwen(
-    request: ChatCompletionRequest,
-    account: Account,
-    provider: Provider,
-    actualModel: string,
-    startTime: number
-  ): Promise<ForwardResult> {
-    try {
-      const transformed = this.transformRequestForPromptToolUse(request, provider)
-      const transformedRequest = {
-        ...request,
-        messages: transformed.messages,
-        tools: transformed.tools,
-      }
-
-      const adapter = new QwenAdapter(provider, account)
-      const { response, sessionId, reqId } = await adapter.chatCompletion({
-        model: actualModel,
-        originalModel: request.model,
-        messages: transformedRequest.messages as any,
-        stream: request.stream,
-        temperature: request.temperature,
-        enableThinking: !!request.reasoning_effort,
-        enableWebSearch: !!request.web_search,
-      })
-
-      const latency = Date.now() - startTime
-
-      if (response.status >= 400) {
-        let errorMessage = `HTTP ${response.status}`
-        return {
-          success: false,
-          status: response.status,
-          error: errorMessage,
-          latency,
-        }
-      }
-
-      const deleteSessionCallback = shouldDeleteSession()
-        ? async (sid: string) => {
-            try {
-              await adapter.deleteSession(sid)
-            } catch (err) {
-              console.error('[Qwen] Failed to delete session:', err)
-            }
-          }
-        : undefined
-
-      const handler = new QwenStreamHandler(actualModel, deleteSessionCallback, transformed.plan)
-
-      if (request.stream) {
-        const transformedStream = await handler.handleStream(response.data, response)
-
-        return {
-          success: true,
-          status: response.status,
-          headers: this.extractHeaders(response.headers),
-          stream: transformedStream,
-          skipTransform: true,
-          latency,
-          providerSessionId: sessionId,
-        }
-      }
-
-      const result = await handler.handleNonStream(response.data, response)
-
-      this.applyToolCallsToResponse(result, transformed)
-
-      const sid = handler.getSessionId()
-      if (deleteSessionCallback && sid) {
-        await deleteSessionCallback(sid)
-      }
-
-      return {
-        success: true,
-        status: response.status,
-        headers: this.extractHeaders(response.headers),
-        body: result,
-        latency,
-        providerSessionId: sessionId,
-      }
-    } catch (error) {
-      const latency = Date.now() - startTime
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        latency,
-      }
-    }
-  }
-
-  /**
-   * Qwen AI (International) Dedicated Forward
-   */
-  private async forwardQwenAi(
-    request: ChatCompletionRequest,
-    account: Account,
-    provider: Provider,
-    actualModel: string,
-    startTime: number
-  ): Promise<ForwardResult> {
-    try {
-      const transformed = this.transformRequestForPromptToolUse(request, provider)
-      
-      const adapter = new QwenAiAdapter(provider, account)
-      const { response, chatId, parentId } = await adapter.chatCompletion({
-        model: actualModel,
-        originalModel: request.model,
-        messages: transformed.messages as any,
-        stream: request.stream,
-        temperature: request.temperature,
-        enable_thinking: !!request.reasoning_effort,
-      })
-
-      const latency = Date.now() - startTime
-
-      if (response.status >= 400) {
-        let errorMessage = `HTTP ${response.status}`
-        return {
-          success: false,
-          status: response.status,
-          error: errorMessage,
-          latency,
-        }
-      }
-
-      const handler = new QwenAiStreamHandler(actualModel)
-      handler.setChatId(chatId)
-
-      if (request.stream) {
-        const rawStream = await handler.handleStream(response.data)
-
-        if (shouldDeleteSession()) {
-          const originalEnd = rawStream.end.bind(rawStream)
-          rawStream.end = function(chunk?: any, encoding?: any, callback?: any) {
-            adapter.deleteChat(chatId).catch(err => {
-              console.error('[QwenAI] Failed to delete chat:', err)
-            })
-            return originalEnd(chunk, encoding, callback)
-          }
-        }
-
-        return {
-          success: true,
-          status: response.status,
-          headers: this.extractHeaders(response.headers),
-          stream: wrapStreamWithPlan(rawStream as any, transformed.plan) as any,
-          skipTransform: true,
-          latency,
-          providerSessionId: chatId,
-        }
-      }
-
-      const result = await handler.handleNonStream(response.data)
-
-      this.applyToolCallsToResponse(result, transformed)
-
-      if (shouldDeleteSession()) {
-        await adapter.deleteChat(chatId)
-      }
-
-      return {
-        success: true,
-        status: response.status,
-        headers: this.extractHeaders(response.headers),
-        body: result,
-        latency,
-        providerSessionId: chatId,
-      }
-    } catch (error) {
-      const latency = Date.now() - startTime
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        latency,
-      }
-    }
-  }
-
-  /**
-   * Z.ai Dedicated Forward
-   */
-  private async forwardZai(
-    request: ChatCompletionRequest,
-    account: Account,
-    provider: Provider,
-    actualModel: string,
-    startTime: number
-  ): Promise<ForwardResult> {
-    console.log('[forwardZai] actualModel:', actualModel)
-    console.log('[forwardZai] provider.modelMappings:', provider.modelMappings)
-    try {
-      const transformed = this.transformRequestForPromptToolUse(request, provider)
-      
-      const adapter = new ZaiAdapter(provider, account)
-      const { response, chatId, requestId } = await adapter.chatCompletion({
-        model: actualModel,
-        originalModel: request.model,
-        messages: transformed.messages as any,
-        stream: request.stream,
-        temperature: request.temperature,
-        web_search: request.web_search,
-        reasoning_effort: request.reasoning_effort,
-      })
-
-      const latency = Date.now() - startTime
-
-      if (response.status >= 400) {
-        let errorMessage = `HTTP ${response.status}`
-        return {
-          success: false,
-          status: response.status,
-          error: errorMessage,
-          latency,
-        }
-      }
-
-      const deleteChatCallback = shouldDeleteSession()
-        ? async (cid: string) => {
-            try {
-              await adapter.deleteChat(cid)
-            } catch (error) {
-              console.error('[Z.ai] Failed to delete chat:', error)
-            }
-          }
-        : undefined
-
-      const handler = new ZaiStreamHandler(actualModel, deleteChatCallback)
-      handler.setChatId(chatId)
-      
-      if (request.stream === true) {
-        const transformedStream = await handler.handleStream(response.data)
-        
-        return {
-          success: true,
-          status: response.status,
-          headers: this.extractHeaders(response.headers),
-          stream: wrapStreamWithPlan(transformedStream as any, transformed.plan) as any,
-          skipTransform: true,
-          latency,
-          providerSessionId: chatId,
-        }
-      }
-
-      const result = await handler.handleNonStream(response.data)
-
-      this.applyToolCallsToResponse(result, transformed)
-      
-      if (deleteChatCallback) {
-        await deleteChatCallback(chatId)
-      }
-
-      return {
-        success: true,
-        status: response.status,
-        headers: this.extractHeaders(response.headers),
-        body: result,
-        latency,
-        providerSessionId: chatId,
-      }
-    } catch (error) {
-      const latency = Date.now() - startTime
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        latency,
-      }
-    }
-  }
-
-  /**
-   * MiniMax Dedicated Forward
-   */
-  private async forwardMiniMax(
-    request: ChatCompletionRequest,
-    account: Account,
-    provider: Provider,
-    actualModel: string,
-    startTime: number
-  ): Promise<ForwardResult> {
-    console.log('[forwardMiniMax] actualModel:', actualModel)
-    console.log('[forwardMiniMax] provider.modelMappings:', provider.modelMappings)
-    try {
-      const transformed = this.transformRequestForPromptToolUse(request, provider)
-      
-      const adapter = new MiniMaxAdapter(provider, account)
-      const { response, stream, chatId } = await adapter.chatCompletion({
-        model: actualModel,
-        originalModel: request.model,
-        messages: transformed.messages as any,
-        stream: request.stream,
-        temperature: request.temperature,
-      })
-
-      const latency = Date.now() - startTime
-
-      if (response && response.status >= 400) {
-        let errorMessage = `HTTP ${response.status}`
-        return {
-          success: false,
-          status: response.status,
-          error: errorMessage,
-          latency,
-        }
-      }
-
-      const deleteChatCallback = shouldDeleteSession()
-        ? async (cid: string) => {
-            try {
-              await adapter.deleteChat(cid)
-            } catch (error) {
-              console.error('[MiniMax] Failed to delete chat:', error)
-            }
-          }
-        : undefined
-
-      if (request.stream === true && stream) {
-        console.log('[forwardMiniMax] Using polling stream')
-        
-        if (deleteChatCallback) {
-          const originalStream = stream.stream as unknown as PassThrough
-          const originalEnd = originalStream.end.bind(originalStream)
-          originalStream.end = function(chunk?: any, encoding?: any, callback?: any) {
-            deleteChatCallback(chatId).catch(err => {
-              console.error('[MiniMax] Failed to delete chat:', err)
-            })
-            return originalEnd(chunk, encoding, callback)
-          }
-        }
-        
-        return {
-          success: true,
-          status: 200,
-          headers: {},
-          stream: wrapStreamWithPlan(stream.stream as any, transformed.plan) as any,
-          skipTransform: true,
-          latency,
-          providerSessionId: chatId,
-        }
-      }
-
-      if (response) {
-        this.applyToolCallsToResponse(response.data, transformed)
-        
-        if (deleteChatCallback) {
-          await deleteChatCallback(chatId)
-        }
-
-        return {
-          success: true,
-          status: response.status,
-          headers: this.extractHeaders(response.headers),
-          body: response.data,
-          latency,
-          providerSessionId: chatId,
-        }
-      }
-
-      return {
-        success: false,
-        error: 'No response or stream received',
-        latency,
-      }
-    } catch (error) {
-      const latency = Date.now() - startTime
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        latency,
-      }
-    }
-  }
-
-  /**
-   * Mimo Dedicated Forward
-   * Uses Mimo adapter for Xiaomi AI Studio
-   */
-  /**
    * OpenCode：驱动本机运行时完成一次 agent 回合。
    * 免费模型单轮 30–60 秒，且它不是 token 流，所以流式响应是一次性分片（见 adapters/opencode.ts）。
    */
@@ -1262,121 +578,6 @@ export class RequestForwarder {
     }
   }
 
-  private async forwardMimo(
-    request: ChatCompletionRequest,
-    account: Account,
-    provider: Provider,
-    actualModel: string,
-    startTime: number
-  ): Promise<ForwardResult> {
-    try {
-      const transformed = this.transformRequestForPromptToolUse(request, provider)
-      const transformedRequest = {
-        ...request,
-        messages: transformed.messages,
-        tools: transformed.tools,
-      }
-      const adapter = new MimoAdapter(provider, account)
-
-      const { response, conversationId, query } = await adapter.chatCompletion({
-        model: actualModel,
-        originalModel: request.originalModel,
-        messages: transformedRequest.messages as any,
-        stream: transformedRequest.stream,
-        temperature: transformedRequest.temperature,
-      })
-
-      const latency = Date.now() - startTime
-
-      if (response.status >= 400) {
-        let errorMessage = `HTTP ${response.status}`
-        return {
-          success: false,
-          status: response.status,
-          error: errorMessage,
-          latency,
-        }
-      }
-
-      const deleteSessionCallback = shouldDeleteSession()
-        ? async (sessionId: string) => {
-            try {
-              await adapter.deleteSession(sessionId)
-            } catch (error) {
-              console.error('[Mimo] Failed to delete session:', error)
-            }
-          }
-        : undefined
-
-      const handler = new MimoStreamHandler(actualModel, conversationId, 'separate', transformed.plan)
-
-      if (request.stream) {
-        const transformedStream = new PassThrough()
-        const openAIStream = handler.handleStream(response.data)
-
-        ;(async () => {
-          try {
-            for await (const chunk of openAIStream) {
-              transformedStream.write(chunk)
-            }
-            await adapter.generateConversationTitle(
-              conversationId,
-              query,
-              handler.getAssistantContentForTitle()
-            )
-            if (deleteSessionCallback) {
-              await deleteSessionCallback(conversationId)
-            }
-            transformedStream.end()
-          } catch (error) {
-            console.error('[Mimo] Stream error:', error)
-            transformedStream.end()
-          }
-        })()
-
-        return {
-          success: true,
-          status: response.status,
-          headers: this.extractHeaders(response.headers),
-          stream: transformedStream,
-          skipTransform: true,
-          latency,
-          providerSessionId: conversationId,
-        }
-      }
-
-      const result = await handler.handleNonStream(response.data)
-      const parsedResult = JSON.parse(result)
-      this.applyToolCallsToResponse(parsedResult, transformed)
-      await adapter.generateConversationTitle(
-        conversationId,
-        query,
-        handler.getAssistantContentForTitle()
-      )
-      if (deleteSessionCallback) {
-        await deleteSessionCallback(conversationId)
-      }
-
-      return {
-        success: true,
-        status: response.status,
-        headers: this.extractHeaders(response.headers),
-        body: parsedResult,
-        skipTransform: true,
-        latency,
-        providerSessionId: conversationId,
-      }
-    } catch (error) {
-      const latency = Date.now() - startTime
-      console.error('[Mimo] Forward error:', error)
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        latency,
-      }
-    }
-  }
-
   /**
    * Build URL
    */
@@ -1408,15 +609,14 @@ export class RequestForwarder {
     }
 
     const credentials = account.credentials
+    const apiKey = credentials.token || credentials.apiKey || credentials.accessToken || credentials.refreshToken
 
-    if (credentials.token) {
-      headers['Authorization'] = `Bearer ${credentials.token}`
-    } else if (credentials.apiKey) {
-      headers['Authorization'] = `Bearer ${credentials.apiKey}`
-    } else if (credentials.accessToken) {
-      headers['Authorization'] = `Bearer ${credentials.accessToken}`
-    } else if (credentials.refreshToken) {
-      headers['Authorization'] = `Bearer ${credentials.refreshToken}`
+    // Aggregate endpoints declare where their key goes (anthropic: x-api-key,
+    // azure: api-key); everything else keeps the OpenAI Authorization header.
+    if (apiKey) {
+      const headerName = provider.authHeader || 'Authorization'
+      const prefix = provider.authPrefix ?? 'Bearer '
+      headers[headerName] = `${prefix}${apiKey}`
     }
 
     if (credentials.cookie) {

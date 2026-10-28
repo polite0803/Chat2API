@@ -1,6 +1,6 @@
 ---
 name: Question & Support
-about: Ask a question or get help with Chat2API
+about: Ask a question or get help with ModelPort
 title: "[QUESTION]"
 labels: ''
 assignees: ''
@@ -22,7 +22,7 @@ assignees: ''
 
 | 项目 | 值 |
 |---|---|
-| Chat2API 版本 |  |
+| ModelPort 版本 |  |
 | 操作系统及版本 |  |
 | 系统架构 | arm64 / x64 |
 

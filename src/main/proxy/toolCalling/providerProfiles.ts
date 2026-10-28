@@ -2,7 +2,7 @@ import type { NormalizedToolResult, ToolProtocolId } from './types.ts'
 import { managedXmlProtocol } from './protocols/managedXml.ts'
 
 export interface ProviderToolProfile {
-  providerId: 'deepseek' | 'kimi' | 'glm' | 'qwen' | string
+  providerId: string
   managedSupport: boolean
   supportsNativeTools: boolean
   /** 上游自己把工具调用翻好了（OpenCode 的信封协议），托管层必须完全不碰 */
@@ -37,22 +37,6 @@ const profiles: Record<string, ProviderToolProfile> = {
     formatToolResult(result) {
       return managedXmlProtocol.formatToolResult(result)
     },
-  },
-  deepseek: {
-    providerId: 'deepseek',
-    ...chat2ApiXmlHistoryProfile,
-  },
-  kimi: {
-    providerId: 'kimi',
-    ...chat2ApiXmlHistoryProfile,
-  },
-  glm: {
-    providerId: 'glm',
-    ...chat2ApiXmlHistoryProfile,
-  },
-  qwen: {
-    providerId: 'qwen',
-    ...chat2ApiXmlHistoryProfile,
   },
 }
 

@@ -1,11 +1,34 @@
+import type { AggregateWire } from './aggregate'
+
+export type { AggregateWire }
+
 export type AccountStatus = 'active' | 'inactive' | 'expired' | 'error'
 
 export type ProviderStatus = 'online' | 'offline' | 'unknown'
 
-export type ProviderType = 'builtin' | 'custom'
+
+export type ProviderType = 'builtin' | 'custom' | 'aggregate' | 'account'
 
 // Provider vendor type (for OAuth adapters)
-export type ProviderVendor = 'deepseek' | 'glm' | 'kimi' | 'mimo' | 'minimax' | 'opencode' | 'qwen' | 'qwen-ai' | 'zai' | 'custom'
+export type ProviderVendor = 'opencode' | 'custom'
+
+/**
+ * The web-page integrations that were retired in 1.5. Startup purges their
+ * providers, accounts and model mappings from stored data, so this list is the
+ * single place that names them.
+ */
+export const RETIRED_PROVIDER_IDS = [
+  'deepseek',
+  'glm',
+  'kimi',
+  'mimo',
+  'minimax',
+  'qwen',
+  'qwen-ai',
+  'zai',
+] as const
+
+export type RetiredProviderId = (typeof RETIRED_PROVIDER_IDS)[number]
 
 export type AuthType = 
   | 'oauth' 
@@ -88,48 +111,20 @@ export interface Provider {
   supportedModels?: string[]
   modelMappings?: Record<string, string>
   credentialFields?: CredentialField[]
+  /** Catalogue entry this record came from, for `type: 'aggregate'` records */
+  aggregateId?: string
+  /** Wire protocol of an aggregate endpoint; builtin/custom leave it unset */
+  wire?: AggregateWire
+  /** Header that carries the API key; defaults to Authorization */
+  authHeader?: string
+  /** Prefix placed before the key inside authHeader; defaults to "Bearer " */
+  authPrefix?: string
   /** Set at startup from the shipped provider config: this provider has an online model list source */
   supportsModelFetch?: boolean
   status?: ProviderStatus
   lastStatusCheck?: number
 }
 
-export const DEEPSEEK_MODEL_BASES = ['deepseek-default', 'deepseek-expert', 'deepseek-vision'] as const
-export const DEEPSEEK_MODEL_SUFFIXES = ['think', 'search', 'think-search'] as const
-
-/** The retired chat.deepseek.com model labels; user data naming them is pruned, not migrated */
-export const DEEPSEEK_RETIRED_MODELS = [
-  'deepseek-v4-flash',
-  'deepseek-v4-pro',
-  'deepseek-v4-flash-think',
-  'deepseek-v4-flash-search',
-  'deepseek-v4-flash-think-search',
-  'deepseek-v4-pro-think',
-  'deepseek-v4-pro-search',
-  'deepseek-v4-pro-think-search',
-]
-
-export const DEEPSEEK_PRIMARY_MODELS: string[] = [...DEEPSEEK_MODEL_BASES]
-
-export const DEEPSEEK_LEGACY_MODEL_MAPPING_NAMES = [
-  'deepseek-chat',
-  'deepseek-reasoner',
-  'DeepSeek-V3.2',
-  'DeepSeek-Search',
-  'DeepSeek-R1',
-  'DeepSeek-R1-Search',
-  ...DEEPSEEK_RETIRED_MODELS,
-]
-
-/** Feature-suffix aliases per base model, generated so the table has one source */
-export const DEFAULT_DEEPSEEK_MODEL_MAPPINGS: Record<string, ModelMapping> = Object.fromEntries(
-  DEEPSEEK_MODEL_BASES.flatMap(base =>
-    DEEPSEEK_MODEL_SUFFIXES.map(suffix => {
-      const requestModel = `${base}-${suffix}`
-      return [requestModel, { requestModel, actualModel: base, preferredProviderId: 'deepseek' }]
-    }),
-  ),
-)
 export interface ModelMapping {
   requestModel: string
   actualModel: string
@@ -484,11 +479,8 @@ export interface EffectiveModel {
 /** How an upstream payload is read into display-name / actual-id pairs */
 export type ModelsFetchReader =
   | 'openai-list'
-  | 'qwen-double-data'
-  | 'qwen-cn-model-list'
-  | 'kimi-available-models'
-  | 'minimax-cloud-config'
-  | 'mimo-bot-config'
+  /** OpenAI-shaped `data[]` where only entries with `isFree: true` are kept (Kilo pool) */
+  | 'openai-free-list'
   | 'auto'
 
 /** Where one credential field goes when calling a provider's model list */

@@ -396,7 +396,7 @@ export class OpencodeBridge {
   async chat(request: BridgeChatRequest, signal?: AbortSignal): Promise<BridgeReply> {
     const withTools = (request.tools?.length ?? 0) > 0
     const session = await this.request<{ id?: string }>('POST', '/session', 15000, {
-      title: 'Chat2API',
+      title: 'ModelPort',
       permission: Object.entries(NATIVE_PERMISSIONS).map(([permission, action]) => ({
         permission,
         pattern: '*',

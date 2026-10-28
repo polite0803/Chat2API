@@ -1,11 +1,11 @@
-# Chat2API
+# ModelPort
 
 <p align="center">
-  <img src="build/icons.png" alt="Chat2API Logo" width="128" height="128">
+  <img src="build/icons.png" alt="ModelPort Logo" width="128" height="128">
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v1.3.0-blue?style=flat-square&logo=github" alt="Release">
+  <img src="https://img.shields.io/badge/Release-v1.4.1-blue?style=flat-square&logo=github" alt="Release">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square" alt="License">
   <br>
   <a href="https://www.electronjs.org/"><img src="https://img.shields.io/badge/Electron-33+-47848F?style=flat-square&logo=electron&logoColor=white" alt="Electron"></a>
@@ -15,30 +15,35 @@
 </p>
 
 <p align="center">
-  <strong><a href="README_CN.md">中文</a> | <a href="https://chat2api-doc.vercel.app/">Official Website</a> | <a href="https://chat2api-doc.vercel.app/docs">Documentation</a></strong>
+  <strong><a href="README_CN.md">中文</a> | <a href="https://github.com/polite0803/ModelPort">GitHub</a> | <a href="https://github.com/polite0803/ModelPort/releases">Releases</a></strong>
 </p>
 
 <p align="center">
-  <strong>Multi-platform AI Service Unified Management Tool</strong>
+  <strong>One local port for every model you own.</strong>
 </p>
 
 <p align="center">
-  Chat2API enables zero-cost access to leading AI models by leveraging official web UIs. It supports providers such as DeepSeek, GLM, Kimi, MiniMax, Qwen, and Z.ai, and seamlessly integrates with tools like openlcaw, Cline, and Roo-Code — making any OpenAI-compatible client work out of the box.
+  ModelPort turns any OpenAI-compatible endpoint into a single local API. It ships the `opencode`
+  local runtime, a 73-entry catalogue of key-based and key-less aggregate channels (including
+  Kilo's free pool), ten browser/device-code account channels with their own account pools and
+  credit accounting, and user-defined custom providers — so any OpenAI-compatible client works out
+  of the box.
 </p>
 
 ![Product Preview](docs/screenshots/preview.png)
 
 ## ✨ Features
 
-- OpenAI Compatible API: Provides standard OpenAI-compatible API endpoints for seamless integration
-- Multi-Provider Support: Connect DeepSeek, GLM, Kimi, MiniMax, Qwen, Z.ai and more
+- OpenAI Compatible API: standard OpenAI-compatible endpoints for seamless integration
+- Multi-Provider Support: 73 aggregate channels (API-key, free-tier, local), 10 account channels and a custom provider type
+- Account Channels: browser / device-code login with account pools, daily credit claim, per-model credit weights and free-model badges
+- Online Model Catalogue: refresh a channel's model list online, switch models off, restore models the pack marked dead
 - 🆕 Context Management: Intelligent conversation context management with sliding window, token limit, and summary strategies
 - 🆕 Function Calling Support: Universal tool calling capability for all models via prompt engineering, compatible with Cherry Studio, Kilo Code, and other clients
 - 🆕 Model Mapping: Flexible model name mapping with wildcard support and preferred provider/account selection
 - 🆕 Custom Parameters: Support for custom HTTP headers to enable web search, thinking mode, and deep research features
 - Dashboard Monitoring: Real-time request traffic, token usage, and success rates
 - API Key Management: Generate and manage keys for your local proxy
-- Model Management: View and manage available models from all providers
 - Request Logs: Detailed request logging for debugging and analysis
 - Proxy Configuration: Flexible proxy settings and routing strategies
 - System Tray Integration: Quick access to status from menu bar
@@ -47,32 +52,30 @@
 
 ## 🤖 Supported Providers
 
-| Provider         | Auth Type     | OAuth | Models                                                                                                                                                                                                                                          |
-| ---------------- | ------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| DeepSeek         | User Token    | Yes   | deepseek-default, deepseek-expert, deepseek-vision                                                                                                                                                                                                              |
-| GLM | Refresh Token | Yes | GLM-5.3, GLM-5.3-Flash |
-| Kimi             | JWT Token     | Yes   | K3, K2.8, Instant                                                                                                                                                                                                                               |
-| MiniMax          | JWT Token     | Yes   | M3.1-Flash, M3                                                                                                                                                                                                                                    |
-| Mimo             | Cookie        | Yes   | MiMo-V2.5-Pro, MiMo-V2.5, MiMo-V2-Flash                                                                                                                                                                                                         |
-| Qwen (CN)        | SSO Ticket    | Yes   | Qwen3.6, Qwen3.7-Max, Qwen3.5-Flash, Qwen3-Max, Qwen3-Max-Thinking-Preview, Qwen3-Coder                                                                                                                                                         |
-| Qwen AI (Global) | JWT Token     | Yes   | Qwen3.7-Max, Qwen3.6-Plus, Qwen3.6-35B-A3B, Qwen3.6-27B, Qwen3-Coder                                                                                                                                                                           |
-| Z.ai             | JWT Token     | Yes   | Temporarily unavailable due to frontend captcha risk control                                                                                                                                                                                    |
-| OpenCode         | None          | No    | glm-5.3-flash-free, deepseek-v4.1-flash-free, big-pickle, mimo-v2.6-flash-free, nemotron-3-ultra-free, nemotron-3.5-lightning-free, nemotron-3.5-super-vl-free, beam-free, flint-40b-free |
+| Provider class | Auth Type | Count | Notes |
+| -------------- | --------- | ----- | ----- |
+| `opencode` (local runtime) | None | 1 | Runs a local agent runtime; the model list comes from the runtime, not an endpoint |
+| Aggregate catalogue | API key / none | 73 entries / 473 models | OpenAI-chat and Anthropic-messages wires; includes Kilo's key-less free pool |
+| Account channels | Browser / device-code login | 10 channels | Each channel keeps its own account pool, daily credit claim and model gating |
+| Custom provider | Configured per provider | — | Any OpenAI-compatible HTTP endpoint you define yourself |
 
-Provider adaptation notes and manual model-addition guides are in [docs/providers](docs/providers/README.md).
+The aggregate catalogue is browsable in the **Aggregate Channels** page, which lists each entry with its category (API key / free tier / local), wire protocol and model count. Saving an entry creates a provider record with namespaced model names (`provider/model`); entries you never save never appear in the provider list. Entries requiring Google ADC are listed but marked unsupported.
+
+The **Account Channels** page covers the ten login channels (`lobsterai`, `qoder`, `qodercn`, `trae`, `cline`, `loomy`, `raccoon`, `minimax`, `zcode`, `gemini`). Model names carry the upstream credit multiplier in one of three shapes (`· x4.0`, `· x0.2→x0.1`, `· 免费`), so you can see the cost of a model before picking it; free models are badged and a model the upstream no longer reports as healthy can be restored from the same panel.
+
+Provider adaptation notes are in [docs/providers](docs/providers/README.md); the `opencode` runtime guide is [docs/providers/opencode.md](docs/providers/opencode.md).
 
 ## 📥 Installation
 
 ### Download
 
-Download the latest release from [GitHub Releases](https://github.com/xiaoY233/Chat2API/releases):
+Download the latest release from [GitHub Releases](https://github.com/polite0803/ModelPort/releases):
 
-| Platform              | Download                                |
-| --------------------- | --------------------------------------- |
-| macOS (Apple Silicon) | `Chat2API-x.x.x-arm64.dmg`              |
-| macOS (Intel)         | `Chat2API-x.x.x-x64.dmg`                |
-| Windows               | `Chat2API-x.x.x-x64-setup.exe`          |
-| Linux                 | `Chat2API-x.x.x-x64.AppImage` or `.deb` |
+| Platform              | Download                                 |
+| --------------------- | ---------------------------------------- |
+| macOS (Apple Silicon) | `ModelPort-x.x.x-arm64.dmg`              |
+| Windows               | `ModelPort-x.x.x-x64-setup.exe`          |
+| Linux                 | `ModelPort-x.x.x-x64.AppImage` or `.deb` |
 
 ### Build from Source
 
@@ -84,14 +87,14 @@ Download the latest release from [GitHub Releases](https://github.com/xiaoY233/C
 
 ```bash
 # Clone the repository
-git clone https://github.com/xiaoY233/Chat2API.git
-cd Chat2API
+git clone https://github.com/polite0803/ModelPort.git
+cd ModelPort
 
 # Install dependencies
 npm install
 
 # Start development server
-npx electron-vite dev 2>&1
+npm run dev
 ```
 
 ### Build for Production
@@ -108,22 +111,21 @@ npm run build:all          # Build for all platforms
 
 ### Step 1: Launch the App
 
-After installation, launch Chat2API. You'll see the main dashboard.
+After installation, launch ModelPort. You'll see the main dashboard.
 
 ### Step 2: Add a Provider
 
-1. Navigate to **Providers** from the sidebar
-2. Click **Add Provider** button
-3. Select a built-in provider (e.g., DeepSeek)
-4. Enter your authentication credentials
+1. Navigate to **Aggregate Channels** from the sidebar
+2. Find a channel (e.g. `kilo` for the key-less free pool, or any API-key entry)
+3. Click **Configure**, paste the API key when the entry requires one, and optionally override the base URL or model list
+4. Save — the provider appears under **Providers** with models named `<provider>/<model>`
 
-For example, to get a DeepSeek token:
+Key-less entries such as Kilo need no credentials: saving them creates an empty local account, so
+they route immediately. Entries that use `{placeholders}` in their base URL (Azure, Vertex) must be
+overridden with your own endpoint before they can be saved.
 
-1. Visit [DeepSeek Chat](https://chat.deepseek.com/)
-2. Start any conversation
-3. Press `F12` to open Developer Tools
-4. Go to **Application** > **Local Storage**
-5. Find `userToken` and copy its value
+For a login channel, open **Account Channels**, pick a channel, sign in through the built-in browser
+flow, then enable the models you want to expose. The model list can be refreshed online at any time.
 
 ### Step 3: Configure Proxy
 
@@ -148,7 +150,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="deepseek-default",
+    model="kilo/kilo-auto/free",
     messages=[
         {"role": "user", "content": "Hello, who are you?"}
     ]
@@ -191,22 +193,27 @@ For security, you can enable API Key authentication:
 ## 🏗️ Architecture
 
 ```
-Chat2API/
+ModelPort/
 ├── src/
 │   ├── main/                    # Electron main process
-│   │   ├── index.ts            # App entry point
-│   │   ├── tray.ts             # System tray integration
-│   │   ├── proxy/              # Proxy server management
-│   │   ├── ipc/                # IPC handlers
-│   │   └── utils/              # Utilities
-│   ├── preload/                # Context bridge
-│   └── renderer/               # React frontend
-│       ├── components/         # UI components
-│       ├── pages/              # Page components
-│       ├── stores/             # Zustand state
-│       └── hooks/              # Custom hooks
-├── build/                      # Build resources
-└── scripts/                    # Build scripts
+│   │   ├── index.ts             # App entry point
+│   │   ├── proxy/               # Proxy server (Koa)
+│   │   ├── ipc/                 # IPC handlers
+│   │   ├── providers/           # Builtin / aggregate / account-channel configs
+│   │   ├── channelPack/         # Channel-pack host (worker + compat shims)
+│   │   ├── store/               # Persistent storage
+│   │   └── tray/                # System tray integration
+│   ├── preload/                 # Context bridge
+│   ├── renderer/                # React frontend
+│   │   ├── components/          # UI components
+│   │   ├── pages/               # Page components
+│   │   ├── stores/              # Zustand state
+│   │   └── i18n/                # Internationalization
+│   └── shared/                  # Types shared by main and renderer
+├── build/                       # Build resources
+├── resources/                   # Bundled runtime assets
+├── scripts/                     # Build scripts
+└── tests/                       # Node test-runner suite
 ```
 
 ## 🔧 Tech Stack
@@ -223,10 +230,12 @@ Chat2API/
 
 ## 📁 Data Storage
 
-Application data is stored in `~/.chat2api/` directory:
+Application data is stored in `~/.chat2api/` directory (kept unchanged on purpose so existing installs keep their accounts and keys):
 
-- `data.json` - configuration, providers, accounts, sessions and app logs (one electron-store file)
+- `data.json` - configuration, providers, accounts and app logs (one electron-store file)
+- `store.key` - this install's data key, sealed by the OS keystore
 - `request-logs/` - detailed request logs
+- `channel-pack/` - the channel pack's own state and encrypted channel credentials
 
 Account credentials are additionally encrypted with the OS keychain when it is available; if it is
 not, they are stored in `data.json` unencrypted.
@@ -238,12 +247,12 @@ not, they are stored in `data.json` unencrypted.
 Due to macOS security mechanisms, apps downloaded outside the App Store may trigger this warning. Run the following command to fix it:
 
 ```bash
-sudo xattr -rd com.apple.quarantine "/Applications/Chat2API.app"
+sudo xattr -rd com.apple.quarantine "/Applications/ModelPort.app"
 ```
 
 ### How to update?
 
-Check for updates in the **About** page, or download the latest version from [GitHub Releases](https://github.com/xiaoY233/Chat2API/releases).
+Check for updates in the **About** page, or download the latest version from [GitHub Releases](https://github.com/polite0803/ModelPort/releases).
 
 ## 🤝 Contributing
 
@@ -255,19 +264,13 @@ Check for updates in the **About** page, or download the latest version from [Gi
 
 ## 📄 License
 
-GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
+GNU General Public License v3.0. See [LICENSE](LICENSE).
 
-This means:
+## 🙏 Acknowledgements
 
-- ✅ Free to use, modify, and distribute
-- ✅ Derivative works must be open-sourced under the same license
-- ✅ Must preserve original copyright notices
-
-## 🙏 Acknowledgments
-
-- [Electron](https://www.electronjs.org/) - Cross-platform framework
+- [Electron](https://www.electronjs.org/) - cross-platform framework
 - [React](https://react.dev/) - UI framework
-- [TypeScript](https://www.typescriptlang.org/) - Type-safe JavaScript
+- [TypeScript](https://www.typescriptlang.org/) - typed JavaScript
 - [Tailwind CSS](https://tailwindcss.com/) - CSS framework
-- [Zustand](https://zustand-demo.pmnd.rs/) - State management
+- [Zustand](https://zustand-demo.pmnd.rs/) - state management
 - [Koa](https://koajs.com/) - HTTP server

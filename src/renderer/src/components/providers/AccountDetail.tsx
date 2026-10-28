@@ -31,8 +31,7 @@ import {
   Edit,
   Trash2,
   ArrowLeft,
-  TrendingUp,
-  Coins
+  TrendingUp
 } from 'lucide-react'
 import type { Account, AccountStatus, Provider } from '@/types/electron'
 import { cn } from '@/lib/utils'
@@ -57,13 +56,6 @@ export function AccountDetail({
   const { t, i18n } = useTranslation()
   const [isValidating, setIsValidating] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
-  const [credits, setCredits] = useState<{
-    totalCredits: number
-    usedCredits: number
-    remainingCredits: number
-    expiresAt?: number
-  } | null>(null)
-  const [isLoadingCredits, setIsLoadingCredits] = useState(false)
   const [trendData, setTrendData] = useState<{ date: string; total: number; info: number; warn: number; error: number }[]>([])
 
   useEffect(() => {
@@ -78,8 +70,6 @@ export function AccountDetail({
     }
     fetchTrendData()
   }, [account.id])
-
-  const isMiniMaxProvider = provider?.id === 'minimax'
 
   const statusConfig: Record<AccountStatus, { 
     labelKey: string
@@ -157,20 +147,6 @@ export function AccountDetail({
   const handleDelete = async () => {
     await onDelete()
     setShowDeleteDialog(false)
-  }
-
-  const handleGetCredits = async () => {
-    if (!isMiniMaxProvider) return
-    
-    setIsLoadingCredits(true)
-    try {
-      const result = await window.electronAPI.accounts.getCredits(account.id)
-      setCredits(result)
-    } catch (error) {
-      console.error('Failed to get credits:', error)
-    } finally {
-      setIsLoadingCredits(false)
-    }
   }
 
   const stats = [
@@ -361,50 +337,6 @@ export function AccountDetail({
           </CardContent>
         </Card>
       </div>
-
-      {isMiniMaxProvider && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Coins className="h-4 w-4" />
-              {t('minimax.creditsInfo')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between mb-4">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleGetCredits}
-                disabled={isLoadingCredits}
-              >
-                <RefreshCw className={cn('mr-2 h-4 w-4', isLoadingCredits && 'animate-spin')} />
-                {isLoadingCredits ? t('common.loading') : t('minimax.getCredits')}
-              </Button>
-            </div>
-            
-            {credits && (
-              <div className="space-y-4">
-                <div className="p-4 rounded-lg bg-[var(--bg-tertiary)] text-center">
-                  <p className="text-body text-[var(--text-muted)] mb-1">{t('minimax.remainingCredits')}</p>
-                  <p className="text-display font-bold text-success">{credits.remainingCredits.toLocaleString()}</p>
-                  {credits.expiresAt && (
-                    <p className="text-meta text-[var(--text-muted)] mt-2">
-                      {t('minimax.creditResetsAt')}: {formatDate(credits.expiresAt)}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-            
-            {!credits && !isLoadingCredits && (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                {t('minimax.getCredits')}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       <Card>
         <CardHeader>

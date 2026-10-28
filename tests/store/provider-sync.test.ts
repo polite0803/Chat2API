@@ -5,18 +5,17 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 import { syncBuiltinProvider } from '../../src/main/store/providerSync.ts'
-import kimiConfig from '../../src/main/providers/builtin/kimi.ts'
-import glmConfig from '../../src/main/providers/builtin/glm.ts'
+import opencodeConfig from '../../src/main/providers/builtin/opencode.ts'
 import type { Provider } from '../../src/main/store/types.ts'
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
 
 function stored(overrides: Partial<Provider>): Provider {
   return {
-    id: 'kimi',
-    name: 'Kimi',
+    id: 'opencode',
+    name: 'OpenCode',
     type: 'builtin',
-    authType: 'jwt',
+    authType: 'userToken',
     apiEndpoint: 'https://stale.example',
     headers: {},
     enabled: true,
@@ -30,33 +29,33 @@ function stored(overrides: Partial<Provider>): Provider {
 
 test('a record with a stale or missing type is repaired and gets the shipped fields', () => {
   for (const type of ['custom', undefined] as const) {
-    const fixed = syncBuiltinProvider(stored({ type } as Partial<Provider>), kimiConfig)
+    const fixed = syncBuiltinProvider(stored({ type } as Partial<Provider>), opencodeConfig)
     assert.equal(fixed.type, 'builtin')
-    assert.equal(fixed.apiEndpoint, kimiConfig.apiEndpoint)
-    assert.deepEqual(fixed.supportedModels, kimiConfig.supportedModels)
-    assert.equal(fixed.supportsModelFetch, true, `kimi declares modelsFetch (type=${type})`)
+    assert.equal(fixed.apiEndpoint, opencodeConfig.apiEndpoint)
+    assert.deepEqual(fixed.supportedModels, opencodeConfig.supportedModels)
+    assert.equal(fixed.supportsModelFetch, true, `opencode syncs through its local runtime (type=${type})`)
   }
 })
 
 test('user-owned fields survive the repair', () => {
-  const fixed = syncBuiltinProvider(stored({ name: 'My Kimi', enabled: false, createdAt: 7 }), kimiConfig)
-  assert.equal(fixed.name, 'My Kimi')
+  const fixed = syncBuiltinProvider(stored({ name: 'My OpenCode', enabled: false, createdAt: 7 }), opencodeConfig)
+  assert.equal(fixed.name, 'My OpenCode')
   assert.equal(fixed.enabled, false)
   assert.equal(fixed.createdAt, 7)
 })
 
 test('a provider without modelsFetch is marked unsupported rather than inheriting a stale flag', () => {
   const fixed = syncBuiltinProvider(
-    stored({ id: 'glm', supportedModels: ['GLM-9'], supportsModelFetch: true }),
-    glmConfig,
+    stored({ supportedModels: ['Stale'], supportsModelFetch: true }),
+    { ...opencodeConfig, runtimeModels: undefined, modelsFetch: undefined },
   )
   assert.equal(fixed.supportsModelFetch, false)
-  assert.deepEqual(fixed.supportedModels, glmConfig.supportedModels)
+  assert.deepEqual(fixed.supportedModels, opencodeConfig.supportedModels)
 })
 
 test('the flag tracks the shipped config on every startup', () => {
-  assert.equal(Boolean(kimiConfig.modelsFetch), true)
-  assert.equal(Boolean(glmConfig.modelsFetch), false)
+  assert.equal(Boolean(opencodeConfig.modelsFetch), false)
+  assert.equal(Boolean(opencodeConfig.runtimeModels), true)
 })
 
 test('the local-account helper never demands a finished initialization', () => {

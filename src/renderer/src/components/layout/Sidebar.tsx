@@ -11,6 +11,8 @@ import {
   Cpu,
   AlertTriangle,
   Zap,
+  Boxes,
+  KeyRound,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -34,6 +36,8 @@ interface NavItem {
 const navItems: NavItem[] = [
   { titleKey: 'nav.dashboard', href: '/', icon: LayoutDashboard },
   { titleKey: 'nav.providers', href: '/providers', icon: Server },
+  { titleKey: 'nav.aggregate', href: '/aggregate', icon: Boxes },
+  { titleKey: 'nav.channels', href: '/channels', icon: KeyRound },
   { titleKey: 'nav.proxy', href: '/proxy', icon: Settings2 },
   { titleKey: 'nav.models', href: '/models', icon: Cpu },
   { titleKey: 'nav.logs', href: '/logs', icon: FileText },
@@ -131,7 +135,7 @@ export function Sidebar() {
             <Zap className="h-3.5 w-3.5" />
           </div>
           {!sidebarCollapsed && (
-            <span className="sidebar-wordmark">Chat2API</span>
+            <span className="sidebar-wordmark">ModelPort</span>
           )}
         </div>
 

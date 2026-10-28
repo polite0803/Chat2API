@@ -685,7 +685,6 @@ export function Providers() {
 
         <AccountList
           accounts={providerAccounts}
-          providerId={selectedProvider.id}
           onAddAccount={() => setShowAddAccountDialog(true)}
           onEditAccount={async (account) => {
             const fullAccount = await window.electronAPI.accounts.getById(account.id, true)

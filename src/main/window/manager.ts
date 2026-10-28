@@ -37,7 +37,7 @@ export function createWindow(options: WindowOptions = {}): BrowserWindow {
     height = 800,
     minWidth = 800,
     minHeight = 600,
-    title = 'Chat2API',
+    title = 'ModelPort',
     show = false,
   } = options
 

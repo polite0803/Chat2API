@@ -24,24 +24,9 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Provider, ProviderStatus } from '@/types/electron'
-import deepseekIcon from '@/assets/providers/deepseek.svg'
-import glmIcon from '@/assets/providers/glm.svg'
-import kimiIcon from '@/assets/providers/kimi.svg'
-import minimaxIcon from '@/assets/providers/minimax.svg'
-import qwenIcon from '@/assets/providers/qwen.svg'
-import zaiIcon from '@/assets/providers/zai.svg'
 import opencodeIcon from '@/assets/providers/opencode.svg'
-import mimoIcon from '@/assets/providers/mimo.svg'
 
 const providerIcons: Record<string, string> = {
-  deepseek: deepseekIcon,
-  glm: glmIcon,
-  kimi: kimiIcon,
-  minimax: minimaxIcon,
-  mimo: mimoIcon,
-  qwen: qwenIcon,
-  'qwen-ai': qwenIcon,
-  zai: zaiIcon,
   opencode: opencodeIcon,
 }
 

@@ -66,18 +66,10 @@ test('P0 metadata exposes only approved clients and providers', () => {
   ])
 
   assert.deepEqual(P0_TOOL_PROVIDER_SUPPORT.map((provider) => provider.providerId), [
-    'deepseek',
-    'kimi',
-    'glm',
-    'qwen',
-    'mimo',
+    'opencode',
   ])
 
   assert.deepEqual(P0_TOOL_PROVIDER_SUPPORT.map((provider) => provider.label), [
-    'DEEPSEEK',
-    'KIMI',
-    'GLM',
-    'QWEN',
-    'MIMO',
+    'OPENCODE',
   ])
 })

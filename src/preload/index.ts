@@ -16,6 +16,21 @@ import type {
   RequestLogEntry,
   ModelsFetchFailure,
 } from '../shared/types'
+import type {
+  AggregateListResult,
+  AggregateOperationResult,
+  AggregateSaveInput,
+} from '../shared/aggregate'
+import type {
+  ChannelAutoCheckinResult,
+  ChannelCredits,
+  ChannelModelsResult,
+  ChannelModelUpdateResult,
+  ChannelOperationResult,
+  ChannelRefreshResult,
+  ChannelRpcResult,
+  ChannelView,
+} from '../shared/channels'
 
 const proxyAPI = {
   start: (port?: number): Promise<boolean> => 
@@ -171,15 +186,7 @@ const accountsAPI = {
   }> => 
     ipcRenderer.invoke(IpcChannels.ACCOUNTS_VALIDATE_TOKEN, providerId, credentials),
 
-  getCredits: (accountId: string): Promise<{
-    totalCredits: number
-    usedCredits: number
-    remainingCredits: number
-  } | null> =>
-    ipcRenderer.invoke(IpcChannels.ACCOUNTS_GET_CREDITS, accountId),
 
-  clearChats: (accountId: string): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke(IpcChannels.ACCOUNTS_CLEAR_CHATS, accountId),
 }
 
 type ProviderType = ProviderVendor
@@ -228,15 +235,6 @@ const oauthAPI = {
   
   getStatus: (): Promise<string> =>
     ipcRenderer.invoke(IpcChannels.OAUTH_GET_STATUS),
-  
-  startInAppLogin: (providerId: string, providerType: ProviderType, timeout?: number): Promise<OAuthResult> =>
-    ipcRenderer.invoke(IpcChannels.OAUTH_START_IN_APP_LOGIN, { providerId, providerType, timeout }),
-  
-  cancelInAppLogin: (): Promise<void> =>
-    ipcRenderer.invoke(IpcChannels.OAUTH_CANCEL_IN_APP_LOGIN),
-  
-  isInAppLoginOpen: (): Promise<boolean> =>
-    ipcRenderer.invoke(IpcChannels.OAUTH_IN_APP_LOGIN_STATUS),
   
   onCallback: (callback: (result: OAuthResult) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, result: OAuthResult) => callback(result)
@@ -616,11 +614,80 @@ const opencodeAPI = {
   }> => ipcRenderer.invoke(IpcChannels.OPENCODE_PROBE_MODELS),
 }
 
+const aggregateAPI = {
+  list: (): Promise<AggregateListResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_LIST),
+
+  save: (input: AggregateSaveInput): Promise<{
+    success: boolean
+    provider?: Provider
+    reason?: string
+  }> => ipcRenderer.invoke(IpcChannels.AGGREGATE_SAVE, input),
+
+  setEnabled: (id: string, enabled: boolean): Promise<{
+    success: boolean
+    provider?: Provider
+    reason?: string
+  }> => ipcRenderer.invoke(IpcChannels.AGGREGATE_SET_ENABLED, id, enabled),
+
+  remove: (id: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_REMOVE, id),
+
+  test: (id: string): Promise<AggregateOperationResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_TEST, id),
+
+  discoverModels: (id: string): Promise<AggregateOperationResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_DISCOVER_MODELS, id),
+}
+
+const channelsAPI = {
+  list: (): Promise<{ success: boolean; reason?: string; channels: ChannelView[] }> =>
+    ipcRenderer.invoke(IpcChannels.CHANNELS_LIST),
+
+  rpc: (method: string, payload?: unknown): Promise<ChannelRpcResult> =>
+    ipcRenderer.invoke(IpcChannels.CHANNELS_RPC, method, payload),
+
+  credits: (id: string): Promise<ChannelCredits> =>
+    ipcRenderer.invoke(IpcChannels.CHANNELS_CREDITS, id),
+
+  setEnabled: (id: string, enabled: boolean): Promise<ChannelOperationResult> =>
+    ipcRenderer.invoke(IpcChannels.CHANNELS_SET_ENABLED, id, enabled),
+
+  remove: (id: string): Promise<ChannelOperationResult> =>
+    ipcRenderer.invoke(IpcChannels.CHANNELS_REMOVE, id),
+
+  // 省略参数 = 读；给出布尔 = 改写「每日自动领取签到积分」开关。
+  autoCheckin: (enabled?: boolean): Promise<ChannelAutoCheckinResult> =>
+    ipcRenderer.invoke(IpcChannels.CHANNELS_AUTO_CHECKIN, enabled),
+
+  // 在线模型目录（含积分权重与免费标记），以及强制重拉这一个渠道。
+  models: (id: string): Promise<ChannelModelsResult> =>
+    ipcRenderer.invoke(IpcChannels.CHANNELS_MODELS, id),
+
+  refreshModels: (id: string): Promise<ChannelRefreshResult> =>
+    ipcRenderer.invoke(IpcChannels.CHANNELS_REFRESH_MODELS, id),
+
+  // 模型开关与失效恢复：返回结果里带最新目录，界面不必再单独拉一次。
+  setModelDisabled: (id: string, modelId: string, disabled: boolean): Promise<ChannelModelUpdateResult> =>
+    ipcRenderer.invoke(IpcChannels.CHANNELS_SET_MODEL_DISABLED, id, modelId, disabled),
+
+  clearDeadModels: (id: string, modelId?: string): Promise<ChannelModelUpdateResult> =>
+    ipcRenderer.invoke(IpcChannels.CHANNELS_CLEAR_DEAD_MODELS, id, modelId),
+
+  onChanged: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on(IpcChannels.CHANNELS_CHANGED, handler)
+    return () => ipcRenderer.removeListener(IpcChannels.CHANNELS_CHANGED, handler)
+  },
+}
+
 const electronAPI = {
   proxy: proxyAPI,
   store: storeAPI,
   providers: providersAPI,
   opencode: opencodeAPI,
+  aggregate: aggregateAPI,
+  channels: channelsAPI,
   accounts: accountsAPI,
   oauth: oauthAPI,
   logs: logsAPI,

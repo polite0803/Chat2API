@@ -6,6 +6,9 @@ import { ProviderManager } from '../store/providers'
 import { AccountManager } from '../store/accounts'
 import { ProviderChecker } from '../providers/checker'
 import { CustomProviderManager } from '../providers/custom'
+import { aggregateProviderManager } from '../providers/aggregate'
+import { accountChannelManager } from '../providers/accountChannels/manager'
+import type { AggregateSaveInput } from '../../shared/aggregate'
 import { getBuiltinProviders, getBuiltinProvider } from '../providers/builtin'
 import { oauthManager } from '../oauth/manager'
 import { fetchProviderModels } from '../providers/modelCatalog'
@@ -19,14 +22,6 @@ import { generateManagementSecret } from '../proxy/middleware/managementAuth'
 import { runToolCallingSmoke } from '../proxy/toolCalling/diagnostics'
 import { UpdaterManager } from '../updater'
 import { setTitleBarTheme } from '../window/manager'
-import { DeepSeekAdapter } from '../proxy/adapters/deepseek'
-import { GLMAdapter } from '../proxy/adapters/glm'
-import { KimiAdapter } from '../proxy/adapters/kimi'
-import { MimoAdapter } from '../proxy/adapters/mimo'
-import { MiniMaxAdapter } from '../proxy/adapters/minimax'
-import { QwenAdapter } from '../proxy/adapters/qwen'
-import { QwenAiAdapter } from '../proxy/adapters/qwen-ai'
-import { ZaiAdapter } from '../proxy/adapters/zai'
 import type { Provider, Account, ProxyStatus, ProviderCheckResult, OAuthResult, AuthType, CredentialField, LogLevel, LogEntry, ProviderVendor } from '../../shared/types'
 import type { SessionConfig, SessionRecord, ManagementApiConfig, AppConfig } from '../store/types'
 import type { ProviderType } from '../oauth/types'
@@ -34,50 +29,34 @@ import type { ModelsFetchFailure } from '../store/types'
 
 const updaterManager = UpdaterManager.getInstance()
 
-const clearChatsHandlers: Record<string, (provider: Provider, account: Account) => Promise<boolean>> = {
-  kimi: async (provider, account) => new KimiAdapter(provider, account).deleteAllChats(),
-  qwen: async (provider, account) => new QwenAdapter(provider, account).deleteAllChats(),
-  'qwen-ai': async (provider, account) => new QwenAiAdapter(provider, account).deleteAllChats(),
-  minimax: async (provider, account) => new MiniMaxAdapter(provider, account).deleteAllChats(),
-  zai: async (provider, account) => new ZaiAdapter(provider, account).deleteAllChats(),
-  deepseek: async (provider, account) => new DeepSeekAdapter(provider, account).deleteAllChats(),
-  glm: async (provider, account) => new GLMAdapter(provider, account).deleteAllChats(),
-  mimo: async (provider, account) => new MimoAdapter(provider, account).deleteAllChats(),
-}
-
 export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Promise<void> {
+  let storageReady = true
   try {
     await storeManager.initialize()
+    storageReady = !storeManager.hasInitializationError()
   } catch (error) {
+    // 存储初始化失败也要继续注册全部 IPC：否则渲染层每个调用都会收到
+    // "No handler registered" 协议错误，界面变成一片死错误，用户看不到真正的原因。
+    storageReady = false
     console.error('[IPC] Failed to initialize storage:', error)
-    
-    // Notify renderer about the initialization error
+
     mainWindow?.webContents.send(IpcChannels.STORE_INIT_ERROR, {
       message: error instanceof Error ? error.message : 'Failed to initialize storage',
     })
-    
-    // Still set mainWindow for potential recovery
-    storeManager.setMainWindow(mainWindow)
-    
-    if (mainWindow) {
-      oauthManager.setMainWindow(mainWindow)
-    }
-    
-    // Register minimal IPC handlers for error recovery
-    registerErrorRecoveryHandlers(mainWindow)
-    return
   }
-  
+
   storeManager.setMainWindow(mainWindow)
-  
+
   if (mainWindow) {
     oauthManager.setMainWindow(mainWindow)
     updaterManager.initialize(mainWindow)
   }
 
+  registerStoreRetryHandler(mainWindow)
+
   // Check if auto-start proxy is needed
-  const config = storeManager.getConfig()
-  if (config.autoStartProxy) {
+  const config = storageReady ? storeManager.getConfig() : null
+  if (config?.autoStartProxy) {
     console.log('[App] Auto-starting proxy service...')
     const proxyPort = config.proxyPort
     const proxyHost = config.proxyHost || '127.0.0.1'
@@ -446,6 +425,167 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
     }
   })
 
+  ipcMain.handle(IpcChannels.AGGREGATE_LIST, async () => {
+    return aggregateProviderManager.list()
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_SAVE, async (_, input: AggregateSaveInput) => {
+    try {
+      return { success: true, provider: aggregateProviderManager.save(input) }
+    } catch (error) {
+      return { success: false, reason: error instanceof Error ? error.message : 'save_failed' }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_SET_ENABLED, async (_, id: string, enabled: boolean) => {
+    try {
+      return { success: true, provider: aggregateProviderManager.setEnabled(id, enabled) }
+    } catch (error) {
+      return { success: false, reason: error instanceof Error ? error.message : 'not_configured' }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_REMOVE, async (_, id: string) => {
+    aggregateProviderManager.remove(id)
+    return { success: true }
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_TEST, async (_, id: string) => {
+    return aggregateProviderManager.test(id)
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_DISCOVER_MODELS, async (_, id: string) => {
+    return aggregateProviderManager.discoverModels(id)
+  })
+
+  ipcMain.handle(IpcChannels.CHANNELS_LIST, async () => {
+    try {
+      return { success: true, channels: await accountChannelManager.list() }
+    } catch (error) {
+      // 渠道 Worker 未构建/启动失败是可预期的部署问题，必须让 UI 说出原因，
+      // 而不是把整页显示成空白。
+      return {
+        success: false,
+        reason: error instanceof Error ? error.message : 'channels_unavailable',
+        channels: [],
+      }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.CHANNELS_RPC, async (_, method: string, payload: unknown) => {
+    try {
+      return await accountChannelManager.rpc(method, payload)
+    } catch (error) {
+      return {
+        ok: false,
+        error: { code: 'host_error', message: error instanceof Error ? error.message : '渠道调用失败' },
+      }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.CHANNELS_CREDITS, async (_, id: string) => {
+    try {
+      return await accountChannelManager.credits(id)
+    } catch (error) {
+      return {
+        reported: 0,
+        accounts: [],
+        error: error instanceof Error ? error.message : '积分查询失败',
+      }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.CHANNELS_SET_ENABLED, async (_, id: string, enabled: boolean) => {
+    return accountChannelManager.setEnabled(id, enabled)
+  })
+
+  ipcMain.handle(IpcChannels.CHANNELS_REMOVE, async (_, id: string) => {
+    try {
+      return await accountChannelManager.remove(id)
+    } catch (error) {
+      return { success: false, reason: error instanceof Error ? error.message : 'remove_failed' }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.CHANNELS_AUTO_CHECKIN, async (_, enabled?: unknown) => {
+    try {
+      // 不传参 = 读当前状态，传布尔 = 改写开关（与渠道包 `usage.autoCheckin` 同口径）。
+      return typeof enabled === 'boolean'
+        ? await accountChannelManager.setAutoCheckin(enabled)
+        : await accountChannelManager.autoCheckin()
+    } catch (error) {
+      return {
+        success: false,
+        reason: error instanceof Error ? error.message : 'auto_checkin_failed',
+      }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.CHANNELS_MODELS, async (_, id: string) => {
+    try {
+      return await accountChannelManager.modelsFor(id)
+    } catch (error) {
+      return {
+        success: false,
+        models: [],
+        reason: error instanceof Error ? error.message : 'models_unavailable',
+      }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.CHANNELS_REFRESH_MODELS, async (_, id: string) => {
+    try {
+      return await accountChannelManager.refreshModels(id)
+    } catch (error) {
+      return {
+        success: false,
+        reason: error instanceof Error ? error.message : 'refresh_failed',
+      }
+    }
+  })
+
+  ipcMain.handle(
+    IpcChannels.CHANNELS_SET_MODEL_DISABLED,
+    async (_, id: string, modelId: string, disabled: boolean) => {
+      try {
+        return await accountChannelManager.setModelDisabled(id, modelId, disabled)
+      } catch (error) {
+        return {
+          success: false,
+          models: [],
+          reason: error instanceof Error ? error.message : 'model_update_failed',
+        }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IpcChannels.CHANNELS_CLEAR_DEAD_MODELS,
+    async (_, id: string, modelId?: string) => {
+      try {
+        return await accountChannelManager.clearDeadModels(id, modelId)
+      } catch (error) {
+        return {
+          success: false,
+          models: [],
+          reason: error instanceof Error ? error.message : 'model_update_failed',
+        }
+      }
+    },
+  )
+
+  // 账号/模型在 Worker 内变化后，把「已变化」广播给所有窗口，让卡片自行刷新。
+  accountChannelManager.setChangeListener(() => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(IpcChannels.CHANNELS_CHANGED)
+    }
+  })
+
+  // 后台起 Worker：启动失败不能挡住窗口加载，具体原因由卡片页显示。
+  void accountChannelManager.initialize().catch(error => {
+    console.error('[ChannelPack] 渠道运行时启动失败：', error)
+  })
+
   ipcMain.handle(IpcChannels.ACCOUNTS_GET_ALL, async (_, includeCredentials?: boolean): Promise<Account[]> => {
     return AccountManager.getAll(includeCredentials)
   })
@@ -522,62 +662,6 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
     return ProviderChecker.checkAccountToken(provider, tempAccount)
   })
 
-  ipcMain.handle(IpcChannels.ACCOUNTS_GET_CREDITS, async (_, accountId: string): Promise<{
-    totalCredits: number
-    usedCredits: number
-    remainingCredits: number
-  } | null> => {
-    const account = AccountManager.getById(accountId, true)
-    if (!account) {
-      return null
-    }
-    
-    const provider = ProviderManager.getById(account.providerId)
-    if (!provider) {
-      return null
-    }
-
-    if (provider.id !== 'minimax') {
-      return null
-    }
-
-    try {
-      const adapter = new MiniMaxAdapter(provider, account)
-      return await adapter.getCredits()
-    } catch (error) {
-      console.error('[IPC] Failed to get credits:', error)
-      return null
-    }
-  })
-
-  ipcMain.handle(IpcChannels.ACCOUNTS_CLEAR_CHATS, async (_, accountId: string): Promise<{ success: boolean; error?: string }> => {
-    try {
-      const account = AccountManager.getById(accountId, true)
-      if (!account) {
-        return { success: false, error: 'Account not found' }
-      }
-      
-      const provider = ProviderManager.getById(account.providerId)
-      if (!provider) {
-        return { success: false, error: 'Provider not found' }
-      }
-
-      const clearChats = clearChatsHandlers[provider.id]
-      if (!clearChats) {
-        return { success: false, error: 'This feature is not available for this provider' }
-      }
-
-      const success = await clearChats(provider, account)
-      return { success }
-    } catch (error) {
-      console.error('[IPC] Failed to clear chats:', error)
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Failed to clear chats' 
-      }
-    }
-  })
-
   ipcMain.handle(IpcChannels.OAUTH_START_LOGIN, async (_, providerId: string, providerType: ProviderVendor): Promise<OAuthResult> => {
     console.log('Starting OAuth login:', providerId, providerType)
     return await oauthManager.startLogin({
@@ -591,24 +675,8 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
     await oauthManager.cancelLogin()
   })
 
-  ipcMain.handle(IpcChannels.OAUTH_LOGIN_WITH_TOKEN, async (_, data: { providerId: string, providerType: ProviderVendor, token: string, realUserID?: string, mimoUserId?: string, mimoPhToken?: string }): Promise<OAuthResult> => {
-    return await oauthManager.loginWithToken(data.providerId, data.providerType as ProviderType, data.token, data.realUserID, data.mimoUserId, data.mimoPhToken)
-  })
-
-  ipcMain.handle(IpcChannels.OAUTH_START_IN_APP_LOGIN, async (_, data: { providerId: string, providerType: ProviderVendor, timeout?: number }): Promise<OAuthResult> => {
-    console.log('Starting in-app OAuth login:', data.providerId, data.providerType)
-    const config = storeManager.getConfig()
-    const proxyMode = (config as any).oauthProxyMode || 'system'
-    return await oauthManager.startInAppLogin(data.providerId, data.providerType as ProviderType, data.timeout, proxyMode)
-  })
-
-  ipcMain.handle(IpcChannels.OAUTH_CANCEL_IN_APP_LOGIN, async (): Promise<void> => {
-    console.log('Cancel in-app OAuth login')
-    oauthManager.cancelInAppLogin()
-  })
-
-  ipcMain.handle(IpcChannels.OAUTH_IN_APP_LOGIN_STATUS, async (): Promise<boolean> => {
-    return oauthManager.isInAppLoginOpen()
+  ipcMain.handle(IpcChannels.OAUTH_LOGIN_WITH_TOKEN, async (_, data: { providerId: string, providerType: ProviderVendor, token: string }): Promise<OAuthResult> => {
+    return await oauthManager.loginWithToken(data.providerId, data.providerType as ProviderType, data.token)
   })
 
   ipcMain.handle(IpcChannels.OAUTH_VALIDATE_TOKEN, async (_, data: { providerId: string, providerType: ProviderVendor, credentials: Record<string, string> }) => {
@@ -909,7 +977,12 @@ export function getProxyStatus(): ProxyStatus {
   }
 }
 
-function registerErrorRecoveryHandlers(mainWindow: BrowserWindow | null): void {
+/**
+ * 存储初始化失败时唯一的补救入口：重新尝试解密并打开 store。
+ * 它与正常路径的 `app:getVersion` / `app:close` 不重复注册 —— 那两个 handler
+ * 现在无论存储是否可用都会由主流程注册，二次注册会让 ipcMain.handle 直接抛错。
+ */
+function registerStoreRetryHandler(mainWindow: BrowserWindow | null): void {
   ipcMain.handle(IpcChannels.STORE_RETRY_INIT, async (): Promise<{ success: boolean; error?: string }> => {
     try {
       await storeManager.initialize()
@@ -927,14 +1000,5 @@ function registerErrorRecoveryHandlers(mainWindow: BrowserWindow | null): void {
         error: error instanceof Error ? error.message : 'Failed to initialize storage' 
       }
     }
-  })
-
-  ipcMain.handle(IpcChannels.APP_GET_VERSION, async (): Promise<string> => {
-    return app.getVersion()
-  })
-
-  ipcMain.handle(IpcChannels.APP_CLOSE, async (): Promise<void> => {
-    app.isQuitting = true
-    mainWindow?.close()
   })
 }

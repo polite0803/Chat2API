@@ -14,16 +14,10 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Check, Plus, ArrowRight, Loader2, ExternalLink, AlertCircle, CheckCircle2, ArrowLeft, Eye, EyeOff, Copy } from 'lucide-react'
-import type { BuiltinProviderConfig, ProviderVendor } from '@/types/electron'
+import { Check, Plus, ArrowRight, Loader2, AlertCircle, CheckCircle2, ArrowLeft, Eye, EyeOff, Copy } from 'lucide-react'
+import type { BuiltinProviderConfig } from '@/types/electron'
 import { cn } from '@/lib/utils'
-import deepseekIcon from '@/assets/providers/deepseek.svg'
-import glmIcon from '@/assets/providers/glm.svg'
-import kimiIcon from '@/assets/providers/kimi.svg'
-import mimoIcon from '@/assets/providers/mimo.svg'
-import minimaxIcon from '@/assets/providers/minimax.svg'
-import qwenIcon from '@/assets/providers/qwen.svg'
-import zaiIcon from '@/assets/providers/zai.svg'
+import opencodeIcon from '@/assets/providers/opencode.svg'
 
 interface AddProviderDialogProps {
   open: boolean
@@ -44,95 +38,7 @@ interface AddProviderDialogProps {
 }
 
 const providerIcons: Record<string, string> = {
-  deepseek: deepseekIcon,
-  glm: glmIcon,
-  kimi: kimiIcon,
-  mimo: mimoIcon,
-  minimax: minimaxIcon,
-  qwen: qwenIcon,
-  'qwen-ai': qwenIcon,
-  zai: zaiIcon,
-}
-
-function mapOAuthCredentials(providerId: string | undefined, credentials: Record<string, string>): Record<string, string> {
-  console.log('[mapOAuthCredentials] Input providerId:', providerId, 'credentials:', JSON.stringify(credentials, null, 2))
-  
-  if (!providerId) {
-    console.log('[mapOAuthCredentials] No providerId, returning as-is')
-    return credentials
-  }
-
-  const credentialKeyMap: Record<string, string> = {
-    'glm': 'chatglm_refresh_token',
-    'deepseek': 'userToken',
-    'qwen': 'tongyi_sso_ticket',
-    'qwen-ai': 'tongyi_sso_ticket',
-    'zai': 'tongyi_sso_ticket',
-  }
-
-  const providerFieldNames: Record<string, string> = {
-    'glm': 'refresh_token',
-    'deepseek': 'token',
-    'qwen': 'ticket',
-    'qwen-ai': 'ticket',
-    'zai': 'ticket',
-  }
-
-  const oauthKey = credentialKeyMap[providerId]
-  if (oauthKey && credentials[oauthKey]) {
-    const fieldName = providerFieldNames[providerId]
-    if (fieldName) {
-      let tokenValue = credentials[oauthKey]
-      if (providerId === 'deepseek' && tokenValue && tokenValue.startsWith('{') && tokenValue.endsWith('}')) {
-        try {
-          const parsed = JSON.parse(tokenValue)
-          if (parsed.value) {
-            tokenValue = parsed.value
-          }
-        } catch (e) {
-          console.error('[mapOAuthCredentials] Error parsing JSON token:', e)
-        }
-      }
-      console.log('[mapOAuthCredentials] Mapped', oauthKey, 'to', fieldName)
-      return { [fieldName]: tokenValue }
-    }
-  }
-
-
-  if (providerId === 'mimo') {
-    console.log('[mapOAuthCredentials] Processing Mimo credentials')
-    const result: Record<string, string> = {}
-    
-    if (credentials['serviceToken']) {
-      result['service_token'] = credentials['serviceToken']
-      console.log('[mapOAuthCredentials] Mapped serviceToken -> service_token')
-    } else if (credentials['service_token']) {
-      result['service_token'] = credentials['service_token']
-      console.log('[mapOAuthCredentials] Using existing service_token')
-    }
-    
-    if (credentials['userId']) {
-      result['user_id'] = credentials['userId']
-      console.log('[mapOAuthCredentials] Mapped userId -> user_id')
-    } else if (credentials['user_id']) {
-      result['user_id'] = credentials['user_id']
-      console.log('[mapOAuthCredentials] Using existing user_id')
-    }
-    
-    if (credentials['xiaomichatbot_ph']) {
-      result['ph_token'] = credentials['xiaomichatbot_ph']
-      console.log('[mapOAuthCredentials] Mapped xiaomichatbot_ph -> ph_token')
-    } else if (credentials['ph_token']) {
-      result['ph_token'] = credentials['ph_token']
-      console.log('[mapOAuthCredentials] Using existing ph_token')
-    }
-    
-    console.log('[mapOAuthCredentials] Mimo result:', JSON.stringify(result, null, 2))
-    return result
-  }
-
-  console.log('[mapOAuthCredentials] No special mapping needed, returning as-is')
-  return credentials
+  opencode: opencodeIcon,
 }
 
 export function AddProviderDialog({
@@ -148,11 +54,9 @@ export function AddProviderDialog({
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set())
-  const [activeTab, setActiveTab] = useState<string>('manual')
   const [credentials, setCredentials] = useState<Record<string, string>>({})
   const [isValidating, setIsValidating] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isOAuthLoading, setIsOAuthLoading] = useState(false)
   const [validationResult, setValidationResult] = useState<{
     valid?: boolean
     error?: string
@@ -163,7 +67,6 @@ export function AddProviderDialog({
       used?: number
     }
   }>({})
-  const [oauthStatus, setOAuthStatus] = useState<string>('')
   const [visibleFields, setVisibleFields] = useState<Record<string, boolean>>({})
   const [copiedFields, setCopiedFields] = useState<Record<string, boolean>>({})
 
@@ -206,8 +109,6 @@ export function AddProviderDialog({
     ? providers.find((p) => p.id === selectedProvider) 
     : null
 
-  const supportsOAuth = selectedProviderData && ['deepseek', 'glm', 'kimi', 'mimo', 'minimax', 'qwen', 'qwen-ai', 'zai'].includes(selectedProviderData.id)
-
   const toggleModelExpansion = (providerId: string) => {
     setExpandedModels(prev => {
       const newSet = new Set(prev)
@@ -227,9 +128,6 @@ export function AddProviderDialog({
       setSearchQuery('')
       setCredentials({})
       setValidationResult({})
-      setActiveTab('manual')
-      setIsOAuthLoading(false)
-      setOAuthStatus('')
       setVisibleFields({})
       setCopiedFields({})
     }
@@ -309,72 +207,6 @@ export function AddProviderDialog({
     }
   }
 
-  const handleOpenOAuthBrowser = async () => {
-    if (!selectedProviderData) return
-    
-    setIsOAuthLoading(true)
-    setOAuthStatus(t('providers.openingLoginWindow'))
-    
-    try {
-      console.log('[AddProviderDialog] Starting OAuth login for:', selectedProviderData.id)
-      
-      const result = await window.electronAPI?.oauth.startInAppLogin(
-        selectedProviderData.id,
-        selectedProviderData.id as ProviderVendor
-      )
-      
-      console.log('[AddProviderDialog] OAuth result:', JSON.stringify(result, null, 2))
-      
-      if (result?.success && result.credentials) {
-        console.log('[AddProviderDialog] OAuth success, credentials:', JSON.stringify(result.credentials, null, 2))
-        
-        const mappedCredentials = mapOAuthCredentials(selectedProviderData?.id, result.credentials)
-        console.log('[AddProviderDialog] Mapped credentials:', JSON.stringify(mappedCredentials, null, 2))
-        
-        const hasAllRequiredFields = selectedProviderData.credentialFields
-          .filter(f => f.required)
-          .every(f => mappedCredentials[f.name])
-        
-        console.log('[AddProviderDialog] Has all required fields:', hasAllRequiredFields)
-        console.log('[AddProviderDialog] Required fields:', selectedProviderData.credentialFields.filter(f => f.required).map(f => f.name))
-        console.log('[AddProviderDialog] Mapped credentials keys:', Object.keys(mappedCredentials))
-        
-        if (!hasAllRequiredFields) {
-          console.error('[AddProviderDialog] Missing required fields!')
-          const missing = selectedProviderData.credentialFields
-            .filter(f => f.required && !mappedCredentials[f.name])
-            .map(f => f.name)
-          console.error('[AddProviderDialog] Missing:', missing)
-        }
-        
-        setCredentials(mappedCredentials)
-        setOAuthStatus(t('providers.loginSuccess'))
-        
-        setValidationResult({
-          valid: true,
-          userInfo: result.accountInfo
-        })
-      } else {
-        const errorMsg = result?.error || ''
-        console.error('[AddProviderDialog] OAuth failed:', errorMsg)
-        const translatedError = errorMsg === 'Login window was closed' 
-          ? t('providers.loginWindowClosed')
-          : errorMsg === 'A login window is already open'
-            ? t('providers.loginWindowAlreadyOpen')
-            : errorMsg.includes('Guest account') 
-              ? t('providers.guestAccountNotAllowed')
-              : errorMsg || t('providers.loginFailed')
-        setOAuthStatus(translatedError)
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : t('providers.loginFailed')
-      console.error('[AddProviderDialog] OAuth error:', errorMessage)
-      setOAuthStatus(errorMessage)
-    } finally {
-      setIsOAuthLoading(false)
-    }
-  }
-
   const handleCreateCustom = () => {
     onCreateCustom()
     setSelectedProvider(null)
@@ -391,8 +223,6 @@ export function AddProviderDialog({
     setStep(1)
     setCredentials({})
     setValidationResult({})
-    setActiveTab('manual')
-    setOAuthStatus('')
   }
 
   const renderCredentialFields = () => {
@@ -406,95 +236,11 @@ export function AddProviderDialog({
           <p className="text-sm text-muted-foreground">{t('providers.noCredentialsRequired')}</p>
         )}
         {credentialFields.map((field) => {
-          const getFieldTranslation = () => {
-            const translations: Record<string, Record<string, { label: string; placeholder: string; helpText: string }>> = {
-              deepseek: {
-                token: {
-                  label: t('deepseek.userToken'),
-                  placeholder: t('deepseek.userTokenPlaceholder'),
-                  helpText: t('deepseek.userTokenHelp'),
-                },
-              },
-              glm: {
-                refresh_token: {
-                  label: t('glm.refreshToken'),
-                  placeholder: t('glm.refreshTokenPlaceholder'),
-                  helpText: t('glm.refreshTokenHelp'),
-                },
-              },
-              kimi: {
-                token: {
-                  label: t('kimi.accessToken'),
-                  placeholder: t('kimi.accessTokenPlaceholder'),
-                  helpText: t('kimi.accessTokenHelp'),
-                },
-              },
-              minimax: {
-                token: {
-                  label: t('minimax.token'),
-                  placeholder: t('minimax.tokenPlaceholder'),
-                  helpText: t('minimax.tokenHelp'),
-                },
-                realUserID: {
-                  label: t('minimax.realUserID'),
-                  placeholder: t('minimax.realUserIDPlaceholder'),
-                  helpText: t('minimax.realUserIDHelp'),
-                },
-              },
-              qwen: {
-                ticket: {
-                  label: t('qwen.ssoTicket'),
-                  placeholder: t('qwen.ssoTicketPlaceholder'),
-                  helpText: t('qwen.ssoTicketHelp'),
-                },
-              },
-              'qwen-ai': {
-                token: {
-                  label: t('qwen-ai.token'),
-                  placeholder: t('qwen-ai.tokenPlaceholder'),
-                  helpText: t('qwen-ai.tokenHelp'),
-                },
-                cookies: {
-                  label: t('qwen-ai.cookies'),
-                  placeholder: t('qwen-ai.cookiesPlaceholder'),
-                  helpText: t('qwen-ai.cookiesHelp'),
-                },
-              },
-              zai: {
-                token: {
-                  label: t('zai.token'),
-                  placeholder: t('zai.tokenPlaceholder'),
-                  helpText: t('zai.tokenHelp'),
-                },
-              },
-              mimo: {
-                service_token: {
-                  label: t('mimo.serviceToken'),
-                  placeholder: t('mimo.serviceTokenPlaceholder'),
-                  helpText: t('mimo.serviceTokenHelp'),
-                },
-                user_id: {
-                  label: t('mimo.userId'),
-                  placeholder: t('mimo.userIdPlaceholder'),
-                  helpText: t('mimo.userIdHelp'),
-                },
-                ph_token: {
-                  label: t('mimo.phToken'),
-                  placeholder: t('mimo.phTokenPlaceholder'),
-                  helpText: t('mimo.phTokenHelp'),
-                },
-              },
-            }
-
-            const providerTranslations = translations[selectedProviderData.id]
-            if (providerTranslations && providerTranslations[field.name]) {
-              return providerTranslations[field.name]
-            }
-
-            return { label: field.label, placeholder: field.placeholder, helpText: field.helpText }
+          const translated = {
+            label: field.label,
+            placeholder: field.placeholder,
+            helpText: field.helpText,
           }
-
-          const translated = getFieldTranslation()
           const isPasswordField = field.type === 'password'
           const isVisible = visibleFields[field.name]
           const isCopied = copiedFields[field.name]
@@ -744,55 +490,8 @@ export function AddProviderDialog({
 
       <div className="border-t pt-4">
         <h4 className="text-sm font-medium mb-3">{t('providers.credentials')}</h4>
-        
-        {supportsOAuth ? (
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="manual">{t('providers.manualInput')}</TabsTrigger>
-              <TabsTrigger value="oauth">{t('providers.oauthLogin')}</TabsTrigger>
-            </TabsList>
 
-            <TabsContent value="manual" className="mt-4">
-              {renderCredentialFields()}
-            </TabsContent>
-
-            <TabsContent value="oauth" className="mt-4">
-              <div className="flex flex-col items-center justify-center py-6 space-y-4">
-                <div className="text-center">
-                  <p className="text-sm text-muted-foreground mb-4">
-                    {t('providers.clickToOpenOAuth')}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {t('providers.oauthAutoCapture')}
-                  </p>
-                </div>
-                <Button 
-                  onClick={handleOpenOAuthBrowser}
-                  disabled={isOAuthLoading}
-                >
-                  {isOAuthLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      {oauthStatus || t('providers.loggingIn')}
-                    </>
-                  ) : (
-                    <>
-                      <ExternalLink className="mr-2 h-4 w-4" />
-                      {t('providers.openOAuthLogin')}
-                    </>
-                  )}
-                </Button>
-                {oauthStatus && !isOAuthLoading && (
-                  <p className={`text-sm ${validationResult.valid ? 'text-success' : 'text-error'}`}>
-                    {oauthStatus}
-                  </p>
-                )}
-              </div>
-            </TabsContent>
-          </Tabs>
-        ) : (
-          renderCredentialFields()
-        )}
+        {renderCredentialFields()}
 
         {validationResult.error && (
           <div className="flex items-center gap-2 text-sm text-error bg-error-soft p-3 rounded-lg mt-4">

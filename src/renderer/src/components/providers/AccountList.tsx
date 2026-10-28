@@ -26,23 +26,13 @@ import {
   RefreshCw,
   AlertCircle,
   Activity,
-  Plus,
-  Trash
+  Plus
 } from 'lucide-react'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import type { Account, AccountStatus } from '@/types/electron'
 import { cn } from '@/lib/utils'
 
 interface AccountListProps {
   accounts: Account[]
-  providerId: string
   onAddAccount: () => void
   onEditAccount: (account: Account) => void
   onDeleteAccount: (id: string) => void
@@ -52,7 +42,6 @@ interface AccountListProps {
 
 export function AccountList({
   accounts,
-  providerId,
   onAddAccount,
   onEditAccount,
   onDeleteAccount,
@@ -61,9 +50,6 @@ export function AccountList({
 }: AccountListProps) {
   const { t } = useTranslation()
   const [validatingIds, setValidatingIds] = useState<Set<string>>(new Set())
-  const [clearingChatsId, setClearingChatsId] = useState<string | null>(null)
-  const [showClearChatsDialog, setShowClearChatsDialog] = useState(false)
-  const [selectedAccountForClear, setSelectedAccountForClear] = useState<Account | null>(null)
 
   const statusConfig: Record<AccountStatus, { 
     labelKey: string
@@ -107,31 +93,6 @@ export function AccountList({
         next.delete(id)
         return next
       })
-    }
-  }
-
-  const handleClearChats = (account: Account) => {
-    setSelectedAccountForClear(account)
-    setShowClearChatsDialog(true)
-  }
-
-  const confirmClearChats = async () => {
-    if (!selectedAccountForClear) return
-    
-    setClearingChatsId(selectedAccountForClear.id)
-    try {
-      const result = await window.electronAPI.accounts.clearChats(selectedAccountForClear.id)
-      if (result.success) {
-        console.log(t('providers.clearChatsSuccess'))
-      } else {
-        console.error(result.error || t('providers.clearChatsFailed'))
-      }
-    } catch (error) {
-      console.error('Failed to clear chats:', error)
-    } finally {
-      setClearingChatsId(null)
-      setShowClearChatsDialog(false)
-      setSelectedAccountForClear(null)
     }
   }
 
@@ -288,23 +249,6 @@ export function AccountList({
                             <Edit className="mr-2 h-4 w-4" />
                             {t('providers.editAccount')}
                           </DropdownMenuItem>
-                          {/* Show Clear Chats for supported web providers */}
-                          {(providerId === 'kimi' || providerId === 'qwen' || providerId === 'qwen-ai' || providerId === 'minimax' || providerId === 'zai' || providerId === 'deepseek' || providerId === 'glm' || providerId === 'mimo') && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem 
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleClearChats(account)
-                                }}
-                                disabled={clearingChatsId === account.id}
-                                className="text-warning"
-                              >
-                                <Trash className="mr-2 h-4 w-4" />
-                                {clearingChatsId === account.id ? t('common.loading') : t('providers.clearChats')}
-                              </DropdownMenuItem>
-                            </>
-                          )}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem 
                             onClick={(e) => {
@@ -326,35 +270,6 @@ export function AccountList({
           })}
         </div>
       </div>
-
-      {/* Clear Chats Confirmation Dialog */}
-      <Dialog open={showClearChatsDialog} onOpenChange={setShowClearChatsDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('providers.clearChats')}</DialogTitle>
-            <DialogDescription>
-              <div className="space-y-2">
-                <p>{t('providers.clearChatsConfirm')}</p>
-                <p className="text-warning font-medium">{t('providers.clearChatsWarning')}</p>
-              </div>
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              setShowClearChatsDialog(false)
-              setSelectedAccountForClear(null)
-            }}>
-              {t('common.cancel')}
-            </Button>
-            <Button 
-              onClick={confirmClearChats}
-              className="btn-warning"
-            >
-              {t('common.confirm')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

@@ -1,12 +1,12 @@
-# Chat2API 项目代码文档
+# ModelPort 项目代码文档
 
 ## 1. 项目概述
 
-Chat2API 是一个多平台 AI 服务统一管理工具，通过利用官方 Web UI 实现零成本访问领先的 AI 模型。它支持 DeepSeek、GLM、Kimi、MiniMax、Qwen、Z.ai 等提供商，并与 openlcaw、Cline、Roo-Code 等工具无缝集成，使任何 OpenAI 兼容客户端都能开箱即用。
+ModelPort 是一个多平台 AI 服务统一管理工具，把任意 OpenAI 兼容端点汇总为一份本地 API。它内置 `opencode` 本机运行时、73 条带 Key / 免密的聚合渠道目录（含 Kilo 免费池）以及自定义供应商，并与 openclaw、Cline、Roo-Code 等工具无缝集成，使任何 OpenAI 兼容客户端都能开箱即用。
 
 ### 核心功能
 - OpenAI 兼容 API：提供标准的 OpenAI 兼容 API 端点，实现无缝集成
-- 多提供商支持：连接 DeepSeek、GLM、Kimi、MiniMax、Qwen、Z.ai 等
+- 多提供商支持：73 条聚合渠道（API Key / 免费额度 / 本机）以及自定义供应商
 - 上下文管理：智能对话上下文管理，支持滑动窗口、令牌限制和摘要策略
 - 函数调用支持：通过提示工程实现所有模型的通用工具调用能力，兼容 Cherry Studio、Kilo Code 等客户端
 - 模型映射：灵活的模型名称映射，支持通配符和首选提供商/账户选择
@@ -22,12 +22,12 @@ Chat2API 是一个多平台 AI 服务统一管理工具，通过利用官方 Web
 
 ## 2. 项目架构
 
-Chat2API 采用 Electron 架构，分为主进程和渲染进程两部分。主进程负责核心功能实现，包括代理服务器、账户管理、模型管理等；渲染进程负责用户界面展示。
+ModelPort 采用 Electron 架构，分为主进程和渲染进程两部分。主进程负责核心功能实现，包括代理服务器、账户管理、模型管理等；渲染进程负责用户界面展示。
 
 ### 架构图
 
 ```
-Chat2API/
+ModelPort/
 ├── src/
 │   ├── main/                    # Electron 主进程
 │   │   ├── index.ts            # 应用入口点
@@ -244,16 +244,13 @@ npm run start:sandbox
 
 ### 7.3 提供商配置
 
-支持的提供商：
-- DeepSeek
-- GLM
-- Kimi
-- MiniMax
-- Qwen (CN)
-- Qwen AI (Global)
-- Z.ai
+提供商分为三类：
 
-每个提供商需要配置相应的认证信息，如令牌或凭证。
+- `opencode`：本机运行时，无需凭证，模型列表来自运行时
+- 聚合目录：73 条渠道（API Key / 免费额度 / 本机），每条保存后生成 `provider/model` 命名空间的供应商记录
+- 自定义供应商：自行填入任意 OpenAI 兼容端点
+
+API Key 类条目需要填入对应的密钥；Kilo 这类免密条目保存时会创建空凭据的本地账户，无需额外配置即可路由。
 
 ## 8. 开发指南
 
@@ -284,7 +281,7 @@ npm run start:sandbox
 由于 macOS 安全机制，从 App Store 外下载的应用可能会触发此警告。运行以下命令修复：
 
 ```bash
-sudo xattr -rd com.apple.quarantine "/Applications/Chat2API.app"
+sudo xattr -rd com.apple.quarantine "/Applications/ModelPort.app"
 ```
 
 ### 9.2 端口被占用
@@ -322,6 +319,12 @@ GNU General Public License v3.0。详见 [LICENSE](LICENSE) 文件。
 5. 打开 Pull Request
 
 ## 13. 更新日志
+
+### v1.5.0
+- 退役 8 家 Web UI 页面接入供应商（DeepSeek / GLM / Kimi / Mimo / MiniMax / Qwen / Qwen AI / Z.ai），启动时清理其供应商、账户与模型映射
+- 新增 73 条聚合渠道目录（API Key / 免费额度 / 本机），支持 openai-chat 与 anthropic-messages 两种线路
+- 新增 Kilo 免密免费池（`kilo-auto/free`，仅保留 `isFree` 模型）
+- 新增聚合渠道页面与 `aggregate:*` IPC 通道
 
 ### v1.2.0
 - Implemented automatic application update feature

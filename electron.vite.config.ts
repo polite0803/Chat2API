@@ -38,7 +38,7 @@ const DEVELOPMENT_CSP = [
 function contentSecurityPolicy(): Plugin {
   let dev = false
   return {
-    name: 'chat2api-csp',
+    name: 'modelport-csp',
     configResolved(config) {
       dev = config.command === 'serve'
     },

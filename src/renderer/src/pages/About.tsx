@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Github,
-  FileText,
   Bug,
   Zap,
   RefreshCw,
@@ -205,17 +204,17 @@ export function About() {
     {
       label: t('about.github'),
       icon: Github,
-      url: 'https://github.com/xiaoY233/Chat2API',
+      url: 'https://github.com/polite0803/ModelPort',
     },
     {
-      label: t('about.documentation'),
-      icon: FileText,
-      url: 'https://chat2api-doc.vercel.app/',
+      label: t('about.releases'),
+      icon: Download,
+      url: 'https://github.com/polite0803/ModelPort/releases',
     },
     {
       label: t('about.reportIssue'),
       icon: Bug,
-      url: 'https://github.com/xiaoY233/Chat2API/issues',
+      url: 'https://github.com/polite0803/ModelPort/issues',
     },
   ]
 
@@ -229,7 +228,7 @@ export function About() {
             <div className="relative w-16 h-16 rounded-2xl glass-card p-2.5 overflow-hidden">
               <img
                 src={logoIcon}
-                alt="Chat2API Logo"
+                alt="ModelPort Logo"
                 className="w-full h-full object-contain drop-shadow-md"
               />
             </div>
