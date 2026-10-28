@@ -22,6 +22,7 @@ import { GLMAdapter, GLMStreamHandler } from './adapters/glm'
 import { KimiAdapter, KimiStreamHandler } from './adapters/kimi'
 import { MimoAdapter, MimoStreamHandler } from './adapters/mimo'
 import { OpencodeAdapter, buildCompletion, createDeferredCompletionStream } from './adapters/opencode'
+import { renderTranscript } from '../opencode/prompt.ts'
 import { QwenAdapter, QwenStreamHandler } from './adapters/qwen'
 import { QwenAiAdapter, QwenAiStreamHandler } from './adapters/qwen-ai'
 import { ZaiAdapter, ZaiStreamHandler } from './adapters/zai'
@@ -1200,13 +1201,20 @@ export class RequestForwarder {
       // 但 opencode 的档案让托管层既不注入提示也不解析响应 —— 工具由 OpenCode 的信封翻译。
       const transformed = this.transformRequestForPromptToolUse(request, provider)
       const tools = transformed.plan.toolChoiceMode === 'none' ? [] : (transformed.tools ?? [])
+      // 先把转录渲染出来：图片这类不支持的内容要在**开流之前**就报 400，
+      // 否则流已经发出去了，只能以一个错误帧收场。
+      const prompt = renderTranscript(transformed.messages as never)
       const adapter = new OpencodeAdapter(provider, account)
       const runTurn = () =>
         adapter.chatCompletion({
           model: actualModel,
           messages: transformed.messages as never,
+          prompt,
           stream: request.stream,
           tools: tools as never,
+          toolChoice: transformed.plan.toolChoiceMode,
+          forcedToolName: transformed.plan.forcedToolName ?? null,
+          parallelToolCalls: transformed.plan.parallelToolCalls,
           signal: request.signal,
         })
 
@@ -1243,9 +1251,11 @@ export class RequestForwarder {
       const message = error instanceof Error ? error.message : String(error)
       // 免费池配额用完是限流，不是我们这边的故障：报 429，客户端才知道该退避
       const quotaExhausted = /free usage limit/i.test(message)
+      // 图片这类我们吃不下的内容属于请求问题，不是网关故障
+      const unsupported = error instanceof Error && error.name === 'UnsupportedContentError'
       return {
         success: false,
-        status: quotaExhausted ? 429 : 502,
+        status: unsupported ? 400 : quotaExhausted ? 429 : 502,
         error: message,
         latency: Date.now() - startTime,
       }

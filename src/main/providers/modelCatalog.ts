@@ -33,7 +33,8 @@ export async function fetchProviderModels(providerId: string): Promise<ModelsFet
   // OpenCode 的清单在本机运行时里（它报什么就有什么），不走 HTTP
   if (source === 'runtime') {
     try {
-      const models = await opencodeService.models()
+      // 「更新模型」是用户主动要最新清单的时刻：启动运行时之前先刷一次目录
+      const models = await opencodeService.models({ refreshCatalog: true })
       const free = models.filter(model => model.zeroCost)
       // 走 Anthropic 协议的那几个模型，我们的通路是 OpenAI 形状，发不通：不收，但要说明白
       const usable = free.filter(model => model.protocol === 'openai')

@@ -9,13 +9,14 @@ import { homedir } from 'node:os'
 import {
   OpencodeBridge,
   ensureBridgePaths,
+  runtimeEnv,
   type BridgeChatRequest,
   type BridgeModel,
   type BridgeReply,
 } from './bridge.ts'
 import { TurnLimiter } from './concurrency.ts'
 import { ProbeCache, probeCachePath, probeModel, type ProbeResult } from './probe.ts'
-import { resolveOpencodeLauncher } from './runtime.ts'
+import { refreshModelCatalog, resolveOpencodeLauncher } from './runtime.ts'
 
 /**
  * 同时跑几个回合。
@@ -62,7 +63,7 @@ class OpencodeService {
     return this.cache
   }
 
-  private async ensureStarted(): Promise<OpencodeBridge> {
+  private async ensureStarted(options: { refreshCatalog?: boolean } = {}): Promise<OpencodeBridge> {
     if (this.bridge) {
       if (this.bridge.running) return this.bridge
       // 运行时进程已经没了（崩了 / 被 kill）：手上这个桥是僵尸，
@@ -73,7 +74,7 @@ class OpencodeService {
     }
     // 并发到达的请求共用同一次启动，别起出好几个运行时
     if (!this.starting) {
-      const pending = this.startBridge()
+      const pending = this.startBridge({ refreshCatalog: options.refreshCatalog })
       this.starting = pending
       void pending.finally(() => {
         if (this.starting === pending) this.starting = null
@@ -82,10 +83,24 @@ class OpencodeService {
     return this.starting
   }
 
-  private async startBridge(): Promise<OpencodeBridge> {
+  private async startBridge(options: { refreshCatalog?: boolean } = {}): Promise<OpencodeBridge> {
     const launcher = resolveOpencodeLauncher()
+    const paths = ensureBridgePaths(this.root())
+
+    // 刷新模型目录只能在运行时没起来时跑：两个进程共用同一个数据目录（SQLite），
+    // 并发写会互相锁住。失败忽略，目录照旧用包里那份快照。
+    if (options.refreshCatalog) {
+      const refresh = await refreshModelCatalog(launcher, {
+        env: runtimeEnv({}),
+        cwd: paths.workDir,
+      })
+      console.log(
+        `[OpenCode] catalog refresh ${refresh.ok ? 'ok' : 'failed'} (${refresh.detail})`,
+      )
+    }
+
     const bridge = new OpencodeBridge(
-      ensureBridgePaths(this.root()),
+      paths,
       {
         command: launcher.command,
         args: launcher.args,
@@ -120,9 +135,9 @@ class OpencodeService {
     return this.limiter.run(task)
   }
 
-  async models(): Promise<BridgeModel[]> {
+  async models(options: { refreshCatalog?: boolean } = {}): Promise<BridgeModel[]> {
     return this.enqueue(async () => {
-      const bridge = await this.ensureStarted()
+      const bridge = await this.ensureStarted({ refreshCatalog: options.refreshCatalog })
       const models = await bridge.models()
       this.state = { ...this.state, models }
       return models

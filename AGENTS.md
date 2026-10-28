@@ -228,6 +228,15 @@ out at once and the body follows. Otherwise any client with a response-header de
 10s) fails the request before the answer exists. `ForwardResult.deferred` marks that case, and the
 route then records the total elapsed time instead of the time to first byte.
 
+The envelope is constrained at the decoding layer, not just in the prompt: `opencode/envelopeSchema.ts`
+builds `calls[].items` as an `anyOf` over the tools actually offered (each name is a `const`, its
+parameter schema is inlined) and turns `tool_choice: required`/a forced function into `minItems: 1`
+and `parallel_tool_calls: false` into `maxItems: 1`. `usage` is reported in the OpenAI shape
+(prompt = input + cache read/write, completion = output + reasoning, plus the `*_details` fields)
+because the upstream reports it; it stays `null` when it does not, and the contract's "never
+fabricated" rule still holds. Non-text content (images) is rejected with 400 before the stream
+opens instead of being dropped silently.
+
 Two more facts about that path, both measured on 2026-10-27:
 
 - **Turns can run in parallel.** The runtime supports concurrent sessions (one session per

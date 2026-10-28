@@ -16,6 +16,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { closeSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { buildEnvelopeSchema } from './envelopeSchema.ts'
 
 export interface BridgePaths {
   /** 隔离的 XDG 根目录（下面分 config/data/cache/state 四个子目录） */
@@ -39,11 +40,19 @@ export interface BridgeToolCall {
   arguments: unknown
 }
 
+export interface BridgeTokens {
+  input?: number
+  output?: number
+  reasoning?: number
+  cacheRead?: number
+  cacheWrite?: number
+}
+
 export interface BridgeReply {
   text: string
   toolCalls: BridgeToolCall[]
   /** 上游报告的 token 统计（拿不到就是 null，绝不编造） */
-  tokens: { input?: number; output?: number } | null
+  tokens: BridgeTokens | null
   /** 首字节耗时与总耗时（毫秒） */
   firstByteMs: number
   totalMs: number
@@ -56,6 +65,10 @@ export interface BridgeChatRequest {
   system?: string
   /** 要传给模型的工具（我们自己的，不是 OpenCode 的原生工具） */
   tools?: Array<{ name: string; description?: string; parameters?: unknown }>
+  /** 本轮必须至少调用一个工具（tool_choice: required / 指定函数） */
+  requireCall?: boolean
+  /** 最多一次调用（parallel_tool_calls: false） */
+  singleCall?: boolean
 }
 
 const HEALTH_TIMEOUT_MS = 90_000
@@ -180,6 +193,28 @@ export function parseTurnFailureLine(line: string, sessionId: string): string | 
   return reason
     ? `OpenCode turn failed: ${reason}`
     : 'OpenCode turn failed (see the runtime log)'
+}
+
+/**
+ * 上游的 token 形状：`{input, output, reasoning, cache: {read, write}}`。
+ * 一个字段都没有就是拿不到，返回 null（绝不编造）。
+ */
+export function normalizeTokens(tokens: unknown): BridgeTokens | null {
+  if (!tokens || typeof tokens !== 'object') return null
+  const raw = tokens as Record<string, unknown>
+  const num = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined
+  const cache = (raw.cache ?? {}) as Record<string, unknown>
+
+  const out: BridgeTokens = {
+    input: num(raw.input),
+    output: num(raw.output),
+    reasoning: num(raw.reasoning),
+    cacheRead: num(cache.read),
+    cacheWrite: num(cache.write),
+  }
+
+  return Object.values(out).some(value => value !== undefined) ? out : null
 }
 
 export class OpencodeBridge {
@@ -399,26 +434,11 @@ export class OpencodeBridge {
     if (withTools) {
       body.format = {
         type: 'json_schema',
-        schema: {
-          type: 'object',
-          properties: {
-            content: { type: 'string' },
-            calls: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  name: { type: 'string' },
-                  arguments: { type: 'object', additionalProperties: true },
-                },
-                required: ['name', 'arguments'],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ['content', 'calls'],
-          additionalProperties: false,
-        },
+        schema: buildEnvelopeSchema({
+          tools: request.tools ?? [],
+          requireCall: request.requireCall === true,
+          singleCall: request.singleCall === true,
+        }),
       }
     }
 
@@ -495,10 +515,7 @@ export class OpencodeBridge {
     return {
       text,
       toolCalls,
-      tokens:
-        tokens && (tokens.input !== undefined || tokens.output !== undefined)
-          ? { input: tokens.input, output: tokens.output }
-          : null,
+      tokens: normalizeTokens(tokens),
       firstByteMs,
       totalMs: Date.now() - started,
     }

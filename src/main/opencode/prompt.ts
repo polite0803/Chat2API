@@ -21,6 +21,20 @@ const ROLES: Record<string, string> = {
   tool: 'tool',
 }
 
+/**
+ * 我们这条通路只吃文本。图片等附件必须**明确报错**：
+ * 悄悄丢掉会让客户端以为模型"看过图了"，那是在拿假结果当正常结果。
+ */
+export class UnsupportedContentError extends Error {
+  readonly code = 'unsupported_content'
+  constructor(message: string) {
+    super(message)
+    this.name = 'UnsupportedContentError'
+  }
+}
+
+const IMAGE_TYPES = new Set(['image_url', 'input_image', 'image'])
+
 function textOf(content: unknown): string {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
@@ -28,7 +42,16 @@ function textOf(content: unknown): string {
       .map(part => {
         if (typeof part === 'string') return part
         const value = part as { type?: string; text?: string }
-        return value.type === 'text' && typeof value.text === 'string' ? value.text : ''
+        if (value.type === 'text' && typeof value.text === 'string') return value.text
+        if (value.type && IMAGE_TYPES.has(value.type)) {
+          throw new UnsupportedContentError(
+            'OpenCode 提供商当前不支持图片输入，请改用支持视觉的模型或提供商',
+          )
+        }
+        if (value.type) {
+          throw new UnsupportedContentError(`不支持的消息内容类型: ${value.type}`)
+        }
+        return ''
       })
       .filter(Boolean)
       .join('\n')

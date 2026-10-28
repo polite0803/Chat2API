@@ -98,10 +98,17 @@ subscribe to OpenCode Go to keep going
 
 ## 已知边界
 
-1. **`usage` 一律为 `null`**：桥接层拿到的 token 数描述的是这次 agent 回合，不是调用方的请求，冒充就是撒谎。
-2. **流式是"一次性"的**：agent 不吐 token 流，整段答复在一个内容分片里发出，之后 `finish_reason` 与 `[DONE]`。
-3. **采样参数不生效**：`temperature` / `max_tokens` 这些是网页端的对话参数，上游不认。
-4. **工具是否可用取决于模型**，所以每个模型先做一次"信封体检"：
+1. **`usage` 是"这个回合"的口径**：上游报了就照 OpenAI 合并口径转发
+   （`prompt = input + cache.read + cache.write`、`completion = output + reasoning`，
+   并带 `prompt_tokens_details.cached_tokens` / `completion_tokens_details.reasoning_tokens`），
+   流式在 `[DONE]` 前补一帧 `choices: []` 的 usage。注意它含适配器自己的系统提示与本轮工具清单，
+   **不等于客户端原始请求的 token**；上游一个数都没报时仍是 `null`，不编。
+2. **只吃文本，图片明确报错**：`image_url` / `input_image` / `image` 一律 400
+   `UnsupportedContentError`（在开流之前就报，不会先发响应头再塞错误帧）——静默丢掉会让客户端
+   以为模型"看过图了"。
+3. **流式是"一次性"的**：agent 不吐 token 流，整段答复在一个内容分片里发出，之后 `finish_reason`、usage 帧与 `[DONE]`。
+4. **采样参数不生效**：`temperature` / `max_tokens` 这些是网页端的对话参数，上游不认。
+5. **工具是否可用取决于模型**，所以每个模型先做一次"信封体检"：
    - 探针用一个指令式提示（"调用 `probe_tool`"）并检查信封里有没有那个调用；
    - 判定按原因给不同 TTL（成功/只是不听话 6 小时、限流 10 分钟、下线 1 小时），缓存落在
      `~/.chat2api/opencode/probe-cache.json`，跨重启复用；
@@ -111,12 +118,20 @@ subscribe to OpenCode Go to keep going
 
    实测：`glm-5.3-flash-free` 与 `big-pickle` 都是 tool-capable（探针 3–5 s）；
    带工具的真实请求 4.2 s 返回 `get_weather{city:"Beijing"}`。
-5. **免费模型清单会变**：清单来自本机运行时（点「更新模型」即拉取），只收**四个价格字段全 0** 的条目
-   （含名字不带 free 但计费为 0 的 `big-pickle`）。
-6. **走 Anthropic 协议的那几个模型不收**：它们由 `/inference/anthropic/v1/messages` 提供，
+6. **工具在解码层就被限定住**：信封 schema 的 `calls[].items` 用 `anyOf` 把每个工具名写成
+   `const`、把该工具的参数 schema 直接内联；`tool_choice: required`（或指定函数）落成
+   `minItems: 1`，`parallel_tool_calls: false` 落成 `maxItems: 1`，本轮不给工具则 `maxItems: 0`。
+   模型编不出没提供的工具名，也编不出对不上的参数形状（见 `opencode/envelopeSchema.ts`）。
+7. **免费模型清单会变**：清单来自本机运行时，只收**四个价格字段全 0** 的条目
+   （含名字不带 free 但计费为 0 的 `big-pickle`）。点「更新模型」时，若运行时**还没起来**，
+   会先跑一次 `models opencode --refresh` 把运行时包里的目录快照刷到最新（失败忽略）；
+   运行时已经在跑就不刷——两个进程共用同一个数据目录，并发写会互相锁住。
+8. **走 Anthropic 协议的那几个模型不收**：它们由 `/inference/anthropic/v1/messages` 提供，
    我们的通路是 OpenAI 形状，发不通。它们会被排除，并把名单写进「更新模型」的提示里
    （`…are served over the Anthropic protocol and are not reachable here: …`），不静默吞掉。
-7. **工具不会被处理两次**：OpenCode 的档案标了 `handlesToolsItself`，托管工具层对它完全让开
+   （参照实现 ow-lite 不区分协议族；到底该不该收，取决于运行时是否自己按模型路由——
+   **这一条我们还没验过**，记在这里等配额恢复后测。）
+9. **工具不会被处理两次**：OpenCode 的档案标了 `handlesToolsItself`，托管工具层对它完全让开
    （既不注入提示、也不解析响应）；工具清单仍由托管层判定（`tool_choice` / 强制工具），
    但由 OpenCode 的信封翻译成 OpenAI 的 `tool_calls`。
 8. **状态检查不报"离线"**：它的 `apiEndpoint` 是占位 scheme（`opencode://local`），拿它发 HTTP

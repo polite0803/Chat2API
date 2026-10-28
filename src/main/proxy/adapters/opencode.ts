@@ -13,7 +13,7 @@
  */
 import { PassThrough } from 'node:stream'
 import type { Provider, Account } from '../../store/types'
-import type { BridgeReply } from '../../opencode/bridge.ts'
+import type { BridgeReply, BridgeTokens } from '../../opencode/bridge.ts'
 import { opencodeService } from '../../opencode/service.ts'
 import { renderTranscript, type TranscriptMessage } from '../../opencode/prompt.ts'
 import { buildStreamErrorFrame } from '../errorMapping.ts'
@@ -21,12 +21,47 @@ import { buildStreamErrorFrame } from '../errorMapping.ts'
 export interface OpencodeRequest {
   model: string
   messages: TranscriptMessage[]
+  /** 已经渲染好的转录（forwarder 会先渲染一次，好让"不支持的内容"在开流之前就报错） */
+  prompt?: string
   stream?: boolean
   signal?: AbortSignal
   /** 客户端自己的 system 提示，原样交给模型 */
   system?: string
   /** 我们自己的工具：交给模型作为"要调用什么"的清单，执行仍在客户端 */
   tools: Array<{ name: string; description?: string; parameters?: unknown }>
+  /** tool_choice：none 表示本轮不许调工具，required/forced 表示必须调 */
+  toolChoice?: 'none' | 'auto' | 'required' | 'forced'
+  /** 指定函数名时只能调它 */
+  forcedToolName?: string | null
+  /** parallel_tool_calls: false 时最多一次调用 */
+  parallelToolCalls?: boolean
+}
+
+/**
+ * 上游 token 数 → OpenAI 的 usage。
+ *
+ * 口径说明：这是**这一次 agent 回合**的计数（含适配器自己的系统提示与本轮工具清单），
+ * 不等于客户端原始请求的 token。OpenAI 口径把 cache 并进 prompt、把 reasoning 并进 completion。
+ * 上游什么都没报就是 null —— 不编。
+ */
+export function toOpenAiUsage(tokens: BridgeTokens | null): Record<string, unknown> | null {
+  if (!tokens) return null
+  const prompt = (tokens.input ?? 0) + (tokens.cacheRead ?? 0) + (tokens.cacheWrite ?? 0)
+  const completion = (tokens.output ?? 0) + (tokens.reasoning ?? 0)
+  if (prompt + completion === 0) return null
+
+  const usage: Record<string, unknown> = {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+  }
+  if (tokens.cacheRead !== undefined) {
+    usage.prompt_tokens_details = { cached_tokens: tokens.cacheRead }
+  }
+  if (tokens.reasoning !== undefined) {
+    usage.completion_tokens_details = { reasoning_tokens: tokens.reasoning }
+  }
+  return usage
 }
 
 export function buildCompletion(id: string, model: string, reply: BridgeReply) {
@@ -48,7 +83,7 @@ export function buildCompletion(id: string, model: string, reply: BridgeReply) {
         finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
       },
     ],
-    usage: null,
+    usage: toOpenAiUsage(reply.tokens),
   }
 }
 
@@ -79,7 +114,7 @@ export function buildStreamPrelude(id: string, model: string): string {
   return chunk(id, model, { role: 'assistant' }, null)
 }
 
-/** 回合结束后的正文分片：内容、工具调用、结束原因 */
+/** 回合结束后的正文分片：内容、工具调用、结束原因、用量 */
 export function buildStreamBody(id: string, model: string, reply: BridgeReply): string {
   let out = ''
   if (reply.text) out += chunk(id, model, { content: reply.text }, null)
@@ -89,6 +124,19 @@ export function buildStreamBody(id: string, model: string, reply: BridgeReply): 
     out += chunk(id, model, { tool_calls: [{ index, ...call }] }, null)
   }
   out += chunk(id, model, {}, toolCalls.length > 0 ? 'tool_calls' : 'stop')
+
+  // 用量单独一帧（choices 为空，这是 OpenAI include_usage 的形状），放在 [DONE] 之前
+  const usage = toOpenAiUsage(reply.tokens)
+  if (usage) {
+    out += `data: ${JSON.stringify({
+      id,
+      object: 'chat.completion.chunk',
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [],
+      usage,
+    })}\n\n`
+  }
   return out
 }
 
@@ -153,9 +201,19 @@ export class OpencodeAdapter {
   }
 
   async chatCompletion(request: OpencodeRequest): Promise<BridgeReply> {
-    const prompt = renderTranscript(request.messages)
+    const prompt = request.prompt ?? renderTranscript(request.messages)
     const requested = request.tools ?? []
-    const tools = await this.resolveTools(request.model, requested)
+    const resolved = await this.resolveTools(request.model, requested)
+    // 指定了函数就只给它一个可选（信封 schema 里的 anyOf 也就只剩这一项）
+    const forced = request.forcedToolName
+      ? resolved.filter(tool => tool.name === request.forcedToolName)
+      : []
+    const tools = forced.length > 0 ? forced : resolved
+    // 工具都被体检判掉了（纯对话模型）时，不能还要求"必须调一个"
+    const requireCall =
+      tools.length > 0 &&
+      (request.toolChoice === 'required' || request.toolChoice === 'forced' || forced.length > 0)
+    const singleCall = request.parallelToolCalls === false
     const system = tools.length
       ? [
           request.system ?? '',
@@ -186,7 +244,14 @@ export class OpencodeAdapter {
 
     const allowed = new Set(tools.map(tool => tool.name))
     let reply = await opencodeService.chat(
-      { modelId: request.model, prompt, system, tools },
+      {
+        modelId: request.model,
+        prompt,
+        system,
+        tools,
+        requireCall,
+        singleCall,
+      },
       request.signal,
     )
 
@@ -209,6 +274,8 @@ export class OpencodeAdapter {
           prompt,
           system: [system, correction].filter(Boolean).join('\n'),
           tools,
+          requireCall,
+          singleCall,
         },
         request.signal,
       )

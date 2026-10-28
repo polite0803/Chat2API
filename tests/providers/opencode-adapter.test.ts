@@ -4,11 +4,12 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-import { renderTranscript } from '../../src/main/opencode/prompt.ts'
+import { renderTranscript, UnsupportedContentError } from '../../src/main/opencode/prompt.ts'
 import {
   buildCompletion,
   buildCompletionStream,
   createDeferredCompletionStream,
+  toOpenAiUsage,
 } from '../../src/main/proxy/adapters/opencode.ts'
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
@@ -73,6 +74,64 @@ test('envelope calls become OpenAI tool calls and flip the finish reason', () =>
   assert.equal(body.choices[0].message.tool_calls?.length, 1)
   assert.equal(body.choices[0].message.tool_calls?.[0].function.name, 'get_weather')
   assert.equal(body.choices[0].message.tool_calls?.[0].function.arguments, '{"city":"Beijing"}')
+})
+
+test('非文本内容明确报错，不静默丢掉', () => {
+  for (const type of ['image_url', 'input_image', 'image']) {
+    assert.throws(
+      () =>
+        renderTranscript([
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'see this' },
+              { type, image_url: { url: 'https://example/x.png' } },
+            ],
+          },
+        ]),
+      (error: unknown) =>
+        error instanceof UnsupportedContentError &&
+        error.name === 'UnsupportedContentError' &&
+        /不支持图片输入/.test(error.message),
+      `${type} must not be dropped silently`,
+    )
+  }
+
+  // 纯文本数组照旧，不受影响
+  const text = renderTranscript([
+    { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+  ])
+  assert.match(text, /\[user\]\nhello/)
+})
+
+test('非流式响应带上 usage，流式在收尾前补一帧 usage', async () => {
+  const withTokens = { ...reply, tokens: { input: 100, output: 20, reasoning: 5, cacheRead: 30 } }
+
+  const body = buildCompletion('chatcmpl-1', 'big-pickle', withTokens)
+  assert.deepEqual(body.usage, toOpenAiUsage(withTokens.tokens))
+  assert.equal((body.usage as Record<string, unknown>).prompt_tokens, 130)
+
+  let raw = ''
+  for await (const chunk of buildCompletionStream('chatcmpl-1', 'big-pickle', withTokens)) {
+    raw += chunk.toString()
+  }
+  const frames = raw
+    .split('\n\n')
+    .filter(Boolean)
+    .map(frame => frame.replace(/^data: /, ''))
+    .filter(payload => payload !== '[DONE]')
+    .map(payload => JSON.parse(payload))
+
+  const usageFrame = frames.find(frame => frame.usage)
+  assert.ok(usageFrame, 'stream must carry a usage frame')
+  assert.deepEqual(usageFrame.choices, [])
+  assert.deepEqual(usageFrame.usage, toOpenAiUsage(withTokens.tokens))
+  // usage 帧后面只允许有 [DONE]
+  assert.ok(raw.trimEnd().endsWith('data: [DONE]'))
+
+  // 拿不到 token 时不能凭空造 usage
+  const noTokens = buildCompletion('chatcmpl-1', 'big-pickle', { ...reply, tokens: null })
+  assert.equal(noTokens.usage, null)
 })
 
 test('a call the client never offered is dropped instead of handed over', () => {
