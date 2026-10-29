@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { isDayRetained, oldestTimestamp, recentLocalDays } from '../../shared/localDay.ts'
 import type { LogEntry } from '../store/types.ts'
 import type { AppLogFilter, AppLogStats, AppLogTrendPoint } from './types.ts'
 
@@ -161,30 +162,26 @@ export class AppLogManager {
   }
 
   private getTrendFromLogs(logs: LogEntry[], days: number, totalUsesInfo = false): AppLogTrendPoint[] {
-    const dayMs = 24 * 60 * 60 * 1000
-    const today = new Date().toISOString().split('T')[0]
-    const todayStart = new Date(today).getTime()
-    const trends: AppLogTrendPoint[] = []
+    const oldestRetained = oldestTimestamp(logs)
 
-    for (let i = days - 1; i >= 0; i--) {
-      const dayStart = todayStart - i * dayMs
-      const dayEnd = dayStart + dayMs
-      const date = new Date(dayStart).toISOString().split('T')[0]
-      const dayLogs = logs.filter((entry) => entry.timestamp >= dayStart && entry.timestamp < dayEnd)
+    return recentLocalDays(days).map((window) => {
+      if (!isDayRetained(oldestRetained, window.end)) {
+        return { date: window.key, total: null, info: null, warn: null, error: null }
+      }
+
+      const dayLogs = logs.filter((entry) => entry.timestamp >= window.start && entry.timestamp < window.end)
       const info = dayLogs.filter((entry) => entry.level === 'info').length
       const warn = dayLogs.filter((entry) => entry.level === 'warn').length
       const error = dayLogs.filter((entry) => entry.level === 'error').length
 
-      trends.push({
-        date,
+      return {
+        date: window.key,
         total: totalUsesInfo ? info : dayLogs.length,
         info,
         warn,
         error,
-      })
-    }
-
-    return trends
+      }
+    })
   }
 
   private ensureInitialized(): void {

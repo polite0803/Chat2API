@@ -13,11 +13,17 @@ import type {
   ProviderVendor,
   AppConfig,
   EffectiveModel,
+  CatalogueModel,
   RequestLogEntry,
+  RequestLogTrendPoint,
+  AppLogTrendPoint,
   ModelsFetchFailure,
 } from '../shared/types'
 import type {
+  AggregateDetail,
   AggregateListResult,
+  AggregateModelTestResult,
+  AggregateMutationResult,
   AggregateOperationResult,
   AggregateSaveInput,
 } from '../shared/aggregate'
@@ -123,6 +129,16 @@ const providersAPI = {
   
   getEffectiveModels: (providerId: string): Promise<EffectiveModel[]> => 
     ipcRenderer.invoke(IpcChannels.PROVIDERS_GET_EFFECTIVE_MODELS, providerId),
+  
+  getModelCatalogue: (providerId: string): Promise<CatalogueModel[]> => 
+    ipcRenderer.invoke(IpcChannels.PROVIDERS_GET_MODEL_CATALOGUE, providerId),
+  
+  setModelsServed: (providerId: string, names: string[], served: boolean): Promise<{
+    success: boolean
+    catalogue: CatalogueModel[]
+    error?: string
+  }> => 
+    ipcRenderer.invoke(IpcChannels.PROVIDERS_SET_MODELS_SERVED, providerId, names, served),
   
   addCustomModel: (providerId: string, model: { displayName: string; actualModelId: string }): Promise<{
     success: boolean
@@ -266,14 +282,6 @@ interface LogStats {
   debug: number
 }
 
-interface LogTrend {
-  date: string
-  total: number
-  info: number
-  warn: number
-  error: number
-}
-
 const logsAPI = {
   get: (filter?: LogFilter): Promise<LogEntry[]> => 
     ipcRenderer.invoke(IpcChannels.LOGS_GET, filter),
@@ -281,10 +289,10 @@ const logsAPI = {
   getStats: (): Promise<LogStats> => 
     ipcRenderer.invoke(IpcChannels.LOGS_GET_STATS),
   
-  getTrend: (days?: number): Promise<LogTrend[]> => 
+  getTrend: (days?: number): Promise<AppLogTrendPoint[]> => 
     ipcRenderer.invoke(IpcChannels.LOGS_GET_TREND, days),
   
-  getAccountTrend: (accountId: string, days?: number): Promise<LogTrend[]> => 
+  getAccountTrend: (accountId: string, days?: number): Promise<AppLogTrendPoint[]> => 
     ipcRenderer.invoke(IpcChannels.LOGS_GET_ACCOUNT_TREND, accountId, days),
   
   clear: (): Promise<void> => 
@@ -295,12 +303,6 @@ const logsAPI = {
   
   getById: (id: string): Promise<LogEntry | undefined> => 
     ipcRenderer.invoke(IpcChannels.LOGS_GET_BY_ID, id),
-  
-  onNewLog: (callback: (log: LogEntry) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, log: LogEntry) => callback(log)
-    ipcRenderer.on(IpcChannels.LOGS_NEW_LOG, handler)
-    return () => ipcRenderer.removeListener(IpcChannels.LOGS_NEW_LOG, handler)
-  },
 }
 
 interface RequestLogFilter {
@@ -318,14 +320,6 @@ interface RequestLogStats {
   todayError: number
 }
 
-interface RequestLogTrend {
-  date: string
-  total: number
-  success: number
-  error: number
-  avgLatency: number
-}
-
 const requestLogsAPI = {
   get: (filter?: RequestLogFilter): Promise<RequestLogEntry[]> => 
     ipcRenderer.invoke(IpcChannels.REQUEST_LOGS_GET, filter),
@@ -336,7 +330,7 @@ const requestLogsAPI = {
   getStats: (): Promise<RequestLogStats> => 
     ipcRenderer.invoke(IpcChannels.REQUEST_LOGS_GET_STATS),
   
-  getTrend: (days?: number): Promise<RequestLogTrend[]> => 
+  getTrend: (days?: number): Promise<RequestLogTrendPoint[]> => 
     ipcRenderer.invoke(IpcChannels.REQUEST_LOGS_GET_TREND, days),
   
   clear: (): Promise<void> => 
@@ -371,12 +365,42 @@ interface DailyStatistics {
   providerUsage: Record<string, number>
 }
 
+/**
+ * One local day of token counters. Mirrors `shared/tokenAccounting.ts`, which
+ * this preload file cannot import directly (it is a bridge, not a renderer).
+ *
+ * The upstream-reported and `chars/4`-estimated pools are separate fields, not
+ * one total: only the first pool could ever be reconciled against a bill.
+ */
+interface DayTokenSummary {
+  day: string
+  upstreamPrompt: number
+  upstreamCompletion: number
+  estimatedPrompt: number
+  estimatedCompletion: number
+  savedTokens: number
+  requests: number
+  upstreamRequests: number
+  upstreamCoverage: number | null
+}
+
 const statisticsAPI = {
   get: (): Promise<PersistentStatistics> => 
     ipcRenderer.invoke(IpcChannels.STATISTICS_GET),
   
   getToday: (): Promise<DailyStatistics> => 
     ipcRenderer.invoke(IpcChannels.STATISTICS_GET_TODAY),
+
+  /**
+   * Today's token counters, with the upstream-reported and `chars/4`-estimated
+   * pools kept apart — see `shared/tokenAccounting`.
+   */
+  getTokenUsage: (): Promise<DayTokenSummary> =>
+    ipcRenderer.invoke(IpcChannels.STATISTICS_GET_TOKEN_USAGE),
+
+  /** The newest `days` local days of token counters, oldest first. */
+  getTokenUsageHistory: (days?: number): Promise<DayTokenSummary[]> =>
+    ipcRenderer.invoke(IpcChannels.STATISTICS_GET_TOKEN_USAGE_HISTORY, days),
 }
 
 interface UpdateProgressInfo {
@@ -636,13 +660,49 @@ const aggregateAPI = {
   test: (id: string): Promise<AggregateOperationResult> =>
     ipcRenderer.invoke(IpcChannels.AGGREGATE_TEST, id),
 
-  discoverModels: (id: string): Promise<AggregateOperationResult> =>
-    ipcRenderer.invoke(IpcChannels.AGGREGATE_DISCOVER_MODELS, id),
+  // 在线同步模型清单：多把 Key 轮换探测，把上游新模型并入条目清单。
+  syncModels: (id: string): Promise<AggregateOperationResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_SYNC_MODELS, id),
+
+  detail: (id: string): Promise<AggregateDetail | null> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_DETAIL, id),
+
+  addKey: (id: string, apiKey: string): Promise<AggregateMutationResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_ADD_KEY, id, apiKey),
+
+  removeKey: (accountId: string): Promise<AggregateMutationResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_REMOVE_KEY, accountId),
+
+  setKeyEnabled: (accountId: string, enabled: boolean): Promise<AggregateMutationResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_SET_KEY_ENABLED, accountId, enabled),
+
+  validateKey: (id: string, accountId: string): Promise<AggregateMutationResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_VALIDATE_KEY, id, accountId),
+
+  addModel: (id: string, modelId: string): Promise<AggregateMutationResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_ADD_MODEL, id, modelId),
+
+  removeModel: (id: string, modelId: string): Promise<AggregateMutationResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_REMOVE_MODEL, id, modelId),
+
+  setModelEnabled: (id: string, modelId: string, enabled: boolean): Promise<AggregateMutationResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_SET_MODEL_ENABLED, id, modelId, enabled),
+
+  setModelParams: (id: string, modelId: string, params: Record<string, unknown>): Promise<AggregateMutationResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_SET_MODEL_PARAMS, id, modelId, params),
+
+  testModel: (id: string, modelId: string): Promise<AggregateModelTestResult> =>
+    ipcRenderer.invoke(IpcChannels.AGGREGATE_TEST_MODEL, id, modelId),
 }
 
 const channelsAPI = {
   list: (): Promise<{ success: boolean; reason?: string; channels: ChannelView[] }> =>
     ipcRenderer.invoke(IpcChannels.CHANNELS_LIST),
+
+  // 每家渠道账号池的计数（不含账号列表，也不读模型目录）：供应商卡片上的
+  // 「已启用 / 全部」用这一份，而不是本地账号表里那一条占位账号。
+  accountCounts: (): Promise<Record<string, { total: number; enabled: number }>> =>
+    ipcRenderer.invoke(IpcChannels.CHANNELS_ACCOUNT_COUNTS),
 
   rpc: (method: string, payload?: unknown): Promise<ChannelRpcResult> =>
     ipcRenderer.invoke(IpcChannels.CHANNELS_RPC, method, payload),

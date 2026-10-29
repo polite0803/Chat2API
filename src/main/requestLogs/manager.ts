@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { currentLocalDay, isDayRetained, oldestTimestamp, recentLocalDays } from '../../shared/localDay.ts'
 import type { RequestLogEntry } from '../store/types.ts'
 import type {
   RequestLogConfig,
@@ -143,10 +144,8 @@ export class RequestLogManager {
 
   getRequestLogStats(): RequestLogStats {
     this.ensureInitialized()
-    const today = new Date().toISOString().split('T')[0]
-    const todayStart = new Date(today).getTime()
-    const todayEnd = todayStart + 24 * 60 * 60 * 1000
-    const todayLogs = this.requestLogs.filter((entry) => entry.timestamp >= todayStart && entry.timestamp < todayEnd)
+    const today = currentLocalDay()
+    const todayLogs = this.requestLogs.filter((entry) => entry.timestamp >= today.start && entry.timestamp < today.end)
 
     return {
       total: this.requestLogs.length,
@@ -160,30 +159,26 @@ export class RequestLogManager {
 
   getRequestLogTrend(days: number = 7): RequestLogTrendPoint[] {
     this.ensureInitialized()
-    const dayMs = 24 * 60 * 60 * 1000
-    const today = new Date().toISOString().split('T')[0]
-    const todayStart = new Date(today).getTime()
-    const trends: RequestLogTrendPoint[] = []
+    const oldestRetained = oldestTimestamp(this.requestLogs)
 
-    for (let i = days - 1; i >= 0; i--) {
-      const dayStart = todayStart - i * dayMs
-      const dayEnd = dayStart + dayMs
-      const date = new Date(dayStart).toISOString().split('T')[0]
-      const dayLogs = this.requestLogs.filter((entry) => entry.timestamp >= dayStart && entry.timestamp < dayEnd)
+    return recentLocalDays(days).map((window) => {
+      if (!isDayRetained(oldestRetained, window.end)) {
+        return { date: window.key, total: null, success: null, error: null, avgLatency: null }
+      }
+
+      const dayLogs = this.requestLogs.filter((entry) => entry.timestamp >= window.start && entry.timestamp < window.end)
       const successLogs = dayLogs.filter((entry) => entry.status === 'success')
       const errorLogs = dayLogs.filter((entry) => entry.status === 'error')
       const totalLatency = successLogs.reduce((sum, entry) => sum + entry.latency, 0)
 
-      trends.push({
-        date,
+      return {
+        date: window.key,
         total: dayLogs.length,
         success: successLogs.length,
         error: errorLogs.length,
         avgLatency: successLogs.length > 0 ? Math.round(totalLatency / successLogs.length) : 0,
-      })
-    }
-
-    return trends
+      }
+    })
   }
 
   exportRequestLogs(): RequestLogEntry[] {

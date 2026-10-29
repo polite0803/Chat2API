@@ -1,6 +1,7 @@
 import type { RequestLogConfig } from '../store/types.ts'
 
 export type { RequestLogConfig } from '../store/types.ts'
+export type { RequestLogTrendPoint } from '../../shared/types.ts'
 
 export interface RequestLogFilter {
   status?: 'success' | 'error'
@@ -14,14 +15,6 @@ export interface RequestLogStats {
   todayTotal: number
   todaySuccess: number
   todayError: number
-}
-
-export interface RequestLogTrendPoint {
-  date: string
-  total: number
-  success: number
-  error: number
-  avgLatency: number
 }
 
 export function normalizeRequestLogConfig(config?: Partial<RequestLogConfig>): RequestLogConfig {

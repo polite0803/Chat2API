@@ -27,28 +27,45 @@ export function sanitizeRequestLogEntry(
   return sanitized
 }
 
+/**
+ * An update is a partial patch, so only the keys it actually carries may be
+ * re-sanitized. Deriving every field from `updates` (as this used to) writes
+ * `undefined` over fields the patch never mentioned - a stream-end update that
+ * only has the response body would erase the user input recorded at insert.
+ */
 export function sanitizeRequestLogUpdates(
   updates: Partial<RequestLogEntry>,
   config: RequestLogConfig,
 ): Partial<RequestLogEntry> {
-  const sanitized: Partial<RequestLogEntry> = {
-    ...updates,
-    userInput: truncateText(updates.userInput, 500),
-    errorStack: undefined,
+  const sanitized: Partial<RequestLogEntry> = { ...updates }
+
+  if ('userInput' in updates) {
+    sanitized.userInput = truncateText(updates.userInput, 500)
   }
 
-  if (!config.includeBodies) {
-    sanitized.requestBody = undefined
-    sanitized.responseBody = undefined
+  if ('errorStack' in updates) {
+    sanitized.errorStack = undefined
+  }
+
+  if ('requestBody' in updates) {
+    sanitized.requestBody = config.includeBodies
+      ? sanitizeRequestLogBody(updates.requestBody, config)
+      : undefined
+  }
+
+  if ('responseBody' in updates) {
+    sanitized.responseBody = config.includeBodies
+      ? sanitizeRequestLogBody(updates.responseBody, config)
+      : undefined
+  }
+
+  if ('responsePreview' in updates) {
     sanitized.responsePreview = truncateText(updates.responsePreview, 1000)
-    sanitized.errorMessage = truncateText(updates.errorMessage, 1000)
-    return sanitized
   }
 
-  sanitized.requestBody = sanitizeRequestLogBody(updates.requestBody, config)
-  sanitized.responseBody = sanitizeRequestLogBody(updates.responseBody, config)
-  sanitized.responsePreview = truncateText(updates.responsePreview, 1000)
-  sanitized.errorMessage = truncateText(updates.errorMessage, 1000)
+  if ('errorMessage' in updates) {
+    sanitized.errorMessage = truncateText(updates.errorMessage, 1000)
+  }
 
   return sanitized
 }

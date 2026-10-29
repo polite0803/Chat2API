@@ -1,5 +1,7 @@
 import type { LogLevel } from '../store/types.ts'
 
+export type { AppLogTrendPoint } from '../../shared/types.ts'
+
 export interface AppLogFilter {
   level?: LogLevel | 'all'
   keyword?: string
@@ -15,12 +17,4 @@ export interface AppLogStats {
   warn: number
   error: number
   debug: number
-}
-
-export interface AppLogTrendPoint {
-  date: string
-  total: number
-  info: number
-  warn: number
-  error: number
 }

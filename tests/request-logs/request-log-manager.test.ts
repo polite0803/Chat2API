@@ -88,6 +88,52 @@ test('RequestLogManager respects disabled persistence and keeps the file empty',
   assert.equal(manager.getRequestLogs().length, 0)
 })
 
+test('RequestLogManager keeps the recorded user input when the stream-end update lands', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'request-log-manager-update-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+
+  const manager = new RequestLogManager({
+    storageDir: root,
+    config: createConfig({ maxEntries: 5 }),
+  })
+
+  await manager.initialize()
+  const entry = manager.addRequestLog(createEntryInput(1))
+  manager.updateRequestLog(entry.id, {
+    responseBody: 'stream-body',
+    finishReason: 'stop',
+    streamTruncated: false,
+  })
+  manager.flushSync()
+
+  const updated = manager.getRequestLogById(entry.id)
+  assert.equal(updated?.userInput, 'hello-temp')
+  assert.equal(updated?.finishReason, 'stop')
+  assert.equal(updated?.responseBody, undefined)
+
+  const persisted = readFileSync(join(root, 'request-logs.ndjson'), 'utf-8')
+  assert.match(persisted, /"userInput":"hello-temp"/)
+})
+
+test('RequestLogManager keeps user input and response body when bodies are recorded', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'request-log-manager-bodies-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+
+  const manager = new RequestLogManager({
+    storageDir: root,
+    config: createConfig({ maxEntries: 5, includeBodies: true, maxBodyChars: 32 }),
+  })
+
+  await manager.initialize()
+  const entry = manager.addRequestLog(createEntryInput(1))
+  manager.updateRequestLog(entry.id, { responseBody: 'res' })
+
+  const updated = manager.getRequestLogById(entry.id)
+  assert.equal(updated?.userInput, 'hello-temp')
+  assert.equal(updated?.responseBody, 'res')
+  manager.flushSync()
+})
+
 test('RequestLogManager buffers writes until flush', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'request-log-manager-buffered-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))

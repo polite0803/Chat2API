@@ -29,6 +29,14 @@ export interface WindowOptions {
   minHeight?: number
   title?: string
   show?: boolean
+  /**
+   * Whether `ready-to-show` should reveal the window.
+   *
+   * Boot autostart passes `false`: this app is a resident proxy service, so
+   * surfacing a window while the user is logging in steals focus. Defaults to
+   * `true` - every ordinary launch must still appear.
+   */
+  showOnReady?: boolean
 }
 
 export function createWindow(options: WindowOptions = {}): BrowserWindow {
@@ -39,6 +47,7 @@ export function createWindow(options: WindowOptions = {}): BrowserWindow {
     minHeight = 600,
     title = 'ModelPort',
     show = false,
+    showOnReady = true,
   } = options
 
   mainWindow = new BrowserWindow({
@@ -94,6 +103,8 @@ export function createWindow(options: WindowOptions = {}): BrowserWindow {
   })
 
   mainWindow.once('ready-to-show', () => {
+    // 开机自启进来时保持隐藏：窗口存在、可从托盘打开，但不抢焦点。
+    if (!showOnReady) return
     mainWindow?.show()
     mainWindow?.focus()
   })

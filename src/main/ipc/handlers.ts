@@ -29,6 +29,25 @@ import type { ModelsFetchFailure } from '../store/types'
 
 const updaterManager = UpdaterManager.getInstance()
 
+/**
+ * 聚合同步的失败原因 → 供应商卡片那套 ModelsFetchFailure。
+ * 只有两处需要映射：没有 Key 等价于"没有可用账号"，目录/记录缺失等价于"不支持"。
+ */
+function aggregateSyncFailureReason(reason?: string): ModelsFetchFailure {
+  switch (reason) {
+    case 'invalid_api_key':
+    case 'http_status':
+    case 'empty':
+    case 'unrecognized_shape':
+    case 'network_error':
+      return reason
+    case 'missing_api_key':
+      return 'no_active_account'
+    default:
+      return 'unsupported'
+  }
+}
+
 export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Promise<void> {
   let storageReady = true
   try {
@@ -347,6 +366,27 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
     addedCount?: number
     fetchedAt?: number
   }> => {
+    // 聚合记录有自己的同步路径：带 Key 轮换探测上游清单，把新模型并入条目的
+    // `<entryId>/<id>` 命名空间（并重写全局路由映射），而不是走内置的 fetched 合并。
+    const stored = storeManager.getProviderById(providerId)
+    if (stored?.type === 'aggregate') {
+      const synced = await aggregateProviderManager.syncModels(providerId)
+      if (!synced.success) {
+        console.warn('[IPC] Aggregate model sync for ' + providerId + ' failed: ' + synced.reason)
+        return {
+          success: false,
+          reason: aggregateSyncFailureReason(synced.reason),
+          detail: synced.detail,
+        }
+      }
+      return {
+        success: true,
+        fetchedCount: synced.fetchedCount ?? synced.modelCount ?? 0,
+        addedCount: synced.addedCount ?? 0,
+        fetchedAt: Date.now(),
+      }
+    }
+
     const result = await fetchProviderModels(providerId)
 
     if (!result.ok) {
@@ -376,6 +416,37 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
       return []
     }
   })
+
+  ipcMain.handle(IpcChannels.PROVIDERS_GET_MODEL_CATALOGUE, async (_, providerId: string) => {
+    try {
+      return storeManager.getModelCatalogue(providerId)
+    } catch (error) {
+      console.error('[IPC] Failed to get model catalogue:', error)
+      return []
+    }
+  })
+
+  ipcMain.handle(
+    IpcChannels.PROVIDERS_SET_MODELS_SERVED,
+    async (_, providerId: string, names: string[], served: boolean) => {
+      if (!Array.isArray(names) || names.some(name => typeof name !== 'string')) {
+        return { success: false, error: 'names must be an array of model names', catalogue: [] }
+      }
+      if (typeof served !== 'boolean') {
+        return { success: false, error: 'served must be a boolean', catalogue: [] }
+      }
+      try {
+        return { success: true, catalogue: storeManager.setModelsServed(providerId, names, served) }
+      } catch (error) {
+        console.error('[IPC] Failed to change served models:', error)
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to change served models',
+          catalogue: [],
+        }
+      }
+    }
+  )
 
   ipcMain.handle(IpcChannels.PROVIDERS_ADD_CUSTOM_MODEL, async (_, providerId: string, model: { displayName: string; actualModelId: string }) => {
     try {
@@ -454,8 +525,89 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
     return aggregateProviderManager.test(id)
   })
 
-  ipcMain.handle(IpcChannels.AGGREGATE_DISCOVER_MODELS, async (_, id: string) => {
-    return aggregateProviderManager.discoverModels(id)
+  ipcMain.handle(IpcChannels.AGGREGATE_SYNC_MODELS, async (_, id: string) => {
+    return aggregateProviderManager.syncModels(id)
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_DETAIL, async (_, id: string) => {
+    try {
+      return aggregateProviderManager.detail(id)
+    } catch (error) {
+      console.error('[IPC] Aggregate detail failed:', error)
+      return null
+    }
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_ADD_KEY, async (_, id: string, apiKey: string) => {
+    try {
+      return await aggregateProviderManager.addKey(id, apiKey)
+    } catch (error) {
+      return { success: false, reason: 'save_failed', message: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_REMOVE_KEY, async (_, accountId: string) => {
+    try {
+      return aggregateProviderManager.removeKey(accountId)
+    } catch (error) {
+      return { success: false, reason: 'save_failed', message: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_SET_KEY_ENABLED, async (_, accountId: string, enabled: boolean) => {
+    try {
+      return aggregateProviderManager.setKeyEnabled(accountId, enabled)
+    } catch (error) {
+      return { success: false, reason: 'save_failed', message: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_VALIDATE_KEY, async (_, id: string, accountId: string) => {
+    try {
+      return await aggregateProviderManager.validateKey(id, accountId)
+    } catch (error) {
+      return { success: false, reason: 'save_failed', message: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_ADD_MODEL, async (_, id: string, modelId: string) => {
+    try {
+      return aggregateProviderManager.addModel(id, modelId)
+    } catch (error) {
+      return { success: false, reason: 'save_failed', message: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_REMOVE_MODEL, async (_, id: string, modelId: string) => {
+    try {
+      return aggregateProviderManager.removeModel(id, modelId)
+    } catch (error) {
+      return { success: false, reason: 'save_failed', message: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_SET_MODEL_ENABLED, async (_, id: string, modelId: string, enabled: boolean) => {
+    try {
+      return aggregateProviderManager.setModelEnabled(id, modelId, enabled)
+    } catch (error) {
+      return { success: false, reason: 'save_failed', message: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_SET_MODEL_PARAMS, async (_, id: string, modelId: string, params: Record<string, unknown>) => {
+    try {
+      return aggregateProviderManager.setModelParams(id, modelId, params)
+    } catch (error) {
+      return { success: false, reason: 'save_failed', message: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.AGGREGATE_TEST_MODEL, async (_, id: string, modelId: string) => {
+    try {
+      return await aggregateProviderManager.testModel(id, modelId)
+    } catch (error) {
+      return { success: false, reason: 'save_failed', message: error instanceof Error ? error.message : String(error) }
+    }
   })
 
   ipcMain.handle(IpcChannels.CHANNELS_LIST, async () => {
@@ -469,6 +621,20 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
         reason: error instanceof Error ? error.message : 'channels_unavailable',
         channels: [],
       }
+    }
+  })
+
+  ipcMain.handle(IpcChannels.CHANNELS_ACCOUNT_COUNTS, async () => {
+    try {
+      return await accountChannelManager.accountCounts()
+    } catch (error) {
+      // 与 `channels:list` 不同，这里读不到就返回空表：供应商卡片会保留本地计数。
+      // 「读不到池子」不是「这家渠道没有账号」，不能把它显示成 0。
+      console.warn(
+        '[ChannelPack] 读取渠道账号计数失败：',
+        error instanceof Error ? error.message : String(error),
+      )
+      return {}
     }
   })
 
@@ -760,6 +926,14 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
 
   ipcMain.handle(IpcChannels.STATISTICS_GET_TODAY, async () => {
     return storeManager.getTodayStatistics()
+  })
+
+  ipcMain.handle(IpcChannels.STATISTICS_GET_TOKEN_USAGE, async () => {
+    return storeManager.getTodayTokenUsage()
+  })
+
+  ipcMain.handle(IpcChannels.STATISTICS_GET_TOKEN_USAGE_HISTORY, async (_event, days?: number) => {
+    return storeManager.getTokenUsageHistory(days)
   })
 
   ipcMain.handle(IpcChannels.APP_GET_VERSION, async (): Promise<string> => {

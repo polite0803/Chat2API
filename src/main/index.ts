@@ -6,6 +6,7 @@ import { createTrayManager, TrayManager } from './tray/TrayManager'
 import { registerIpcHandlers } from './ipc/handlers'
 import { UpdaterManager } from './updater'
 import { storeManager } from './store/store'
+import { detectHiddenLaunch, reconcileAutoStart } from './autostartHost'
 import { opencodeService } from './opencode/service'
 
 // Keep the Electron profile directory stable across product renames.
@@ -90,6 +91,10 @@ async function initializeApp(): Promise<void> {
 }
 
 async function setupApp(): Promise<void> {
+  // 只依赖 argv / 登录项状态，不读配置 —— 窗口是否显示必须在建窗时就定下来，
+  // 而配置要等 store 初始化后才有。
+  const launchHidden = detectHiddenLaunch()
+
   const mainWindow = createWindow({
     width: 1200,
     height: 800,
@@ -97,6 +102,8 @@ async function setupApp(): Promise<void> {
     minHeight: 600,
     title: 'ModelPort',
     show: false,
+    // 开机自启时不抢焦点；用户可从托盘打开。
+    showOnReady: !launchHidden,
   })
 
   await registerIpcHandlers(mainWindow)
@@ -104,6 +111,14 @@ async function setupApp(): Promise<void> {
   trayManager = createTrayManager(mainWindow)
 
   await loadAppContent(mainWindow)
+
+  // store 已在 `registerIpcHandlers` 里初始化；此时才读得到 `autoStart`。
+  // 校正失败不挡启动（`reconcileAutoStart` 内部只告警）。
+  void reconcileAutoStart(readAutoStartConfig())
+
+  if (launchHidden) {
+    console.log('[AutoStart] 以开机自启方式启动，窗口保持隐藏（可在托盘打开）')
+  }
 
   // 渲染层在挂载前无法收到 STORE_INIT_ERROR（那时 webContents 还没加载），
   // 所以存储不可用时必须用原生对话框把原因和处置办法直接摆到用户面前。
@@ -113,6 +128,22 @@ async function setupApp(): Promise<void> {
 
   if (process.env.NODE_ENV === 'development') {
     openDevTools()
+  }
+}
+
+/**
+ * 读配置里的 `autoStart`，存储尚未就绪时按 `false` 处理。
+ *
+ * ⚠️ 不能直接 `storeManager.getConfig()`：它在未初始化/初始化失败时会抛错，而本
+ * 函数位于启动流程里，抛错会把"校正开机自启"变成"启动失败"。存储不可用时真正
+ * 要提示的是 `showStorageFailureDialog`，不该被这里抢先。
+ */
+function readAutoStartConfig(): boolean {
+  try {
+    return storeManager.getConfig().autoStart === true
+  } catch (error) {
+    console.warn('[AutoStart] 读取配置失败，本次跳过校正：', error)
+    return false
   }
 }
 

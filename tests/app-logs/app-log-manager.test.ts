@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { LogEntry } from '../../src/main/store/types.ts'
+import { currentLocalDay } from '../../src/shared/localDay.ts'
 import { AppLogManager } from '../../src/main/appLogs/manager.ts'
 
 function createLog(id: string, timestamp: number, level: LogEntry['level'] = 'info'): LogEntry {
@@ -69,7 +70,7 @@ test('AppLogManager applies filters, pagination, stats, and trend data', async (
   const manager = new AppLogManager({ storageDir: root, maxEntries: 10 })
   await manager.initialize()
 
-  const todayStart = new Date(new Date().toISOString().split('T')[0]).getTime()
+  const todayStart = currentLocalDay().start
   manager.addLog({
     ...createLog('1', todayStart + 1000, 'info'),
     accountId: 'account-1',

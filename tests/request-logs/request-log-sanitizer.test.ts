@@ -80,6 +80,18 @@ test('sanitizeRequestLogUpdates applies the same persistence rules to updates', 
   assert.ok(sanitized.responseBody?.includes('[truncated'))
 })
 
+test('sanitizeRequestLogUpdates only touches the fields the patch carries', () => {
+  const sanitized = sanitizeRequestLogUpdates(
+    { responseBody: 'x'.repeat(128) },
+    createConfig({ includeBodies: false }),
+  )
+
+  assert.equal('userInput' in sanitized, false)
+  assert.equal('errorMessage' in sanitized, false)
+  assert.equal('responsePreview' in sanitized, false)
+  assert.equal(sanitized.responseBody, undefined)
+})
+
 test('trimRequestLogsToMaxEntries keeps the newest entries only', () => {
   const trimmed = trimRequestLogsToMaxEntries(
     [
