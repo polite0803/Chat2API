@@ -24,10 +24,31 @@ import type { ToolCallingTransformResult } from './toolCalling/types'
 import { sessionManager } from './sessionManager'
 import { loadBalancer } from './loadbalancer'
 import { autoRouter, type AutoCandidate } from './autoRouter'
+
+/** 一个可尝试的目标：与 AutoCandidate 同形，供裸名跨家链复用同一个切换循环。 */
+export interface ChainCandidate {
+  account: Account
+  provider: Provider
+  displayName: string
+  actualModel: string
+}
 import { accountRuntime } from './accountRuntime'
+import { planForwardRetries } from './retryPolicy'
 import { stripUnsupportedForBuiltin } from './parameterPolicy'
 import { createContextManagementService, SummaryGenerator } from './services/contextManagementService'
 import { accountChannelManager } from '../providers/accountChannels/manager'
+import { getAggregateEntry } from '../providers/aggregate/registry'
+import { applyAggregateDropParams } from './aggregateParams'
+import {
+  chatToResponsesRequest,
+  responsesBodyToChat,
+  responsesEventToChatChunks,
+  type ResponsesEvent,
+} from '../../shared/responsesWire'
+import { applyCompression, recordCompressionReport } from './compression'
+import { applyVerbositySteering } from './compression/outputSteering.ts'
+import { measureCrossTurnDuplication, recordDuplication } from './compression/duplication.ts'
+import { recordConversationTurn, recordConversationTurnForRequest } from './compression/survivorship.ts'
 
 function shouldDeleteSession(): boolean {
   return sessionManager.shouldDeleteAfterChat()
@@ -43,6 +64,15 @@ type ProviderForwarder = {
     actualModel: string,
     startTime: number
   ) => Promise<ForwardResult>
+}
+
+/** 每模型参数不允许覆盖的请求骨架字段（与 shared/aggregate 的保留清单一致）。 */
+const RESERVED_MODEL_PARAM_KEYS: readonly string[] = ['model', 'messages', 'stream']
+
+/** 429 / 5xx / 无状态码（网络错误、超时）才值得换目标；4xx 换目标没有意义。 */
+export function isFailoverEligibleStatus(status?: number): boolean {
+  if (status === undefined) return true
+  return status === 429 || status >= 500
 }
 
 /**
@@ -194,10 +224,73 @@ export class RequestForwarder {
   ): Promise<ForwardResult> {
     const startTime = Date.now()
     const config = storeManager.getConfig()
-    const maxRetries = options.maxRetries ?? config.retryCount
+    // 重试预算按 provider 分类：账号渠道的排队/额度/换号退避都在渠道 Worker 里
+    // 自己跑过了，宿主再叠一层 5s×3 只是把等待累加（详见 `retryPolicy.ts`）。
+    const retryProfile = planForwardRetries(provider.type, options.maxRetries ?? config.retryCount)
+    const maxRetries = retryProfile.maxRetries
 
     // stream_options 等客户端默认参数对内建供应商无效，发送前丢弃而不是报 400
     request = stripUnsupportedForBuiltin(request, provider)
+
+    // 每模型参数覆盖：在丢弃内建默认参数之后应用，配置的值不会被丢弃策略吞掉，
+    // 并覆盖客户端传来的同名字段（保留字段 model/messages/stream 不允许覆盖）。
+    request = this.applyModelParameters(request, provider, actualModel)
+
+    // 跨轮重复度测量：纯观测，一个字节都不改。与 compression 开关无关 —— 它存在的
+    // 目的就是在"要不要做去重"还没有依据时先拿到依据。单轮请求在这里只花一次长度
+    // 遍历就退出，所以对当前流量零成本。
+    //
+    // 必须排在压缩之前：它要回答的是"客户端原本发来的请求里有多少重复"。若放在
+    // 压缩之后，live-zone 改写与 verbosity 追加都会混进这个指标，测出的就不再是
+    // 客户端行为，也无法与"如果做跨轮去重能省多少"比较。
+    if (request.requestId) {
+      try {
+        recordDuplication(
+          request.requestId,
+          measureCrossTurnDuplication(request.messages)
+        )
+        // 会话存活观测：同一处、同一个 try —— 两者都是纯观测，且都必须排在压缩
+        // 之前（都要看客户端原样发来的字节）。轮号写进日志，供日后估算 P4 门禁
+        // 所需的 expected_reads。
+        const survivorship = recordConversationTurn(request.messages)
+        if (survivorship.turn > 0) {
+          recordConversationTurnForRequest(request.requestId, survivorship.turn)
+        }
+      } catch (error) {
+        // 观测绝不能影响请求。
+        console.error('[Compression] duplication measurement failed:', error)
+      }
+    }
+
+    // 上下文压缩：只改 live zone（最新一条 tool / user 消息），历史字节不动，
+    // 这样上游前缀缓存不被打掉。必须排在托管工具层注入之前 —— 注入的提示属于
+    // 受管标记，绝不能再过一遍内容压缩器。重复调用是幂等的：已带 CCR 标记的
+    // 文本会被识别并跳过，所以链式重试不会二次压缩。
+    const compression = applyCompression({
+      messages: request.messages,
+      n: request.n,
+      config: config.compression,
+    })
+    if (compression.messages && compression.messages !== request.messages) {
+      request = { ...request, messages: compression.messages }
+    }
+    if (compression.report && request.requestId) {
+      recordCompressionReport(request.requestId, compression.report)
+    }
+
+    // 输出侧 verbosity：只往 system 消息尾部追加一段定长指令，省的是 completion
+    // token。与压缩是两个独立开关 —— 那个改请求字节、受缓存经济学约束，这个改
+    // 模型写回来的量。放在压缩之后、托管工具层之前：托管层稍后会把工具协议追加到
+    // 同一条 system 消息尾部，那是硬契约，必须排在我们的风格提示之后。
+    if (config.outputSteering?.enabled) {
+      const steering = applyVerbositySteering(
+        request.messages,
+        config.outputSteering.level
+      )
+      if (steering.changed) {
+        request = { ...request, messages: steering.messages }
+      }
+    }
 
     // 记录在途与 RPM：仅用于路由打分，下一次请求即可读到
     accountRuntime.beginAttempt(account.id)
@@ -207,7 +300,7 @@ export class RequestForwarder {
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (attempt > 0) {
-        await this.delay(5000)
+        await this.delay(retryProfile.retryDelayMs)
       }
 
       let modifiedRequest = request
@@ -299,6 +392,24 @@ export class RequestForwarder {
   }
 
   /**
+   * 每模型参数覆盖（键为上游模型 id）：把配置值并进请求。保留字段与空值不参与。
+   */
+  private applyModelParameters(
+    request: ChatCompletionRequest,
+    provider: Provider,
+    actualModel: string
+  ): ChatCompletionRequest {
+    const overrides = provider.modelParameters?.[actualModel]
+    if (!overrides) return request
+
+    const entries = Object.entries(overrides).filter(([key, value]) =>
+      !RESERVED_MODEL_PARAM_KEYS.includes(key) && value !== null && value !== undefined && value !== ''
+    )
+    if (entries.length === 0) return request
+    return { ...request, ...Object.fromEntries(entries) } as ChatCompletionRequest
+  }
+
+  /**
    * Auto 路由执行：按候选顺序尝试，在流式首包之前失败时切换到下一个账号/供应商。
    *
    * 每次尝试把 request.model 替换为候选的显示名，与普通映射请求的上下文一致：
@@ -308,8 +419,29 @@ export class RequestForwarder {
     request: ChatCompletionRequest,
     candidates: AutoCandidate[],
     context: ProxyContext
-  ): Promise<{ result: ForwardResult; candidate: AutoCandidate } | null> {
-    let last: { result: ForwardResult; candidate: AutoCandidate } | null = null
+  ): Promise<{ result: ForwardResult; candidate: AutoCandidate; attempts: number } | null> {
+    return this.forwardFirstReachable(request, candidates, context)
+  }
+
+  /**
+   * 裸模型名的跨家候选：同名换到下一家继续尝试，判据与 auto 完全一致（429/5xx/无状态码才换）。
+   * 两条路径共用一个循环，避免"auto 会换、具名不会换"这种口径分裂。
+   */
+  async forwardChainCompletion(
+    request: ChatCompletionRequest,
+    candidates: ChainCandidate[],
+    context: ProxyContext
+  ): Promise<{ result: ForwardResult; candidate: ChainCandidate; attempts: number } | null> {
+    return this.forwardFirstReachable(request, candidates, context)
+  }
+
+  private async forwardFirstReachable<T extends ChainCandidate>(
+    request: ChatCompletionRequest,
+    candidates: T[],
+    context: ProxyContext
+  ): Promise<{ result: ForwardResult; candidate: T; attempts: number } | null> {
+    let last: { result: ForwardResult; candidate: T; attempts: number } | null = null
+    let attempts = 0
 
     for (const candidate of candidates) {
       const attemptRequest: ChatCompletionRequest = {
@@ -332,7 +464,8 @@ export class RequestForwarder {
         { maxRetries: 0 }
       )
 
-      last = { result, candidate }
+      attempts += 1
+      last = { result, candidate, attempts }
 
       if (result.success) {
         return last
@@ -354,8 +487,7 @@ export class RequestForwarder {
 
   /** 429 / 5xx / 无状态码（网络错误、超时）才值得换目标；4xx 换目标没有意义 */
   private isFailoverEligible(status?: number): boolean {
-    if (status === undefined) return true
-    return status === 429 || status >= 500
+    return isFailoverEligibleStatus(status)
   }
 
   /**
@@ -431,6 +563,12 @@ export class RequestForwarder {
       return dedicatedForwarder.forward(request, account, provider, actualModel, startTime)
     }
 
+    // 出向 responses：不做 chat 的请求体构建与 prompt 工具注入。
+    // responses 自己就有原生 tools，把工具描述塞进 messages 会变成双重提示。
+    if (provider.wire === 'openai-responses') {
+      return this.forwardResponsesWire(request, account, provider, actualModel, startTime)
+    }
+
     try {
       const transformed = this.transformRequestForPromptToolUse(request, provider)
       const chatPath = provider.chatPath || '/chat/completions'
@@ -438,11 +576,30 @@ export class RequestForwarder {
       const headers = this.buildHeaders(provider, account)
       const body = this.buildRequestBody({ ...request, messages: transformed.messages }, actualModel, account)
 
+      // buildRequestBody 只挑白名单字段；每模型参数里的其余键（top_k、seed、reasoning_effort…）
+      // 在这里显式补进上游请求体。保留字段 model/messages/stream 不允许被覆盖。
+      const modelParams = provider.modelParameters?.[actualModel]
+      if (modelParams) {
+        for (const [key, value] of Object.entries(modelParams)) {
+          if (RESERVED_MODEL_PARAM_KEYS.includes(key)) continue
+          if (value === null || value === undefined || value === '') continue
+          body[key] = value
+        }
+      }
+
+      // 条目级剥离放在最后：schema 严格的上游对"多出来的字段"直接 400，
+      // 用户覆盖也不该把被剥离的字段带回来。
+      const dropRules =
+        provider.type === 'aggregate' && provider.aggregateId
+          ? getAggregateEntry(provider.aggregateId)?.dropParams
+          : undefined
+      const sanitizedBody = applyAggregateDropParams(body, dropRules) as typeof body
+
       const axiosConfig: AxiosRequestConfig = {
         method: 'POST',
         url,
         headers,
-        data: body,
+        data: sanitizedBody,
         timeout: proxyStatusManager.getConfig().timeout,
         responseType: request.stream ? 'stream' : 'json',
         validateStatus: () => true,
@@ -499,6 +656,173 @@ export class RequestForwarder {
       }
     }
   }
+
+  /**
+   * 出向 responses：把 chat 请求翻成 Responses API，再把上游的响应/事件流翻回
+   * chat 形状。供应商只会 `/responses` 时走这里（`wire: 'openai-responses'`）。
+   *
+   * 与默认分支的三处不同：
+   * 1. **不走 prompt 工具注入** —— responses 自带原生 tools，双重提示只会让模型混乱；
+   * 2. 请求体由 `chatToResponsesRequest` 重建，不是白名单搬运；
+   * 3. 流式响应要把上游事件先攒齐再重编成 chat SSE，因此这里自己管理结尾
+   *    （主线只负责把 `[DONE]` 变成唯一那一个）。
+   */
+  private async forwardResponsesWire(
+    request: ChatCompletionRequest,
+    account: Account,
+    provider: Provider,
+    actualModel: string,
+    startTime: number
+  ): Promise<ForwardResult> {
+    try {
+      const url = this.buildUrl(provider, provider.chatPath || '/responses')
+      const headers = this.buildHeaders(provider, account)
+      const body = chatToResponsesRequest(request, actualModel)
+
+      const modelParams = provider.modelParameters?.[actualModel]
+      if (modelParams) {
+        for (const [key, value] of Object.entries(modelParams)) {
+          if (RESERVED_MODEL_PARAM_KEYS.includes(key)) continue
+          if (value === null || value === undefined || value === '') continue
+          body[key] = value
+        }
+      }
+
+      const response: AxiosResponse = await this.axiosInstance.request({
+        method: 'POST',
+        url,
+        headers,
+        data: body,
+        timeout: proxyStatusManager.getConfig().timeout,
+        responseType: request.stream ? 'stream' : 'json',
+        validateStatus: () => true,
+      })
+      const latency = Date.now() - startTime
+
+      if (response.status >= 400) {
+        return {
+          success: false,
+          status: response.status,
+          error: this.extractErrorMessage(response),
+          latency,
+        }
+      }
+
+      if (!request.stream) {
+        return {
+          success: true,
+          status: response.status,
+          headers: this.extractHeaders(response.headers),
+          body: responsesBodyToChat(response.data, actualModel),
+          latency,
+        }
+      }
+
+      return {
+        success: true,
+        status: response.status,
+        headers: this.extractHeaders(response.headers),
+        stream: this.translateResponsesStream(response.data, actualModel),
+        // 已经是 chat 形状，主线不必再转一次
+        skipTransform: true,
+        latency,
+      }
+    } catch (error) {
+      const latency = Date.now() - startTime
+      if (error instanceof AxiosError) {
+        return {
+          success: false,
+          status: error.response?.status,
+          error: error.message,
+          latency,
+        }
+      }
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        latency,
+      }
+    }
+  }
+
+  /**
+   * 把上游 responses SSE 事件流读成 chat SSE 文本。
+   *
+   * 逐事件重编而不是攒齐——攒齐会把"上游已经开始输出"这个事实推迟到最后一刻，
+   * 客户端的首字节时间等于整轮耗时。`responsesEventToChatChunks` 每处理一个事件
+   * 就返回该事件对应的行，这里逐块写出。
+   */
+  private translateResponsesStream(source: NodeJS.ReadableStream, model: string): NodeJS.ReadableStream {
+    const out = new PassThrough()
+    const requestId = Math.random().toString(36).slice(2, 10)
+    let buffer = ''
+    let doneEmitted = false
+
+    const writeEvents = (events: ResponsesEvent[]): void => {
+      if (events.length === 0) return
+      for (const line of responsesEventToChatChunks(events, model, requestId)) {
+        if (line.startsWith('data: [DONE]')) {
+          // 结尾只发一次：上游可能既不报 completed 又被中断，重复 [DONE] 会让客户端二次结束
+          if (doneEmitted) continue
+          doneEmitted = true
+        }
+        out.write(line)
+      }
+    }
+
+    source.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString('utf8')
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+
+      const events: ResponsesEvent[] = []
+      for (const part of parts) {
+        for (const raw of part.split('\n')) {
+          if (!raw.startsWith('data: ')) continue
+          const payload = raw.slice(6).trim()
+          if (!payload || payload === '[DONE]') continue
+          try {
+            const parsed = JSON.parse(payload)
+            if (parsed && typeof parsed === 'object') events.push(parsed as ResponsesEvent)
+          } catch {
+            // 上游发了无法解析的帧：不把它当内容，也不中断 —— 由 completed/failed 决定结局
+          }
+        }
+      }
+      writeEvents(events)
+    })
+
+    const end = (): void => {
+      if (!doneEmitted) {
+        // 上游正常关闭但没发 completed：补一个 finish + [DONE]，否则客户端会挂住
+        out.write(
+          `data: ${JSON.stringify({
+            id: `resp_${requestId}`,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model,
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          })}\n\n`
+        )
+        out.write('data: [DONE]\n\n')
+        doneEmitted = true
+      }
+      out.end()
+    }
+
+    source.on('end', end)
+    source.on('error', (error: Error) => {
+      out.write(
+        `data: ${JSON.stringify({
+          error: { message: error.message, type: 'api_error', code: 'api_error' },
+        })}\n\n`
+      )
+      out.end()
+    })
+
+    return out
+  }
+
 
   /**
    * OpenCode：驱动本机运行时完成一次 agent 回合。

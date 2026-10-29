@@ -9,7 +9,7 @@ import {
 import type { ManagementApiResponse } from '../../../../shared/types'
 import type { ToolClientAdapterId } from '../../../../shared/toolCalling'
 
-const router = new Router({ prefix: '/v0/management/tool-calling' })
+const router = new Router({ prefix: '/v1/management/tool-calling' })
 
 router.use(managementAuthMiddleware)
 

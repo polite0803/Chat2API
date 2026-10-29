@@ -1,11 +1,17 @@
 /**
  * Proxy Service Module - Load Balancer
- * Implements Round Robin and Fill First strategies
+ * Round Robin / Fill First / Failover, plus Smart and Pace over the quota ledger.
  */
 
 import { Account, Provider, LoadBalanceStrategy } from '../store/types'
 import { AccountSelection } from './types'
 import { storeManager } from '../store/store'
+import { isModelRoutable } from '../store/modelServing'
+import { AGGREGATE_REGISTRY } from '../providers/aggregate/registry'
+import { resolveAggregateChain } from '../../shared/aggregateRouting'
+import { aggregateHeadroom, quotaBlockReason } from './quota/gate'
+import { resolveCaps } from './quota/limits'
+import { pickBestPace, pickSoonestReset, type AccountQuotaFacts } from '../../shared/quotaPacing'
 
 /**
  * Load Balancer
@@ -83,7 +89,93 @@ export class LoadBalancer {
       return this.selectFailover(candidates)
     }
 
+    if (strategy === 'smart' || strategy === 'pace') {
+      const chosen = this.selectByQuotaPacing(candidates, strategy)
+      // 算不出重置时刻（没有上限 / 账本不可用）= 没有意见，退回既有顺序，
+      // 绝不因为"算不出来"把候选整体判死。
+      if (chosen) return chosen
+      return this.selectFillFirst(candidates)
+    }
+
     return this.selectRoundRobin(candidates)
+  }
+
+  /**
+   * `smart` / `pace` 的实际选号：把每个候选的用量与上限摊成 `AccountQuotaFacts`
+   * 交给纯函数排序，再按选出的 accountId 回到候选对象。
+   *
+   * 额度只对聚合目录的家有意义；别家没有额度旁表，直接不参与（返回 undefined →
+   * 调用方退回 fill-first），而不是凭空给一个 0.5 的中性分。
+   */
+  private selectByQuotaPacing(
+    candidates: AccountSelection[],
+    strategy: 'smart' | 'pace'
+  ): AccountSelection | null {
+    const facts: AccountQuotaFacts[] = []
+    const byAccountId = new Map<string, AccountSelection>()
+    const nowMs = Date.now()
+
+    for (const candidate of candidates) {
+      if (candidate.provider.type !== 'aggregate') continue
+      const entry = AGGREGATE_REGISTRY.find(row => row.id === candidate.provider.id)
+      if (!entry) continue
+
+      try {
+        const ledger = storeManager.getQuotaLedger()
+        const caps = resolveCaps(entry.id, candidate.actualModel, ledger.learnedFor(entry.id))
+        if (!caps.enforceable) continue
+
+        const snapshot = ledger.snapshot(entry.id, candidate.account.id, candidate.actualModel)
+        const used: AccountQuotaFacts['used'] = {}
+        const limit: AccountQuotaFacts['limit'] = {}
+        for (const [metric, value] of Object.entries(caps.limits)) {
+          if (typeof value !== 'number' || value <= 0) continue
+          const key = metric as keyof typeof used
+          limit[key] = value
+          used[key] = snapshot[key] ?? 0
+        }
+
+        facts.push({ accountId: candidate.account.id, used, limit })
+        byAccountId.set(candidate.account.id, candidate)
+      } catch (error) {
+        console.error('[LoadBalancer] quota pacing skipped for', candidate.account.id, error)
+      }
+    }
+
+    if (facts.length === 0) return null
+
+    const winnerId =
+      strategy === 'smart' ? pickSoonestReset(facts, nowMs) : pickBestPace(facts, nowMs)
+    return winnerId ? (byAccountId.get(winnerId) ?? null) : null
+  }
+
+  /**
+   * 裸名的跨家候选，按额度余量排好的链序返回（已排除失败账号与额度打满的账号）。
+   * 链长不足 2 或名字带 `<entry>/` 前缀时返回空数组，调用方走单账号路径。
+   */
+  selectChainCandidates(model: string, preferredAccountId?: string): AccountSelection[] {
+    if (model.includes('/')) return []
+
+    const order = new Map(
+      resolveAggregateChain(AGGREGATE_REGISTRY, model, { headroom: aggregateHeadroom }).map(
+        (candidate, index) => [candidate.entryId, index]
+      )
+    )
+    if (order.size < 2) return []
+
+    return this.getAvailableAccounts(model, undefined, true)
+      .filter(selection => order.has(selection.provider.id))
+      .filter(selection => !preferredAccountId || selection.account.id === preferredAccountId)
+      .sort((a, b) => (order.get(a.provider.id) ?? 0) - (order.get(b.provider.id) ?? 0))
+  }
+
+  /**
+   * 同一供应商的其余可用账号：一把 Key 失败（429/5xx）后轮换到下一把用。
+   * 已排除失败账号与额度打满的账号；其余家不参与。
+   */
+  selectSameProviderCandidates(model: string, providerId: string, excludeAccountId?: string): AccountSelection[] {
+    return this.getAvailableAccounts(model, providerId, true)
+      .filter(selection => selection.account.id !== excludeAccountId)
   }
 
   /**
@@ -97,18 +189,37 @@ export class LoadBalancer {
     const providers = storeManager.getProviders().filter(p => p.enabled)
     const candidates: AccountSelection[] = []
 
+    // 裸模型名（不带 `<entry>/` 前缀）可能同时被多家聚合条目服务。先解析成一条按额度余量排序的链，
+    // 后面按条目改用它在目录里的显示名，顺序也沿用链的顺序。写明了前缀的名字不走这条路。
+    const chain = new Map<string, { displayName: string; actualModelId: string; index: number }>()
+    if (!preferredProviderId && !model.includes('/')) {
+      resolveAggregateChain(AGGREGATE_REGISTRY, model, { headroom: aggregateHeadroom }).forEach(
+        (candidate, index) => {
+          chain.set(candidate.entryId, {
+            displayName: candidate.displayName,
+            actualModelId: candidate.actualModelId,
+            index,
+          })
+        }
+      )
+    }
+
     for (const provider of providers) {
       if (preferredProviderId && provider.id !== preferredProviderId) {
         continue
       }
 
-      if (!this.providerSupportsModel(provider, model)) {
+      const chained = chain.get(provider.id)
+      if (!this.providerSupportsModel(provider, chained?.displayName ?? model)) {
         continue
       }
 
+      const actualModel = chained?.actualModelId ?? this.mapModel(model, provider)
       const accounts = storeManager.getAccountsByProviderId(provider.id, true)
         .filter(account => this.isAccountAvailable(account))
         .filter(account => !excludeFailed || !this.isAccountInFailure(account.id))
+        // 额度已打满的账号不进候选：让失败切换把一次上游请求花在有余额的那家身上
+        .filter(account => !quotaBlockReason(provider, account.id, actualModel))
 
       console.log(`[LoadBalancer] Provider ${provider.name} (${provider.id}) has ${accounts.length} available accounts`)
 
@@ -117,9 +228,14 @@ export class LoadBalancer {
         candidates.push({
           account,
           provider,
-          actualModel: this.mapModel(model, provider),
+          actualModel,
         })
       }
+    }
+
+    if (chain.size > 0) {
+      const rank = (providerId: string): number => chain.get(providerId)?.index ?? Number.MAX_SAFE_INTEGER
+      candidates.sort((a, b) => rank(a.provider.id) - rank(b.provider.id))
     }
 
     return candidates
@@ -129,53 +245,19 @@ export class LoadBalancer {
    * Check if provider supports model
    */
   private providerSupportsModel(provider: Provider, model: string): boolean {
-    const effectiveModels = storeManager.getEffectiveModels(provider.id)
-    if (effectiveModels.length === 0) {
-      return true
-    }
-
-    const normalizedModel = model.toLowerCase()
-    const supported = effectiveModels.some(m => {
-      const normalizedSupported = m.displayName.toLowerCase()
-      if (normalizedSupported.endsWith('*')) {
-        return normalizedModel.startsWith(normalizedSupported.slice(0, -1))
-      }
-      return normalizedSupported === normalizedModel
-    })
-    
-    if (supported) {
-      return true
-    }
-
     const config = storeManager.getConfig()
-    const globalMapping = config.modelMappings[model]
-    if (globalMapping) {
-      if (globalMapping.preferredProviderId) {
-        if (globalMapping.preferredProviderId === provider.id) {
-          console.log(`[LoadBalancer] Model "${model}" matched preferred provider ${provider.name}`)
-          return true
-        }
-        return false
-      }
-      
-      const actualModel = globalMapping.actualModel
-      const normalizedActualModel = actualModel.toLowerCase()
-      const actualSupported = effectiveModels.some(m => {
-        const normalizedSupported = m.displayName.toLowerCase()
-        if (normalizedSupported.endsWith('*')) {
-          return normalizedActualModel.startsWith(normalizedSupported.slice(0, -1))
-        }
-        return normalizedSupported === normalizedActualModel
-      })
-      
-      if (actualSupported) {
-        console.log(`[LoadBalancer] Model "${model}" (actualModel: "${actualModel}") supported by ${provider.name}`)
-        return true
-      }
+    const routable = isModelRoutable({
+      model,
+      servedNames: storeManager.getEffectiveModels(provider.id).map(m => m.displayName),
+      hasCatalogue: storeManager.getModelCatalogue(provider.id).length > 0,
+      mapping: config.modelMappings[model],
+    })
+
+    if (!routable) {
+      console.log(`[LoadBalancer] Provider ${provider.name} does not support model ${model}`)
     }
-    
-    console.log(`[LoadBalancer] Provider ${provider.name} does not support model ${model}`)
-    return false
+
+    return routable
   }
 
   /**

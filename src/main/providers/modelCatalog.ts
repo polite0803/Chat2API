@@ -7,6 +7,7 @@
 import axios from 'axios'
 import { randomUUID } from 'crypto'
 import { getBuiltinProvider } from './builtin/index.ts'
+import { opencodeDisplayName } from './builtin/opencode.ts'
 import { resolveModelListSource } from './modelListSource.ts'
 import { readModelList } from './modelListReaders'
 import { buildAuthHeaders, buildRequestBody, buildRequestUrl } from './modelListRequest'
@@ -48,7 +49,12 @@ export async function fetchProviderModels(providerId: string): Promise<ModelsFet
       }
       return {
         ok: true,
-        models: usable.map(model => ({ displayName: model.name || model.id, actualModelId: model.id })),
+        // 展示名是 `opencode/<运行时id>`（与静态快照、聚合条目、账号通道同一命名空间），
+        // actualModelId 保持运行时认的裸 id——转发层拿到的就是它。
+        models: usable.map(model => ({
+          displayName: opencodeDisplayName(model.id),
+          actualModelId: model.id,
+        })),
         detail:
           skipped.length > 0
             ? `${skipped.length} model(s) are served over the Anthropic protocol and are not reachable here: ${skipped.map(m => m.id).join(', ')}`

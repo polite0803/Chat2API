@@ -9,16 +9,25 @@ import { PassThrough, type Readable } from 'stream'
 import { ChatCompletionRequest, ChatCompletionResponse, ProxyContext } from '../types'
 import type { AccountSelection, ForwardResult } from '../types'
 import { loadBalancer } from '../loadbalancer'
-import { requestForwarder } from '../forwarder'
+import { requestForwarder, isFailoverEligibleStatus } from '../forwarder'
 import { streamHandler } from '../stream'
 import { proxyStatusManager } from '../status'
 import { modelMapper } from '../modelMapper'
 import { autoRouter, isAutoModel } from '../autoRouter'
-import type { AutoCandidate } from '../autoRouter'
+import type { AutoCandidate, AutoRouteDecision } from '../autoRouter'
+import type { RequestLogEntry } from '../../../shared/types'
 import { buildStreamErrorFrame, mapUpstreamError, retryAfterHeader } from '../errorMapping'
 import { findUnsupportedParameter, unsupportedParameterError } from '../parameterPolicy'
 import { createToolViolationTap } from '../utils/toolViolationTap'
+import { normalizeMessageRoles } from '../utils/messageRoles'
+import { readStreamOutcome } from '../utils/streamOutcome'
 import { storeManager } from '../../store/store'
+import { AUTO_PREFERENCES, type AutoPreference } from '../../../shared/types'
+import { readOrEstimateUsage, usageInputText, type UsageReading } from '../quota/usage'
+import { learnFromErrorBody, learnFromHeaders } from '../quota/observations'
+import { takeCompressionReport } from '../compression'
+import { takeDuplication } from '../compression/duplication.ts'
+import { takeConversationTurn } from '../compression/survivorship.ts'
 import { 
   isAnthropicToolFormat,
   transformResponseToAnthropic,
@@ -27,11 +36,102 @@ import {
 
 const router = new Router({ prefix: '/v1/chat' })
 
+/** 请求日志里的 auto 决策记录；非 auto 请求返回 undefined（字段直接不出现） */
+function autoLogRecord(
+  decision: AutoRouteDecision | null,
+  attempts: number
+): RequestLogEntry['auto'] | undefined {
+  if (!decision) return undefined
+  return {
+    prefer: decision.prefer,
+    reason: decision.reason,
+    attempts,
+    candidates: decision.candidates.slice(0, 5).map(candidate => candidate.displayName),
+    ...(decision.degraded.length > 0 ? { degraded: decision.degraded } : {}),
+  }
+}
+
+/**
+ * `X-Auto-Prefer` 覆盖配置里的默认优化目标；非法值忽略，让配置继续生效，
+ * 而不是把一次手写头发当作请求级错误。
+ */
+function autoPreferenceFromHeader(ctx: Context): AutoPreference | undefined {
+  const raw = ctx.headers['x-auto-prefer']
+  const value = (Array.isArray(raw) ? raw[0] : raw)?.trim().toLowerCase()
+  if (!value) return undefined
+  return AUTO_PREFERENCES.includes(value as AutoPreference) ? (value as AutoPreference) : undefined
+}
+
+/**
+ * 账本是旁路：写不进去只记一条错误日志，绝不改变用户已经拿到的响应。
+ *
+ * 按日 token 计数在同一处写入，共用同一个 `UsageReading`，这样账本与仪表盘
+ * 永远看同一个口径 —— 两处各读一次响应体是最容易产生分歧的地方。
+ * `reading.source` 原样传下去，仪表盘必须把 upstream 与 estimated 分开显示。
+ */
+function meterQuota(
+  providerId: string,
+  accountId: string,
+  modelId: string,
+  reading: UsageReading,
+  savedTokens?: number
+): void {
+  try {
+    storeManager.getQuotaLedger().record(providerId, accountId, modelId, reading)
+  } catch (error) {
+    console.error('[Chat] quota ledger record failed:', error)
+  }
+
+  try {
+    storeManager.recordTokenUsage({
+      promptTokens: reading.promptTokens,
+      completionTokens: reading.completionTokens,
+      source: reading.source,
+      savedTokens,
+      // 上游没报就是 undefined，不是 0 —— 见 `TokenUsage.cacheReadTokens`。
+      cacheReadTokens: reading.cacheReadTokens,
+    })
+  } catch (error) {
+    console.error('[Chat] token usage record failed:', error)
+  }
+}
+
+
+/**
+ * 额度学习：只在用户自己的正常请求已经带回来东西时读一次响应头与 429 文本，
+ * 本仓不为此多发任何请求。写入一律「只填空、只下调」，见 quota/ledger.learn。
+ */
+function learnQuotaCaps(
+  provider: { id: string; type: string },
+  headers: unknown,
+  errorText?: string
+): void {
+  if (provider.type !== 'aggregate') return
+
+  try {
+    const ledger = storeManager.getQuotaLedger()
+    for (const cap of learnFromHeaders(headers as Record<string, string | number | string[] | undefined>)) {
+      ledger.learn(provider.id, cap.metric, cap.limit)
+    }
+    for (const cap of learnFromErrorBody(errorText)) {
+      ledger.learn(provider.id, cap.metric, cap.limit)
+    }
+  } catch (error) {
+    console.error('[Chat] quota learning skipped:', error)
+  }
+}
+
 /**
  * Generate Request ID
  */
 function generateRequestId(): string {
   return `chatcmpl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/** 非流式响应里上游报告的结束原因；上游没报就留空，不补默认值。 */
+function finishReasonOfBody(body: unknown): string | undefined {
+  const reason = (body as { choices?: Array<{ finish_reason?: unknown }> } | undefined)?.choices?.[0]?.finish_reason
+  return typeof reason === 'string' ? reason : undefined
 }
 
 /**
@@ -119,6 +219,12 @@ router.post('/completions', async (ctx: Context) => {
     return
   }
 
+  request = { ...request, messages: normalizeMessageRoles(request.messages) }
+
+  // 客户端请求的输出上限，口径与渠道包一致（max_completion_tokens 优先）；没给就不记。
+  const requestedMax = (request as { max_completion_tokens?: unknown }).max_completion_tokens ?? request.max_tokens
+  const requestedMaxTokens = typeof requestedMax === 'number' ? requestedMax : undefined
+
   request.requestId = requestId
 
   // 客户端提前断开时把上游也停掉：OpenCode 的一个回合要 30–60 秒，
@@ -163,13 +269,16 @@ router.post('/completions', async (ctx: Context) => {
 
   const config = storeManager.getConfig()
   const autoDecision = isAutoModel(request.model) && config.autoRouting?.enabled !== false
-    ? autoRouter.select(request, config.loadBalanceStrategy)
+    ? autoRouter.select(request, config.loadBalanceStrategy, autoPreferenceFromHeader(ctx))
     : null
 
   let selection: AccountSelection | null = null
+  let chainCandidates: AccountSelection[] = []
+  // 用户通过模型映射点名了具体账号时是硬性指定：命中它失败后不再轮换到同供应商其他 Key
+  let preferredAccountId: string | undefined = undefined
   if (!autoDecision) {
     const preferredProviderId = modelMapper.getPreferredProvider(request.model)
-    const preferredAccountId = modelMapper.getPreferredAccount(request.model)
+    preferredAccountId = modelMapper.getPreferredAccount(request.model)
 
     selection = loadBalancer.selectAccount(
       request.model,
@@ -177,6 +286,16 @@ router.post('/completions', async (ctx: Context) => {
       preferredProviderId,
       preferredAccountId
     )
+
+    // 裸名被哪家聚合条目接住，写进响应头；带前缀的名字本来就是点名，不打这个头。
+    if (selection && !request.model.includes('/') && selection.provider.type === 'aggregate') {
+      ctx.set('X-Chat2API-Aggregate-Chain', selection.provider.id)
+    }
+
+    // 同名能落到 ≥2 家时走跨家链；用户点过具体账号时不换家。
+    chainCandidates = preferredAccountId
+      ? []
+      : loadBalancer.selectChainCandidates(request.model, preferredAccountId)
 
     if (!selection) {
       ctx.status = 503
@@ -194,6 +313,13 @@ router.post('/completions', async (ctx: Context) => {
 
   const firstCandidate = autoDecision?.candidates[0]
 
+  // `n > 1` 没有任何候选能完整满足时，与具名路径同样报 400，而不是退回 503
+  if (autoDecision?.missing.includes('n')) {
+    ctx.status = 400
+    ctx.body = unsupportedParameterError('n')
+    return
+  }
+
   if (autoDecision && !firstCandidate) {
     ctx.status = 503
     ctx.body = {
@@ -202,9 +328,19 @@ router.post('/completions', async (ctx: Context) => {
         type: 'service_unavailable_error',
         param: null,
         code: 'no_available_model',
+        details: autoDecision.missing.length > 0 ? { missing: autoDecision.missing } : undefined,
       },
     }
     return
+  }
+
+  // 没有满足结构化输出的候选时仍然路由，但必须写明降级，不能假装满足
+  if (autoDecision && autoDecision.degraded.length > 0) {
+    ctx.set('X-Chat2API-Auto-Degraded', autoDecision.degraded.join(','))
+  }
+  if (autoDecision) {
+    ctx.set('X-Chat2API-Auto-Prefer', autoDecision.prefer)
+    ctx.set('X-Chat2API-Auto-Reason', autoDecision.reason)
   }
 
   // auto 路由时先按排名第一的候选记录请求开始，成功后再用真实命中的账号结算用量
@@ -212,6 +348,7 @@ router.post('/completions', async (ctx: Context) => {
   let provider = selection ? selection.provider : firstCandidate!.provider
   let actualModel = selection ? selection.actualModel : firstCandidate!.actualModel
   let chosenCandidate: AutoCandidate | null = null
+  let autoAttempts = 0
 
   // auto 的候选可能分属内置与自定义供应商，只有所有候选都拒绝时才整体报错
   const unsupportedParam = autoDecision
@@ -262,11 +399,43 @@ router.post('/completions', async (ctx: Context) => {
       }
 
       result = outcome.result
+      autoAttempts = outcome.attempts
+      ctx.set('X-Chat2API-Auto-Attempts', String(outcome.attempts))
       chosenCandidate = outcome.candidate
       account = outcome.candidate.account
       provider = outcome.candidate.provider
       actualModel = outcome.candidate.actualModel
       ctx.set('X-Chat2API-Route', `${actualModel} (${provider.name})`)
+    } else if (chainCandidates.length > 1) {
+      const outcome = await requestForwarder.forwardChainCompletion(
+        request,
+        chainCandidates.map(selection => ({
+          account: selection.account,
+          provider: selection.provider,
+          displayName: `${selection.provider.id}/${selection.actualModel}`,
+          actualModel: selection.actualModel,
+        })),
+        context
+      )
+
+      if (!outcome) {
+        ctx.status = 503
+        ctx.body = {
+          error: {
+            message: 'Aggregate chain produced no forward result',
+            type: 'service_unavailable_error',
+            param: null,
+            code: 'no_available_model',
+          },
+        }
+        return
+      }
+
+      result = outcome.result
+      account = outcome.candidate.account
+      provider = outcome.candidate.provider
+      actualModel = outcome.candidate.actualModel
+      ctx.set('X-Chat2API-Aggregate-Chain', provider.id)
     } else {
       result = await requestForwarder.forwardChatCompletion(
         request,
@@ -275,9 +444,51 @@ router.post('/completions', async (ctx: Context) => {
         actualModel,
         context
       )
+
+      // 同一聚合供应商配了多把 Key：这把失败且属于可切换错误（429/5xx/网络错误）时，
+      // 轮换到该供应商其余 Key 继续试；客户端拿到的是最后一次尝试的结果，
+      // 全部失败时失败样貌不变（429 仍带 Retry-After）。用户点名了具体账号（硬性指定）时不轮换。
+      if (!result.success && !preferredAccountId && isFailoverEligibleStatus(result.status)) {
+        const siblings = loadBalancer.selectSameProviderCandidates(request.model, provider.id, account.id)
+        if (siblings.length > 0) {
+          const outcome = await requestForwarder.forwardChainCompletion(
+            request,
+            siblings.map(sibling => ({
+              account: sibling.account,
+              provider: sibling.provider,
+              displayName: request.model,
+              actualModel: sibling.actualModel,
+            })),
+            context
+          )
+          if (outcome) {
+            result = outcome.result
+            account = outcome.candidate.account
+            provider = outcome.candidate.provider
+            actualModel = outcome.candidate.actualModel
+          }
+        }
+      }
     }
 
     const latency = Date.now() - startTime
+
+    // 压缩记录：转发器写在 live zone 上的改动，在这里一次性取出，
+    // 既写响应头（客户端无需读日志就能看到省了多少），也写进请求日志。
+    // 数字是估算值，绝不写进响应体的 usage。
+    const compressionReport = takeCompressionReport(requestId)
+    if (compressionReport && compressionReport.applied.length > 0) {
+      ctx.set('X-Chat2API-Compression', compressionReport.applied.join(','))
+      ctx.set('X-Chat2API-Compression-Saved', String(compressionReport.saved))
+      ctx.set('X-Chat2API-Compression-Ratio', compressionReport.ratio.toFixed(3))
+    }
+
+    // 跨轮重复度：纯观测，请求字节未被改动。只在日志里留一行，供日后判断
+    // "要不要做跨轮去重"；不写响应头，因为它不改变任何客户端可见行为。
+    const duplication = takeDuplication(requestId)
+    // 同一请求属于其会话的第几轮（1 = 首次观测）。纯观测，供日后估算 P4 的
+    // expected_reads —— 这个数在请求当时无法得知，只能事后从会话寿命学到。
+    const conversationTurn = takeConversationTurn(requestId)
 
     if (!result.success) {
       proxyStatusManager.recordRequestFailure(latency)
@@ -293,6 +504,7 @@ router.post('/completions', async (ctx: Context) => {
         const retryAfter = retryAfterHeader(result.headers as Record<string, unknown> | undefined)
         if (retryAfter) ctx.set('Retry-After', retryAfter)
       }
+      learnQuotaCaps(provider, result.headers, result.error)
       ctx.body = {
         error: {
           message: result.error || 'Request failed',
@@ -333,8 +545,13 @@ router.post('/completions', async (ctx: Context) => {
         accountName: account.name,
         requestBody: JSON.stringify(request),
         userInput,
+        auto: autoLogRecord(autoDecision, autoAttempts),
+        compression: compressionReport,
+        duplication,
+        conversationTurn,
         webSearch: request.web_search,
         reasoningEffort: request.reasoning_effort,
+        maxTokens: requestedMaxTokens,
         responseStatus: result.status || 500,
         responseBody: errorResponseBody,
         latency,
@@ -349,6 +566,7 @@ router.post('/completions', async (ctx: Context) => {
 
     loadBalancer.clearAccountFailure(account.id)
     autoRouter.clearAccountCooldown(account.id)
+    learnQuotaCaps(provider, result.headers)
 
     if (autoDecision && chosenCandidate) {
       autoRouter.rememberRoute(autoDecision.conversationKey, chosenCandidate)
@@ -397,10 +615,16 @@ router.post('/completions', async (ctx: Context) => {
         accountName: account.name,
         requestBody: JSON.stringify(request),
         userInput,
+        auto: autoLogRecord(autoDecision, autoAttempts),
+        compression: compressionReport,
+        duplication,
+        conversationTurn,
         webSearch: request.web_search,
         reasoningEffort: request.reasoning_effort,
+        maxTokens: requestedMaxTokens,
         responseStatus: 200,
         responseBody: responseBodyForLog,
+        finishReason: finishReasonOfBody(result.body),
         latency,
         isStream: false,
       })
@@ -421,8 +645,13 @@ router.post('/completions', async (ctx: Context) => {
         accountName: account.name,
         requestBody: JSON.stringify(request),
         userInput,
+        auto: autoLogRecord(autoDecision, autoAttempts),
+        compression: compressionReport,
+        duplication,
+        conversationTurn,
         webSearch: request.web_search,
         reasoningEffort: request.reasoning_effort,
+        maxTokens: requestedMaxTokens,
         responseStatus: 200,
         latency,
         isStream: true,
@@ -431,6 +660,20 @@ router.post('/completions', async (ctx: Context) => {
     }
 
     storeManager.recordRequestInStats(true, latency, request.model, provider.id, account.id)
+
+    if (!request.stream) {
+      const outputText = String((result.body as Record<string, any> | undefined)?.choices?.[0]?.message?.content ?? '')
+      meterQuota(
+        provider.id,
+        account.id,
+        actualModel,
+        readOrEstimateUsage(usageInputText(request), outputText, result.body),
+        // 只计真正生效的压缩节省；跳过的请求不计入（那是反事实）。
+        compressionReport && compressionReport.applied.length > 0
+          ? compressionReport.saved
+          : 0
+      )
+    }
 
     if (request.stream === true && result.stream) {
       ctx.set('Content-Type', 'text/event-stream')
@@ -446,6 +689,21 @@ router.post('/completions', async (ctx: Context) => {
 
       // Handle stream errors
       result.stream.once('error', (err: Error) => {
+        // 流失败必须回写请求日志：日志条目是在响应头阶段按 success 建的，
+        // 不翻成 error 的话这条请求在日志里永远显示成功（且耗时为响应头时间）。
+        // 客户端已断开也要写 —— 那正是用户看到失败、日志却全绿的情形。
+        if (logEntryId) {
+          const failureStatus = (err as { status?: number }).status ?? 502
+          storeManager.updateRequestLog(logEntryId, {
+            status: 'error',
+            statusCode: failureStatus,
+            responseStatus: failureStatus,
+            responsePreview: err.message,
+            // 错误页签读的是 errorMessage，只写 responsePreview 的话这条失败在详情里是空的。
+            errorMessage: err.message,
+          })
+        }
+
         // 客户端已断开时不再回写错误帧，避免 write after end
         if (wrapperStream.destroyed || ctx.res.writableEnded || ctx.res.destroyed) return
 
@@ -475,14 +733,27 @@ router.post('/completions', async (ctx: Context) => {
         // When source stream ends normally, update log and end wrapper
         result.stream.once('end', () => {
           const elapsed = Date.now() - startTime
+          // 这条流的输出就是上游 SSE 本身，结束原因与「有没有结束原因」直接从它读。
+          const outcome = readStreamOutcome(collectedContent)
           // Update log with collected response
           if (logEntryId) {
             storeManager.updateRequestLog(logEntryId, {
               responseBody: collectedContent || undefined,
+              finishReason: outcome.finishReason,
+              streamTruncated: !outcome.sawFinish,
               // 延迟型响应（响应头先发、正文后补）的耗时是整段，不是首字节
               ...(result.deferred ? { latency: elapsed } : {}),
             })
           }
+          meterQuota(
+            provider.id,
+            account.id,
+            actualModel,
+            readOrEstimateUsage(usageInputText(request), collectedContent),
+            compressionReport && compressionReport.applied.length > 0
+              ? compressionReport.saved
+              : 0
+          )
           wrapperStream.end()
         })
       } else {
@@ -500,16 +771,36 @@ router.post('/completions', async (ctx: Context) => {
           collectedContent += chunk.toString()
         })
 
+        // 断流判定必须看上游原始 SSE：转换器在上游没给结束原因时会补一个 stop，
+        // 只看输出就再也分不出「答完」和「被掐断」。结束帧都在流尾，留 8KB 够判。
+        let upstreamTail = ''
+        result.stream.on('data', (chunk: Buffer) => {
+          upstreamTail = (upstreamTail + chunk.toString()).slice(-8192)
+        })
+
         result.stream.pipe(transformStream)
         transformStream.pipe(wrapperStream, { end: false })
 
         transformStream.once('end', () => {
+          const delivered = readStreamOutcome(collectedContent)
+          const upstream = readStreamOutcome(upstreamTail)
           // Update log with collected response
           if (logEntryId) {
             storeManager.updateRequestLog(logEntryId, {
               responseBody: collectedContent || undefined,
+              finishReason: delivered.finishReason,
+              streamTruncated: !upstream.sawFinish,
             })
           }
+          meterQuota(
+            provider.id,
+            account.id,
+            actualModel,
+            readOrEstimateUsage(usageInputText(request), collectedContent),
+            compressionReport && compressionReport.applied.length > 0
+              ? compressionReport.saved
+              : 0
+          )
           wrapperStream.end()
         })
       }
@@ -562,11 +853,7 @@ router.post('/completions', async (ctx: Context) => {
             },
             finish_reason: 'stop',
           }],
-          usage: {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-          },
+          usage: null,
         }
       }
     }
@@ -619,8 +906,10 @@ router.post('/completions', async (ctx: Context) => {
       accountName: account.name,
       requestBody: JSON.stringify(request),
       userInput,
+      auto: autoLogRecord(autoDecision, autoAttempts),
       webSearch: request.web_search,
       reasoningEffort: request.reasoning_effort,
+      maxTokens: requestedMaxTokens,
       responseStatus: 500,
       responseBody: exceptionResponseBody,
       latency,

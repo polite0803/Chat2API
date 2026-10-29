@@ -2,10 +2,15 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  applyContractFilter,
+  contractNeeds,
   conversationKey,
+  explainMissing,
   profileRequest,
+  providerMeetsContract,
   rankCandidates,
   resolveCapability,
+  UNANNOTATED_CONTEXT_FLOOR,
   type RankCandidate,
 } from '../../src/main/proxy/autoRouting.ts'
 
@@ -84,19 +89,35 @@ test('profileRequest escalates long text with tools and high reasoning effort', 
 test('resolveCapability knows shipped models and falls back to name heuristics', () => {
   assert.deepEqual(
     { tier: resolveCapability('qwen', 'Qwen3.5-Flash').tier, vision: resolveCapability('qwen', 'Qwen3.5-Flash').vision },
-    { tier: 'fast', vision: false }
+    { tier: 'fast', vision: 'unknown' }
   )
-  assert.equal(resolveCapability('glm', 'GLM-5.3').vision, true)
+  assert.equal(resolveCapability('glm', 'GLM-5.3').vision, 'yes')
   assert.equal(resolveCapability('kimi', 'K3').tier, 'strong')
   assert.equal(resolveCapability('kimi', 'K2.8').tier, 'strong')
   assert.equal(resolveCapability('kimi', 'Instant').tier, 'fast')
-  assert.equal(resolveCapability('kimi', 'Instant').vision, false)
+  assert.equal(resolveCapability('kimi', 'Instant').vision, 'no')
   // legacy display name still resolves to the same tier
   assert.equal(resolveCapability('kimi', 'Kimi-K2.6').tier, 'strong')
   assert.equal(resolveCapability('kimi', 'some-unlisted-flash').tier, 'fast')
   assert.equal(resolveCapability('kimi', 'some-unlisted-pro').tier, 'strong')
-  // 未登记的模型默认不参与多模态路由
-  assert.equal(resolveCapability('unknown-provider', 'brand-new-model').vision, false)
+  // 未登记的模型保持未知，既不当作支持也不当作不支持
+  assert.equal(resolveCapability('unknown-provider', 'brand-new-model').vision, 'unknown')
+})
+
+test('resolveCapability reads aggregate display names past the entry prefix', () => {
+  // 聚合供应商的展示名是 `<entryId>/<modelId>`，静态表按模型名登记
+  assert.equal(resolveCapability('glm', 'glm/glm-5.3').tier, 'strong')
+  assert.equal(resolveCapability('glm', 'glm/glm-5.3').contextTokens, 128000)
+  // 账号渠道的展示名是 `<渠道名> / <模型名>`，同样要能命中
+  assert.equal(resolveCapability('kimi', 'Kimi / Instant').tier, 'fast')
+})
+
+test('a provider-record hint wins over the static table', () => {
+  const hinted = resolveCapability('glm', 'glm/glm-5.3', { vision: 'no', contextTokens: 32000 })
+  assert.equal(hinted.vision, 'no')
+  assert.equal(hinted.contextTokens, 32000)
+  // tier 没被覆盖时仍取静态表
+  assert.equal(hinted.tier, 'strong')
 })
 
 test('rankCandidates prefers the strong model for complex requests', () => {
@@ -128,6 +149,208 @@ test('rankCandidates never routes images to a text-only model', () => {
 
   assert.equal(ranked.length, 1)
   assert.equal(ranked[0].providerId, 'glm')
+})
+
+test('rankCandidates never routes images to a model whose vision support is unknown', () => {
+  const profile = profileRequest({
+    model: 'auto',
+    messages: [
+      {
+        role: 'user',
+        content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }],
+      },
+    ],
+  })
+
+  const ranked = rankCandidates(profile, [
+    // 未标注且无从推断：不知道能不能收图片，就不能拿它当答案
+    candidate({ providerId: 'custom-x', providerName: 'Custom', displayName: 'mystery-model', accountId: 'unknown' }),
+    candidate({ providerId: 'glm', providerName: 'GLM', displayName: 'GLM-5.3', actualModelId: 'glm-5.3', accountId: 'glm' }),
+  ], { now: NOW })
+
+  assert.deepEqual(ranked.map(item => item.accountId), ['glm'])
+})
+
+test('a capability hint can veto a statically supported model', () => {
+  const profile = profileRequest({
+    model: 'auto',
+    messages: [
+      { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }] },
+    ],
+  })
+
+  const ranked = rankCandidates(profile, [
+    candidate({
+      providerId: 'glm',
+      displayName: 'glm/glm-5.3',
+      actualModelId: 'glm-5.3',
+      accountId: 'vetoed',
+      capabilityHint: { vision: 'no' },
+    }),
+  ], { now: NOW })
+
+  assert.deepEqual(ranked, [])
+})
+
+test('a known context window filters long requests before the fallback floor', () => {
+  const profile = {
+    ...profileRequest(textRequest('short')),
+    estimatedTokens: 40_000,
+  }
+  assert.ok(profile.estimatedTokens < UNANNOTATED_CONTEXT_FLOOR)
+
+  const ranked = rankCandidates(profile, [
+    candidate({ accountId: 'small', capabilityHint: { contextTokens: 32000 } }),
+    candidate({ accountId: 'big', capabilityHint: { contextTokens: 128000 } }),
+  ], { now: NOW })
+
+  assert.deepEqual(ranked.map(item => item.accountId), ['big'])
+})
+
+test('the unannotated context floor keeps the historical 64000 limit', () => {
+  const profile = { ...profileRequest(textRequest('short')), estimatedTokens: 70_000 }
+
+  const ranked = rankCandidates(profile, [
+    candidate({ accountId: 'unannotated' }),
+  ], { now: NOW })
+
+  // 64000 硬过滤挡下，随后只放宽一次上下文，所以仍会返回该候选
+  assert.equal(ranked.length, 1)
+})
+
+test('contractNeeds only flags requirements that change the response shape', () => {
+  assert.deepEqual(contractNeeds(textRequest('hi')), { multiChoice: false, structuredOutput: false })
+  assert.equal(contractNeeds(textRequest('hi', { n: 2 })).multiChoice, true)
+  assert.equal(
+    contractNeeds(textRequest('hi', { response_format: { type: 'json_schema' } })).structuredOutput,
+    true,
+  )
+  assert.equal(
+    contractNeeds(textRequest('hi', { response_format: { type: 'text' } })).structuredOutput,
+    false,
+  )
+})
+
+test('only builtin providers fail a structured-output or multi-choice contract', () => {
+  const structured = { multiChoice: false, structuredOutput: true }
+  assert.equal(providerMeetsContract('builtin', structured), false)
+  assert.equal(providerMeetsContract('aggregate', structured), true)
+  assert.equal(providerMeetsContract('custom', structured), true)
+  assert.equal(providerMeetsContract('account', structured), true)
+  assert.equal(providerMeetsContract('builtin', { multiChoice: false, structuredOutput: false }), true)
+})
+
+test('applyContractFilter prefers capable candidates and reports what it gave up', () => {
+  const builtinOnly = [candidate({ accountId: 'builtin', contractCapable: false })]
+  const mixed = [
+    candidate({ accountId: 'builtin', contractCapable: false }),
+    candidate({ accountId: 'aggregate', contractCapable: true }),
+  ]
+
+  // 有能满足的候选：只在它们里面挑，不降级
+  assert.deepEqual(
+    applyContractFilter(mixed, { multiChoice: true, structuredOutput: false }),
+    { pool: [mixed[1]], degraded: [], missing: [] },
+  )
+
+  // n > 1 且只有内置：必须拒绝，不能悄悄返回一个 choice
+  assert.deepEqual(
+    applyContractFilter(builtinOnly, { multiChoice: true, structuredOutput: false }),
+    { pool: [], degraded: [], missing: ['n'] },
+  )
+
+  // 结构化输出且只有内置：照常路由，但必须报告降级
+  assert.deepEqual(
+    applyContractFilter(builtinOnly, { multiChoice: false, structuredOutput: true }),
+    { pool: builtinOnly, degraded: ['response_format'], missing: [] },
+  )
+
+  // 没有契约要求时原样返回
+  assert.deepEqual(
+    applyContractFilter(builtinOnly, { multiChoice: false, structuredOutput: false }),
+    { pool: builtinOnly, degraded: [], missing: [] },
+  )
+})
+
+test('balanced lets a free model break a near tie, cheap makes it win outright', () => {
+  const profile = profileRequest(textRequest('hi'))
+  const pool = [
+    // 免费的均衡档 vs 付费的快档：balanced 还要速度为先，cheap 才愿意为免费让步
+    candidate({ accountId: 'free', displayName: 'Qwen3.6', costBucket: 'free' }),
+    candidate({ accountId: 'paid', displayName: 'Qwen3.5-Flash', costBucket: 'above-base' }),
+  ]
+
+  const balanced = rankCandidates(profile, pool, { now: NOW, prefer: 'balanced' })
+  const cheap = rankCandidates(profile, pool, { now: NOW, prefer: 'cheap' })
+
+  assert.equal(balanced[0].accountId, 'paid')
+  assert.equal(cheap[0].accountId, 'free')
+})
+
+test('an unreported cost is neutral, so it neither wins nor loses on price', () => {
+  const profile = profileRequest(textRequest('hi'))
+  const ranked = rankCandidates(profile, [
+    candidate({ accountId: 'unknown-cost', costBucket: 'unknown' }),
+    candidate({ accountId: 'free-cost', costBucket: 'free' }),
+  ], { now: NOW, prefer: 'cheap' })
+
+  // 未知成本不是免费：cheap 下免费模型仍然排在它前面
+  assert.equal(ranked[0].accountId, 'free-cost')
+})
+
+test('the preference overrides the target tier for every complexity', () => {
+  const profile = { ...profileRequest(textRequest('hi')), complexity: 'complex' as const }
+  const pool = [
+    candidate({ accountId: 'fast', displayName: 'Qwen3.5-Flash' }),
+    candidate({ accountId: 'strong', displayName: 'Qwen3.7-Max' }),
+  ]
+
+  assert.equal(rankCandidates(profile, pool, { now: NOW })[0].accountId, 'strong')
+  assert.equal(rankCandidates(profile, pool, { now: NOW, prefer: 'fast' })[0].accountId, 'fast')
+  assert.equal(rankCandidates(profile, pool, { now: NOW, prefer: 'strong' })[0].accountId, 'strong')
+})
+
+test('a sticky hint promotes the previous candidate but never hard-pins it', () => {
+  const profile = profileRequest(textRequest('hi'))
+  const pool = [
+    candidate({ accountId: 'a', displayName: 'Qwen3.6' }),
+    candidate({ accountId: 'b', displayName: 'Qwen3.6' }),
+  ]
+
+  const sticky = { providerId: 'qwen', displayName: 'Qwen3.6', accountId: 'b' }
+  assert.equal(rankCandidates(profile, pool, { now: NOW, sticky })[0].accountId, 'b')
+
+  // 首选不可用（冷却）时它连候选都不是，路由自然让位，不需要额外清理
+  const cooling = [
+    candidate({ accountId: 'sticky-cooling', displayName: 'Qwen3.6', coolingUntil: NOW + 30_000 }),
+    candidate({ accountId: 'healthy', displayName: 'Qwen3.6' }),
+  ]
+  const ranked = rankCandidates(profile, cooling, {
+    now: NOW,
+    sticky: { providerId: 'qwen', displayName: 'Qwen3.6', accountId: 'sticky-cooling' },
+  })
+  assert.deepEqual(ranked.map(item => item.accountId), ['healthy'])
+})
+
+test('explainMissing names the capability that emptied the pool', () => {
+  const visionProfile = profileRequest({
+    model: 'auto',
+    messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'x' } }] }],
+  })
+  const textOnly = [candidate({ providerId: 'custom-x', displayName: 'mystery-model' })]
+  assert.deepEqual(explainMissing(visionProfile, textOnly), ['vision'])
+
+  const longProfile = { ...profileRequest(textRequest('hi')), estimatedTokens: 90_000 }
+  assert.deepEqual(
+    explainMissing(longProfile, [candidate({ capabilityHint: { contextTokens: 32000 } })]),
+    ['context'],
+  )
+
+  const toolsProfile = { ...profileRequest(textRequest('hi')), needsTools: true }
+  assert.deepEqual(
+    explainMissing(toolsProfile, [candidate({ capabilityHint: { tools: 'no' } })]),
+    ['tools'],
+  )
 })
 
 test('rankCandidates keeps one candidate per account', () => {

@@ -1,0 +1,277 @@
+/**
+ * Compression facade.
+ *
+ * One entry point, called once per request from `forwardChatCompletion`, before
+ * the managed tool-call layer injects its markup. Ordering is load-bearing:
+ *
+ *   route decision -> compress -> context management -> tool prompt injection
+ *
+ * - after routing, because `conversationKey` is derived from message content and
+ *   compressing first would make the sticky key drift between turns;
+ * - before tool prompt injection, because the injected tool instructions are
+ *   managed markup that must never be run through a content compressor;
+ * - before history trimming (review decision 5), because shrinking content can
+ *   make trimming unnecessary.
+ *
+ * The function is fail-open in every direction: no config, no live zone, an
+ * unsupported content type, a thrown compressor or an unreachable CCR store all
+ * resolve to "forward the original messages unchanged".
+ *
+ * Re-running it on already-compressed messages is harmless: every marker we emit
+ * is recognised by `isAlreadyCompressed`, so a retried or chained attempt sees a
+ * no-op instead of re-compressing compressed output.
+ */
+
+import type { ChatMessage } from '../types.ts'
+import { acceptCompression } from './policy.ts'
+import { detectContentType } from './detector.ts'
+import { estimateTokens } from './estimator.ts'
+import { getCcrStore } from './ccr/store.ts'
+import { isAlreadyCompressed } from './ccr/markers.ts'
+import { crushJsonArray, crushJsonDocument } from './compressors/smartCrusher.ts'
+import {
+  pickLiveZone,
+  readLiveZoneText,
+  replaceLiveZoneText,
+  type LiveZoneTarget,
+} from './liveZone.ts'
+import {
+  AGGRESSIVENESS_BIAS,
+  CONTENT_TYPE_MIN_BYTES,
+  COMPRESSION_TIMEOUT_MS,
+  DEFAULT_COMPRESSION_CONFIG,
+  MAX_KEPT_ITEMS,
+  MIN_MESSAGE_TOKENS,
+  type CompressionConfig,
+  type CompressionReport,
+  type CompressionSkipReason,
+  type ContentType,
+} from './types.ts'
+
+/** Persist an original and return the id to embed in a marker, or null. */
+export type StashFunction = (original: string, idLength: number) => string | null
+
+export interface ApplyCompressionInput {
+  messages: ChatMessage[] | undefined
+  /** Requested completion count; > 1 is never compressed. */
+  n?: number
+  config?: CompressionConfig
+  /**
+   * CCR sink override. Production omits it and the on-disk store is used; tests
+   * inject an in-memory one so a locked-down home directory cannot turn every
+   * assertion into "compression refused".
+   */
+  stash?: StashFunction
+}
+
+export interface ApplyCompressionOutcome {
+  messages: ChatMessage[] | undefined
+  /** Absent when compression is disabled, so the log row stays clean. */
+  report?: CompressionReport
+}
+
+interface CompressedBlock {
+  text: string
+  ccrHash?: string
+  strategy: string
+  contentType: ContentType
+}
+
+type TargetOutcome =
+  | { ok: true; block: CompressedBlock; before: string }
+  | { ok: false; reason: CompressionSkipReason }
+
+function skipReport(
+  reason: CompressionSkipReason,
+  messages: ChatMessage[] | undefined
+): ApplyCompressionOutcome {
+  return {
+    messages,
+    report: { applied: [], tokensBefore: 0, tokensAfter: 0, saved: 0, ratio: 0, skipped: reason },
+  }
+}
+
+/**
+ * Run the compressor appropriate for `contentType`, or `null` when this content
+ * class has no compressor.
+ *
+ * Only the two JSON shapes are wired today; log and search compressors land in
+ * P2.
+ */
+function compressForType(
+  text: string,
+  contentType: ContentType,
+  config: CompressionConfig,
+  stash: StashFunction
+): CompressedBlock | null {
+  const options = {
+    maxKeptItems: MAX_KEPT_ITEMS,
+    bias: AGGRESSIVENESS_BIAS[config.aggressiveness] ?? 1,
+    stash,
+  }
+
+  if (contentType === 'json_array') {
+    const result = crushJsonArray(text, options)
+    if (!result.changed) return null
+    return { text: result.text, ccrHash: result.ccrHash, strategy: 'json', contentType }
+  }
+
+  // A wrapped document (`{"results":[...]}`) is the shape most tool results
+  // actually take, so it is compressed by rewriting its nested arrays.
+  if (contentType === 'json_document') {
+    const result = crushJsonDocument(text, options)
+    if (!result.changed) return null
+    return { text: result.text, ccrHash: result.ccrHash, strategy: 'json', contentType }
+  }
+
+  return null
+}
+
+/** Read, classify and compress one live-zone slot. Never throws. */
+function compressTarget(
+  messages: ChatMessage[],
+  target: LiveZoneTarget,
+  config: CompressionConfig,
+  stash: StashFunction
+): TargetOutcome {
+  try {
+    const text = readLiveZoneText(messages, target)
+    if (!text) return { ok: false, reason: 'no_live_zone' }
+
+    if (isAlreadyCompressed(text)) return { ok: false, reason: 'already_compressed' }
+
+    if (estimateTokens(text) < MIN_MESSAGE_TOKENS) return { ok: false, reason: 'below_min_tokens' }
+
+    const detection = detectContentType(text)
+    if (text.length < CONTENT_TYPE_MIN_BYTES[detection.type]) {
+      return { ok: false, reason: 'below_threshold' }
+    }
+
+    const block = compressForType(text, detection.type, config, stash)
+    if (!block) return { ok: false, reason: 'unsupported_type' }
+
+    return { ok: true, block, before: text }
+  } catch (error) {
+    // A compressor bug must never fail a user's request.
+    console.error('[Compression] compressor failed, forwarding verbatim:', error)
+    return { ok: false, reason: 'error' }
+  }
+}
+
+/**
+ * Compress the live zone of one request.
+ *
+ * Returns the original `messages` reference (not a copy) whenever nothing was
+ * rewritten, so callers can rely on reference equality to detect a no-op.
+ */
+export function applyCompression(input: ApplyCompressionInput): ApplyCompressionOutcome {
+  const config = input.config ?? DEFAULT_COMPRESSION_CONFIG
+  const { messages } = input
+
+  if (!config.enabled) return { messages }
+  if (!Array.isArray(messages) || messages.length === 0) return skipReport('no_messages', messages)
+
+  // Multiple completions share one prompt; compressing it would change what the
+  // caller asked for on paths that assume a deterministic single answer.
+  if (typeof input.n === 'number' && input.n > 1) {
+    return skipReport('multiple_choices', messages)
+  }
+
+  const targets = pickLiveZone(messages)
+  if (targets.length === 0) return skipReport('no_live_zone', messages)
+
+  // Production stashes into the on-disk CCR store; tests inject a fake so a
+  // locked-down home directory cannot turn every case into "compression refused".
+  const stash: StashFunction =
+    input.stash ?? ((original, idLength) => getCcrStore().put(original, idLength))
+
+  const deadline = Date.now() + COMPRESSION_TIMEOUT_MS
+  const applied: string[] = []
+  const hashes: string[] = []
+  let tokensBefore = 0
+  let tokensAfter = 0
+  let nextMessages = messages
+  let lastSkip: CompressionSkipReason | undefined
+
+  for (const target of targets) {
+    if (Date.now() > deadline) {
+      lastSkip = 'timeout'
+      break
+    }
+
+    const outcome = compressTarget(nextMessages, target, config, stash)
+    if (!outcome.ok) {
+      lastSkip = outcome.reason
+      continue
+    }
+
+    const gate = acceptCompression({
+      before: outcome.before,
+      after: outcome.block.text,
+      contentType: outcome.block.contentType,
+      changed: true,
+    })
+    if (!gate.accept) {
+      lastSkip = gate.reason ?? 'not_smaller'
+      continue
+    }
+
+    nextMessages = replaceLiveZoneText(nextMessages, target, outcome.block.text)
+    applied.push(outcome.block.strategy)
+    if (outcome.block.ccrHash) hashes.push(outcome.block.ccrHash)
+    tokensBefore += gate.tokensBefore
+    tokensAfter += gate.tokensAfter
+  }
+
+  if (applied.length === 0) {
+    return skipReport(lastSkip ?? 'no_live_zone', messages)
+  }
+
+  const saved = tokensBefore - tokensAfter
+  return {
+    messages: nextMessages,
+    report: {
+      applied,
+      tokensBefore,
+      tokensAfter,
+      saved,
+      ratio: tokensBefore > 0 ? saved / tokensBefore : 0,
+      ...(hashes.length > 0 ? { ccrHashes: hashes } : {}),
+    },
+  }
+}
+
+export { getCcrStore } from './ccr/store.ts'
+export type { CompressionConfig, CompressionReport } from './types.ts'
+export { DEFAULT_COMPRESSION_CONFIG } from './types.ts'
+
+/**
+ * Per-request report handoff.
+ *
+ * The forwarder runs the compression but the route owns the response headers and
+ * the request-log row, and `ForwardResult` is shared by every forwarder — adding
+ * a field there would ripple through all of them for one optional record. A
+ * small keyed registry keeps the change local: the forwarder records, the route
+ * takes once.
+ *
+ * Bounded so a request that never reaches the route (client disconnect) cannot
+ * leak an entry forever; the oldest entry is evicted first.
+ */
+const reports = new Map<string, CompressionReport>()
+const MAX_PENDING_REPORTS = 256
+
+export function recordCompressionReport(requestId: string, report: CompressionReport): void {
+  if (!requestId) return
+  if (reports.size >= MAX_PENDING_REPORTS) {
+    const oldest = reports.keys().next()
+    if (!oldest.done) reports.delete(oldest.value)
+  }
+  reports.set(requestId, report)
+}
+
+/** Read and clear the report for `requestId`. */
+export function takeCompressionReport(requestId: string): CompressionReport | undefined {
+  const report = reports.get(requestId)
+  if (report) reports.delete(requestId)
+  return report
+}

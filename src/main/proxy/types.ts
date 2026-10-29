@@ -143,7 +143,7 @@ export interface ChatCompletionResponse {
     prompt_tokens: number
     completion_tokens: number
     total_tokens: number
-  }
+  } | null
 }
 
 /**
@@ -189,6 +189,15 @@ export interface ModelInfo {
   object: 'model'
   created: number
   owned_by: string
+  /**
+   * 上游声明的上下文窗口。**没把握就整个键省略**，绝不发 0 或猜一个值。
+   *
+   * 为什么要发：Codex / DSH 这类客户端用它决定「什么时候该压缩」。没有这个字段时
+   * 它们退回**自己的默认窗口**，而我们既不知道那个值、也无法解释「为什么它一直
+   * 提前压缩 / 一直不压缩」。渠道 Worker 的网关本来就在发 `context_window`，此前
+   * 是 ModelPort 自己重建清单时把它丢了。
+   */
+  context_window?: number
   permission?: ModelPermission[]
   root?: string
   parent?: string

@@ -14,7 +14,7 @@ import type {
   ProxyStatusResponse,
 } from '../../../../shared/types'
 
-const router = new Router({ prefix: '/v0/management/proxy' })
+const router = new Router({ prefix: '/v1/management/proxy' })
 
 router.use(managementAuthMiddleware)
 

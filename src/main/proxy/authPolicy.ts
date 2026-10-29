@@ -37,6 +37,33 @@ export function requiresApiKey(apiKeys?: ApiKeyRecord[]): boolean {
   return activeApiKeys(apiKeys).length > 0
 }
 
+/**
+ * Reads the key a client sent.
+ *
+ * The scheme name is case-insensitive (RFC 7235), and some desktop clients ship
+ * the user's pasted value verbatim, quotes included, so both are normalised here
+ * instead of failing an otherwise valid key.
+ */
+export function extractApiKey(input: { authorization?: string; xApiKey?: string }): string | null {
+  const authorization = (input.authorization ?? '').trim()
+  const bearer = /^bearer\s+(.+)$/i.exec(authorization)
+  if (bearer) {
+    const key = stripWrappingQuotes((bearer[1] ?? '').trim())
+    return key === '' ? null : key
+  }
+  const headerKey = stripWrappingQuotes((input.xApiKey ?? '').trim())
+  return headerKey === '' ? null : headerKey
+}
+
+function stripWrappingQuotes(value: string): string {
+  if (value.length < 2) return value
+  const first = value.charAt(0)
+  if ((first === '"' || first === "'") && value.charAt(value.length - 1) === first) {
+    return value.slice(1, -1).trim()
+  }
+  return value
+}
+
 export type ApiKeyAuthOutcome = 'allow' | 'missing_key' | 'invalid_key'
 
 export function evaluateApiKeyAuth(input: {

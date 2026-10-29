@@ -11,7 +11,7 @@ import type { Context } from 'koa'
 import { managementAuthMiddleware } from '../../middleware/managementAuth'
 import type { ManagementApiResponse } from '../../../../shared/types'
 
-const router = new Router({ prefix: '/v0/management' })
+const router = new Router({ prefix: '/v1/management' })
 
 function retiredResponse(): ManagementApiResponse {
   return {

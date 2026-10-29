@@ -1,5 +1,5 @@
 /**
- * The ten account channels shipped by the vendored pack.
+ * The twelve account channels shipped by the vendored pack.
  *
  * This is metadata only: login flows, account pools, credit claims and model
  * catalogues all come from `vendor/channel-pack` at runtime. The ids here must
@@ -78,6 +78,20 @@ export const ACCOUNT_CHANNELS: readonly ChannelDefinition[] = [
     vendor: 'Google',
     loginKind: 'oauth',
     description: '本地回调 OAuth 授权 Google 账号，走 Cloud Code Assist 免费线。',
+  },
+  {
+    id: 'buddy',
+    name: 'CodeBuddy (腾讯)',
+    vendor: '腾讯',
+    loginKind: 'browser',
+    description: '中国版 CodeBuddy：浏览器授权，支持每日签到领取免费积分（国际版 WorkBuddy 没有签到接口）。',
+  },
+  {
+    id: 'workbuddy',
+    name: 'WorkBuddy (腾讯)',
+    vendor: '腾讯',
+    loginKind: 'browser',
+    description: '浏览器授权 WorkBuddy 国际版账号，共享一份每日额度；后端没有签到接口。',
   },
 ]
 

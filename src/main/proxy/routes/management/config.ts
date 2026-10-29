@@ -10,7 +10,7 @@ import ConfigManager from '../../../store/config'
 import type { ManagementApiResponse, ConfigUpdateRequest } from '../../../../shared/types'
 import type { AppConfig } from '../../../store/types'
 
-const router = new Router({ prefix: '/v0/management/config' })
+const router = new Router({ prefix: '/v1/management/config' })
 
 router.use(managementAuthMiddleware)
 

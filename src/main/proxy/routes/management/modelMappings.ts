@@ -14,7 +14,7 @@ import type {
   ManagementApiResponse,
 } from '../../../../shared/types'
 
-const router = new Router({ prefix: '/v0/management' })
+const router = new Router({ prefix: '/v1/management' })
 
 /**
  * Create error response
@@ -40,7 +40,7 @@ function createSuccessResponse<T>(data: T): ManagementApiResponse<T> {
 }
 
 /**
- * GET /v0/management/model-mappings
+ * GET /v1/management/model-mappings
  * List all model mappings
  */
 router.get('/model-mappings', managementAuthMiddleware, async (ctx: Context) => {
@@ -58,7 +58,7 @@ router.get('/model-mappings', managementAuthMiddleware, async (ctx: Context) => 
 })
 
 /**
- * POST /v0/management/model-mappings
+ * POST /v1/management/model-mappings
  * Create new model mapping
  */
 router.post('/model-mappings', managementAuthMiddleware, async (ctx: Context) => {
@@ -104,7 +104,7 @@ router.post('/model-mappings', managementAuthMiddleware, async (ctx: Context) =>
 })
 
 /**
- * PUT /v0/management/model-mappings/:model
+ * PUT /v1/management/model-mappings/:model
  * Update model mapping
  */
 router.put('/model-mappings/:model', managementAuthMiddleware, async (ctx: Context) => {
@@ -138,7 +138,7 @@ router.put('/model-mappings/:model', managementAuthMiddleware, async (ctx: Conte
 })
 
 /**
- * DELETE /v0/management/model-mappings/:model
+ * DELETE /v1/management/model-mappings/:model
  * Delete model mapping
  */
 router.delete('/model-mappings/:model', managementAuthMiddleware, async (ctx: Context) => {

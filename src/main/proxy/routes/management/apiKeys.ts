@@ -15,7 +15,7 @@ import type {
   ManagementApiResponse 
 } from '../../../../shared/types'
 
-const router = new Router({ prefix: '/v0/management' })
+const router = new Router({ prefix: '/v1/management' })
 
 const API_KEY_PREFIX = 'sk-mgmt-'
 const KEY_RANDOM_LENGTH = 32
@@ -73,7 +73,7 @@ function createSuccessResponse<T>(data: T): ManagementApiResponse<T> {
 }
 
 /**
- * GET /v0/management/api-keys
+ * GET /v1/management/api-keys
  * List all API keys (key values masked)
  */
 router.get('/api-keys', managementAuthMiddleware, async (ctx: Context) => {
@@ -92,7 +92,7 @@ router.get('/api-keys', managementAuthMiddleware, async (ctx: Context) => {
 })
 
 /**
- * POST /v0/management/api-keys
+ * POST /v1/management/api-keys
  * Create new API key
  * Returns the full key value - only shown once!
  */
@@ -138,7 +138,7 @@ router.post('/api-keys', managementAuthMiddleware, async (ctx: Context) => {
 })
 
 /**
- * PUT /v0/management/api-keys/:id
+ * PUT /v1/management/api-keys/:id
  * Update API key metadata (name, description, enabled)
  */
 router.put('/api-keys/:id', managementAuthMiddleware, async (ctx: Context) => {
@@ -199,7 +199,7 @@ router.put('/api-keys/:id', managementAuthMiddleware, async (ctx: Context) => {
 })
 
 /**
- * DELETE /v0/management/api-keys/:id
+ * DELETE /v1/management/api-keys/:id
  * Delete API key
  */
 router.delete('/api-keys/:id', managementAuthMiddleware, async (ctx: Context) => {
@@ -235,7 +235,7 @@ router.delete('/api-keys/:id', managementAuthMiddleware, async (ctx: Context) =>
 })
 
 /**
- * POST /v0/management/api-keys/:id/regenerate
+ * POST /v1/management/api-keys/:id/regenerate
  * Generate new key value for existing key
  * Returns the new key value - only shown once!
  */

@@ -6,18 +6,86 @@
  */
 
 import type { ChatCompletionRequest, ChatMessage } from './types'
+import type { AutoModelTier, AutoPreference, CapabilityState, ModelCapabilityHint } from '../../shared/types'
+import type { CostBucket } from '../../shared/channels.ts'
+import { providerDefaultCapability, staticCapabilityHint } from './modelCapabilities.ts'
 
-export type AutoModelTier = 'fast' | 'balanced' | 'strong'
 export type AutoComplexity = 'simple' | 'standard' | 'complex'
 /** 与 loadBalanceStrategy 保持一致，用于选择打分口径 */
-export type AutoRoutingStrategy = 'round-robin' | 'fill-first' | 'failover'
+export type AutoRoutingStrategy = 'round-robin' | 'fill-first' | 'failover' | 'smart' | 'pace'
+
+/**
+ * 请求里会改变响应形状、不能靠提示词补上的要求。
+ * 与 `parameterPolicy` 同一口径：内置供应商丢弃 `response_format`、
+ * 对 `n > 1` 直接 400，所以这两项要按供应商类型筛选目标。
+ */
+export interface ContractNeeds {
+  multiChoice: boolean
+  structuredOutput: boolean
+}
+
+export function contractNeeds(request: ChatCompletionRequest): ContractNeeds {
+  const raw = request as unknown as Record<string, unknown>
+  const format = raw.response_format as { type?: unknown } | undefined
+  const type = typeof format?.type === 'string' ? format.type : ''
+  return {
+    multiChoice: typeof request.n === 'number' && request.n > 1,
+    structuredOutput: type === 'json_object' || type === 'json_schema',
+  }
+}
+
+export function needsContractFilter(needs: ContractNeeds): boolean {
+  return needs.multiChoice || needs.structuredOutput
+}
+
+/**
+ * 该供应商能否完整满足这些契约。只有内置供应商被确认做不到；
+ * 聚合与自定义原样透传（`parameterPolicy.findUnsupportedParameter` 只拦内置）。
+ */
+export function providerMeetsContract(providerType: string | undefined, needs: ContractNeeds): boolean {
+  if (providerType !== 'builtin') return true
+  return !needs.multiChoice && !needs.structuredOutput
+}
+
+export interface ContractOutcome {
+  /** 实际参与排序的候选 */
+  pool: RankCandidate[]
+  /** 为路由成功而放宽的契约，调用方必须写进响应头 */
+  degraded: string[]
+  /** 没有候选能满足、必须拒绝的契约 */
+  missing: string[]
+}
+
+/**
+ * 契约过滤：
+ * - 有候选能完整满足 → 只在它们里面挑；
+ * - 一个都没有 → `n > 1` 记为 missing（交给调用方按既有 400 拒绝），
+ *   `response_format` 记为 degraded 并照常路由（自由文本比不可用更接近用户想要）。
+ */
+export function applyContractFilter(candidates: RankCandidate[], needs: ContractNeeds): ContractOutcome {
+  if (!needsContractFilter(needs)) {
+    return { pool: candidates, degraded: [], missing: [] }
+  }
+
+  const capable = candidates.filter(candidate => candidate.contractCapable === true)
+  if (capable.length > 0) {
+    return { pool: capable, degraded: [], missing: [] }
+  }
+
+  if (needs.multiChoice) {
+    return { pool: [], degraded: [], missing: ['n'] }
+  }
+
+  return { pool: candidates, degraded: ['response_format'], missing: [] }
+}
 
 /** 单个模型的能力描述，用于硬过滤与档位打分 */
 export interface ModelCapability {
   tier: AutoModelTier
-  vision: boolean
-  tools: boolean
-  contextTokens: number
+  vision: CapabilityState
+  tools: CapabilityState
+  /** 上下文窗口；`undefined` 表示未知（不是 0） */
+  contextTokens?: number
 }
 
 /** 由请求体推导出的路由画像 */
@@ -47,6 +115,15 @@ export interface RankCandidate {
   rpmLimit?: number
   /** 冷却截止时间戳，<= now 表示可用 */
   coolingUntil?: number
+  /**
+   * 供应商记录里这个模型自己的标注（账号渠道写入，或聚合目录推导）。
+   * 优先级高于静态表；缺省即未知。
+   */
+  capabilityHint?: ModelCapabilityHint
+  /** 该供应商能否满足本次请求的契约（`n > 1` / `response_format`），由采集层填入 */
+  contractCapable?: boolean
+  /** 成本档；缺省按 unknown 参与打分（中性） */
+  costBucket?: CostBucket
 }
 
 export interface RankOptions {
@@ -57,6 +134,16 @@ export interface RankOptions {
   seed?: number
   /** 打分口径，默认与服务端的 loadBalanceStrategy 一致 */
   strategy?: AutoRoutingStrategy
+  /** 优化目标，默认 balanced */
+  prefer?: AutoPreference
+  /** 同一会话上次成功的候选，作为加分项而不是硬钉 */
+  sticky?: StickyHint
+}
+
+export interface StickyHint {
+  providerId: string
+  displayName: string
+  accountId: string
 }
 
 const TIER_RANK: Record<AutoModelTier, number> = {
@@ -71,83 +158,13 @@ const TIER_TARGET: Record<AutoComplexity, number> = {
   complex: 2,
 }
 
-/** 未登记模型的保守默认：可做纯文本 + 工具调用，不参与多模态路由 */
-const DEFAULT_CAPABILITY: ModelCapability = {
-  tier: 'balanced',
-  vision: false,
-  tools: true,
-  contextTokens: 64000,
-}
+export type { AutoModelTier, CapabilityState, ModelCapabilityHint } from '../../shared/types'
 
 /**
- * 供应商级默认能力。vision 只在 adapter 真的能上传图片时才为 true：
- * 目前 glm / kimi / minimax 的 adapter 会转换 image_url / file 内容。
+ * 上下文窗口未知的模型按这个值做硬过滤（D2：维持既有 64000）。
+ * 它只是一个保守上界，不是对真实窗口的声明，也不写进任何响应。
  */
-const PROVIDER_DEFAULT_CAPABILITY: Record<string, Partial<ModelCapability>> = {
-  deepseek: { vision: false },
-  glm: { vision: true },
-  kimi: { vision: true },
-  minimax: { vision: true },
-  qwen: { vision: false },
-  'qwen-ai': { vision: false },
-  zai: { vision: false },
-  mimo: { vision: false },
-}
-
-/** 已登记模型的能力表，键为小写显示名 */
-const MODEL_CAPABILITIES: Record<string, Record<string, Partial<ModelCapability>>> = {
-  deepseek: {
-    'deepseek-default': { tier: 'balanced' },
-    'deepseek-expert': { tier: 'strong' },
-    // 识图模式虽有独立入口，但 adapter 目前不上传图片，因此不参与多模态路由
-    'deepseek-vision': { tier: 'balanced', vision: false },
-  },
-  glm: {
-    'glm-5.3': { tier: 'strong', vision: true, contextTokens: 128000 },
-    'glm-5.3-flash': { tier: 'fast', vision: true },
-  },
-  kimi: {
-    k3: { tier: 'strong', vision: true, contextTokens: 128000 },
-    'k2.8': { tier: 'strong', vision: true, contextTokens: 128000 },
-    // chat-only model: the site exposes no file handling for it
-    instant: { tier: 'fast', vision: false },
-    // legacy display name, same capability the old entry described
-    'kimi-k2.6': { tier: 'strong', vision: true, contextTokens: 128000 },
-  },
-  minimax: {
-    'm3.1-flash': { tier: 'balanced', vision: true, contextTokens: 128000 },
-    m3: { tier: 'strong', vision: true, contextTokens: 128000 },
-    // legacy display name, kept so old client configs route the same way
-    'minimax-m2.7': { tier: 'balanced', vision: true, contextTokens: 128000 },
-  },
-  qwen: {
-    'qwen3.7-max': { tier: 'strong' },
-    'qwen3-max': { tier: 'strong' },
-    'qwen3-max-thinking-preview': { tier: 'strong' },
-    'qwen3.6': { tier: 'balanced' },
-    'qwen3.5-flash': { tier: 'fast' },
-    'qwen3-coder': { tier: 'balanced' },
-  },
-  'qwen-ai': {
-    'qwen3.7-max': { tier: 'strong' },
-    'qwen3.6-plus': { tier: 'balanced' },
-    'qwen3.6-35b-a3b': { tier: 'fast' },
-    'qwen3.6-27b': { tier: 'fast' },
-    'qwen3-coder': { tier: 'balanced' },
-  },
-  zai: {
-    'glm-5.1': { tier: 'strong' },
-    'glm-5': { tier: 'strong' },
-    'glm-5-turbo': { tier: 'fast' },
-    'glm-5v-turbo': { tier: 'balanced' },
-    'glm-4.7': { tier: 'balanced' },
-  },
-  mimo: {
-    'mimo-v2.5-pro': { tier: 'strong' },
-    'mimo-v2.5': { tier: 'balanced' },
-    'mimo-v2-flash': { tier: 'fast' },
-  },
-}
+export const UNANNOTATED_CONTEXT_FLOOR = 64000
 
 /** 在线同步来的未知模型按名字猜档位，猜错只影响档位匹配，不影响可用性 */
 const FAST_NAME_PATTERN = /(flash|turbo|mini|lite|fast|air|small|\d+b|a\d+b)/
@@ -157,6 +174,18 @@ const VISION_PART_TYPES = new Set(['image_url', 'input_image', 'image', 'file'])
 const IMAGE_TOKEN_ESTIMATE = 1024
 const LONG_CONTEXT_TOKEN_THRESHOLD = 24000
 const IDLE_WINDOW_MS = 5 * 60 * 1000
+
+/**
+ * 成本档 → 打分因子。口径同 `costBucketOf`：未知单独成档，取中性 0.5，
+ * 既不奖励也不惩罚（没有倍率不等于免费）。
+ */
+const COST_SCORE: Record<CostBucket, number> = {
+  free: 1,
+  'below-base': 0.75,
+  base: 0.5,
+  unknown: 0.5,
+  'above-base': 0.25,
+}
 
 function isVisionPart(part: unknown): boolean {
   if (!part || typeof part !== 'object') return false
@@ -282,28 +311,36 @@ export function conversationKey(request: ChatCompletionRequest): string | undefi
 }
 
 /**
- * 查询模型能力：已登记的表 > 供应商默认 > 名字启发式 > 保守默认
+ * 查询模型能力，优先级：
+ * 供应商记录标注（`hint`）> 静态表 > 供应商级兜底 > 名字启发式 > 未知。
+ *
+ * 未知是一等状态：vision 未知就不能接图片，tools 未知可以接但要扣分，
+ * 上下文未知按 `UNANNOTATED_CONTEXT_FLOOR` 过滤。任何一层都不写默认值。
  */
-export function resolveCapability(providerId: string, displayName: string): ModelCapability {
+export function resolveCapability(
+  providerId: string,
+  displayName: string,
+  hint?: ModelCapabilityHint
+): ModelCapability {
   const key = displayName.trim().toLowerCase()
-  const exact = MODEL_CAPABILITIES[providerId]?.[key] || {}
-  const providerDefaults = PROVIDER_DEFAULT_CAPABILITY[providerId] || {}
+  const staticHint = staticCapabilityHint(providerId, displayName) ?? {}
+  const providerDefaults = providerDefaultCapability(providerId) ?? {}
 
-  const inferred: Partial<ModelCapability> = {}
-  if (!exact.tier) {
-    if (FAST_NAME_PATTERN.test(key)) {
-      inferred.tier = 'fast'
-    } else if (STRONG_NAME_PATTERN.test(key)) {
-      inferred.tier = 'strong'
-    }
-  }
+  const tier = hint?.tier ?? staticHint.tier ?? providerDefaults.tier
+    ?? (FAST_NAME_PATTERN.test(key) ? 'fast'
+      : STRONG_NAME_PATTERN.test(key) ? 'strong'
+        : 'balanced')
 
   return {
-    ...DEFAULT_CAPABILITY,
-    ...providerDefaults,
-    ...inferred,
-    ...exact,
+    tier,
+    vision: hint?.vision ?? staticHint.vision ?? providerDefaults.vision ?? 'unknown',
+    tools: hint?.tools ?? staticHint.tools ?? providerDefaults.tools ?? 'unknown',
+    contextTokens: hint?.contextTokens ?? staticHint.contextTokens ?? providerDefaults.contextTokens,
   }
+}
+
+function effectiveContextLimit(capability: ModelCapability): number {
+  return capability.contextTokens ?? UNANNOTATED_CONTEXT_FLOOR
 }
 
 function satisfiesCapability(
@@ -311,10 +348,38 @@ function satisfiesCapability(
   capability: ModelCapability,
   enforceContext: boolean
 ): boolean {
-  if (profile.needsVision && !capability.vision) return false
-  if (profile.needsTools && !capability.tools) return false
-  if (enforceContext && profile.estimatedTokens > capability.contextTokens) return false
+  // 图片被静默丢掉就是错答案，所以只有确认能收图片的模型才参与
+  if (profile.needsVision && capability.vision !== 'yes') return false
+  if (profile.needsTools && capability.tools === 'no') return false
+  if (enforceContext && profile.estimatedTokens > effectiveContextLimit(capability)) return false
   return true
+}
+
+export type MissingRequirement = 'vision' | 'tools' | 'context'
+
+/**
+ * 排序结果为空时，说明到底缺哪种能力——直接说"没有可用模型"对排障没有帮助。
+ * 只报描述性原因，不改变判定。
+ */
+export function explainMissing(
+  profile: RequestProfile,
+  candidates: RankCandidate[]
+): MissingRequirement[] {
+  const capabilityOf = (candidate: RankCandidate): ModelCapability =>
+    resolveCapability(candidate.providerId, candidate.displayName, candidate.capabilityHint)
+
+  const missing: MissingRequirement[] = []
+  if (profile.needsVision && !candidates.some(c => capabilityOf(c).vision === 'yes')) {
+    missing.push('vision')
+  }
+  if (profile.needsTools && candidates.length > 0 && candidates.every(c => capabilityOf(c).tools === 'no')) {
+    missing.push('tools')
+  }
+  if (candidates.length > 0
+    && candidates.every(c => profile.estimatedTokens > effectiveContextLimit(capabilityOf(c)))) {
+    missing.push('context')
+  }
+  return missing
 }
 
 function clamp01(value: number): number {
@@ -338,9 +403,16 @@ function scoreCandidate(
   now: number,
   seed: number,
   strategy: AutoRoutingStrategy,
-  maxRpmInPool: number
+  maxRpmInPool: number,
+  prefer: AutoPreference,
+  sticky?: StickyHint
 ): number {
-  const targetRank = TIER_TARGET[profile.complexity]
+  // 优化目标改的是"想要多强的模型"，以及成本在打分里占多大份量
+  const targetRank = prefer === 'fast'
+    ? TIER_RANK.fast
+    : prefer === 'strong'
+      ? TIER_RANK.strong
+      : TIER_TARGET[profile.complexity]
   const tierFit = 1 - Math.abs(TIER_RANK[capability.tier] - targetRank) / 2
 
   const quota = candidate.dailyLimit && candidate.dailyLimit > 0
@@ -370,15 +442,48 @@ function scoreCandidate(
     ? ((hashString(candidate.accountId) + seed) % 7) / 7000
     : 0
 
+  // 未知能力不是错误，但需要让位于已确认能用的候选：tools 未知扣 0.05，
+  // 上下文未知且请求已接近上界的再扣 0.05。
+  const uncertainTools = profile.needsTools && capability.tools === 'unknown' ? 0.05 : 0
+  const uncertainContext = capability.contextTokens === undefined
+    && profile.estimatedTokens > UNANNOTATED_CONTEXT_FLOOR / 2
+    ? 0.05
+    : 0
+  const penalty = uncertainTools + uncertainContext
+
+  // 成本以"相对中性 0.5"的加减分进入总分：未知成本正好为 0，
+  // 免费模型在 balanced 下得到 +0.1，在 cheap 下得到 +0.3。
+  const costWeight = prefer === 'cheap' ? 0.6 : prefer === 'strong' ? 0.1 : 0.2
+  const costBonus = costWeight * (COST_SCORE[candidate.costBucket ?? 'unknown'] - 0.5)
+
+  // 会话粘性是加分而非硬钉：首选不可用时它会自然让位给其它候选
+  const stickyBonus = sticky === undefined
+    ? 0
+    : sticky.providerId !== candidate.providerId || sticky.displayName !== candidate.displayName
+      ? 0
+      : sticky.accountId === candidate.accountId ? 0.12 : 0.06
+
   if (strategy === 'fill-first') {
     return 0.35 * usageRatio + 0.4 * tierFit + 0.15 * headroom + 0.1 * concurrency
+      - penalty + costBonus + stickyBonus
   }
 
   if (strategy === 'failover') {
     return 0.45 * quota + 0.35 * tierFit + 0.1 * headroom + 0.1 * concurrency
+      - penalty + costBonus + stickyBonus
   }
 
-  return 0.3 * quota + 0.3 * tierFit + 0.15 * headroom + 0.15 * concurrency + 0.1 * idleness + dispersion
+  // smart / pace 在这个分数里表达的是同一件事：**余量比已经用掉的重要**。
+  // 两者真正的差别（谁先重置、每小时还剩多少）需要重置时刻，而打分函数拿不到它，
+  // 所以这里不假装区分：选号阶段由 loadbalancer 的重置推算做最后一步，
+  // auto 只负责把"余量多、配额健康"的候选排到前面。
+  if (strategy === 'smart' || strategy === 'pace') {
+    return 0.4 * headroom + 0.3 * quota + 0.2 * tierFit + 0.1 * concurrency
+      - penalty + costBonus + stickyBonus
+  }
+
+  return 0.3 * quota + 0.3 * tierFit + 0.15 * headroom + 0.15 * concurrency + 0.1 * idleness
+    + dispersion - penalty + costBonus + stickyBonus
 }
 
 /**
@@ -405,18 +510,23 @@ export function rankCandidates(
   const limit = options.limit ?? 3
   const seed = options.seed ?? 0
   const strategy = options.strategy ?? 'round-robin'
+  const prefer = options.prefer ?? 'balanced'
+  const sticky = options.sticky
 
   const usable = candidates.filter(candidate =>
     candidate.coolingUntil === undefined || candidate.coolingUntil <= now
   )
 
+  const capabilityOf = (candidate: RankCandidate): ModelCapability =>
+    resolveCapability(candidate.providerId, candidate.displayName, candidate.capabilityHint)
+
   let pool = usable.filter(candidate =>
-    satisfiesCapability(profile, resolveCapability(candidate.providerId, candidate.displayName), true)
+    satisfiesCapability(profile, capabilityOf(candidate), true)
   )
 
   if (pool.length === 0) {
     pool = usable.filter(candidate =>
-      satisfiesCapability(profile, resolveCapability(candidate.providerId, candidate.displayName), false)
+      satisfiesCapability(profile, capabilityOf(candidate), false)
     )
   }
 
@@ -431,11 +541,13 @@ export function rankCandidates(
     score: scoreCandidate(
       profile,
       candidate,
-      resolveCapability(candidate.providerId, candidate.displayName),
+      capabilityOf(candidate),
       now,
       seed,
       strategy,
-      maxRpmInPool
+      maxRpmInPool,
+      prefer,
+      sticky
     ),
   }))
 

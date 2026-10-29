@@ -31,8 +31,9 @@ import type {
   ChannelRpcResult,
   ChannelView,
 } from '../../../shared/channels'
+import type { ModelCapabilityHint } from '../../../shared/types'
 import { ACCOUNT_CHANNELS, getChannelDefinition } from './catalogue'
-import { readModelList } from './modelCatalog'
+import { attachContextWindows, capabilityHintOf, readModelList } from './modelCatalog'
 import { channelRuntimeState } from './runtimeState'
 import { ChannelCredentialVault } from './vault'
 
@@ -172,6 +173,31 @@ class AccountChannelManager {
       })
     }
     return views
+  }
+
+  /**
+   * 每个渠道的账号计数，来自 Worker 的账号池 —— 供应商卡片计数走这里。
+   *
+   * 为什么不复用 `list()`：它为了渲染卡片还要拉每家渠道的 `account.list`
+   * （逐个解析凭据）并读模型目录，而「供应商列表上有几个号」只关心计数。这里
+   * 只发一次 `provider.status`（池内内存副本，无 IO），成本与渠道数无关。
+   *
+   * Worker 未启动或调用失败时返回 `{}`：调用方应保留本地计数，而不是把已经连上
+   * 账号的渠道显示成 0 个。
+   */
+  async accountCounts(): Promise<Record<string, { total: number; enabled: number }>> {
+    const bridge = await this.bridgeOrThrow()
+    const status = await this.packStatus(bridge)
+    const counts: Record<string, { total: number; enabled: number }> = {}
+    for (const channel of ACCOUNT_CHANNELS) {
+      const pool = status[channel.id]?.accounts
+      if (pool === undefined) continue
+      counts[channel.id] = {
+        total: pool.total ?? 0,
+        enabled: pool.enabled ?? 0,
+      }
+    }
+    return counts
   }
 
   async credits(id: string): Promise<ChannelCredits> {
@@ -473,10 +499,29 @@ class AccountChannelManager {
           // 上再也找不到它们、无法重新打开），但它们**不能参与路由**：写进
           // supportedModels 就等于把 user 主动禁用的模型和上游已下线的模型
           // 继续对外暴露，请求会打到一个必然失败的模型上。
-          const owned = (models.get(channel.id) ?? [])
-            .filter(model => !model.disabled && !model.dead)
-            .map(model => `${channel.id}/${model.id}`)
-          this.applyChannel(channel.id, channel.name, total, owned)
+          //
+          // 对外用「渠道名 / 上游展示名」（`Trae / DeepSeek-Flash`，而不是内部
+          // id `qmodel_38max`）：客户端 `/v1/models` 拿到的就是渠道里看到的
+          // 名字。统一加前缀，既不担心跨渠道重名被 `/v1/models` 吞掉，也省掉
+          // 一次重名判断，名字还不会随另一家的启停状态来回变。转发仍用
+          // `${channel}/${id}`，由 `modelMappings` 把展示名接到内部 id 上。
+          // 同渠道内同名的仍是别名，只保留第一条（`model.list` 的顺序即上游
+          // 优先级）。
+          const owned = new Map<string, string>()
+          const legacyNames: Record<string, string> = {}
+          const capabilities: Record<string, ModelCapabilityHint> = {}
+          for (const model of models.get(channel.id) ?? []) {
+            if (model.disabled || model.dead) continue
+            const baseName = model.name.trim().length > 0 ? model.name : `${channel.id}/${model.id}`
+            const displayName = `${channel.name} / ${baseName}`
+            if (!owned.has(displayName)) {
+              owned.set(displayName, `${channel.id}/${model.id}`)
+              const hint = capabilityHintOf(model)
+              if (hint !== undefined) capabilities[displayName] = hint
+            }
+            legacyNames[`${channel.id}/${model.id}`] = displayName
+          }
+          this.applyChannel(channel.id, channel.name, total, [...owned], legacyNames, capabilities)
         }
       } catch (error) {
         console.warn(`[ChannelPack] 同步供应商记录失败：${error instanceof Error ? error.message : String(error)}`)
@@ -490,21 +535,63 @@ class AccountChannelManager {
   /**
    * Every channel's online catalogue, keyed by channel id, cached for 30s.
    *
-   * This goes through `model.list`, not `bridge.models()`: the latter is the
-   * OpenAI-shaped `/v1/models` view, whose `name` carries no multiplier and
-   * which cannot say `disabled` / `dead`.
+   * 目录主体走 `model.list`：它是唯一知道**倍率**与 `disabled`/`dead` 的地方，
+   * 而 `bridge.models()`（OpenAI 形状）的 `name` 不带倍率、也表达不了这两种状态。
+   *
+   * ⚠️ 但 `model.list` **不带上下文窗口**，所以这里额外取一次 `/v1/models` 视图，
+   * 把 `context_window` 合并进去（`attachContextWindows`）。不合并的后果不是"显示
+   * 少一格"，而是功能性的：`auto` 路由把未知窗口按 `UNANNOTATED_CONTEXT_FLOOR`
+   * （64K）算，于是任何超过 64K 的请求会把**全部十二个渠道**判成装不下而排除 ——
+   * 而实测这些渠道正在服务 300K–500K+（TRAE 单请求 503,128 prompt、0 错误）。
+   * 视图整轮只拉一次，12 个渠道共用，避免把同步变成 12 次往返。
    */
   private async models(bridge: ChannelBridge): Promise<Map<string, ChannelModelInfo[]>> {
     const now = Date.now()
     if (this.modelsCache !== null && now - this.modelsCache.at < MODELS_CACHE_MS) {
       return this.modelsCache.byChannel
     }
+    const view = await this.modelView(bridge)
     const byChannel = new Map<string, ChannelModelInfo[]>()
     await Promise.all(ACCOUNT_CHANNELS.map(async channel => {
-      byChannel.set(channel.id, await this.fetchModels(bridge, channel.id))
+      byChannel.set(channel.id, await this.fetchModels(bridge, channel.id, view))
     }))
     this.modelsCache = { at: now, byChannel }
+    // 一行可 grep 的诊断：哪些渠道真的报了上下文窗口、哪些没有。
+    // 用 `storeManager.addLog` 而不是 `console.log` —— 只有前者会落进
+    // `<dataDir>/logs/app-logs.ndjson`，而"窗口有没有下发"这件事恰恰只能从
+    // 那里事后核对（`/v1/models` 需要 API key，排查时不一定拿得到）。
+    this.logWindowCoverage(byChannel)
     return byChannel
+  }
+
+  /** 记录每个渠道的窗口覆盖率；只统计"有模型的渠道"，避免空渠道刷屏。 */
+  private logWindowCoverage(byChannel: Map<string, ChannelModelInfo[]>): void {
+    const parts: string[] = []
+    for (const [id, models] of byChannel) {
+      if (models.length === 0) continue
+      const known = models.filter(model => model.contextWindow !== undefined).length
+      parts.push(`${id} ${known}/${models.length}`)
+    }
+    if (parts.length === 0) return
+    try {
+      storeManager.addLog('info', `模型窗口覆盖（有窗口/总数）：${parts.join('，')}`)
+    } catch (error) {
+      console.warn(
+        `[ChannelPack] 记录窗口覆盖率失败：${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+
+  /** `/v1/models` 视图，只为取 `context_window`；拉不到就空表（= 全部保持未知）。 */
+  private async modelView(bridge: ChannelBridge): Promise<Array<Record<string, unknown>>> {
+    try {
+      return await bridge.models()
+    } catch (error) {
+      console.warn(
+        `[ChannelPack] 读取 /v1/models 视图失败，模型窗口将保持未知：${error instanceof Error ? error.message : String(error)}`,
+      )
+      return []
+    }
   }
 
   /** 缓存里某渠道的目录；缓存为空时是 `[]`（不触发远端请求）。 */
@@ -524,10 +611,15 @@ class AccountChannelManager {
   }
 
   /** One channel's catalogue; failures (no account, remote down) collapse to `[]`. */
-  private async fetchModels(bridge: ChannelBridge, id: string): Promise<ChannelModelInfo[]> {
+  private async fetchModels(
+    bridge: ChannelBridge,
+    id: string,
+    view: ReadonlyArray<Record<string, unknown>>,
+  ): Promise<ChannelModelInfo[]> {
     try {
       const result = await bridge.rpc('model.list', { provider: id })
-      return result.ok ? readModelList(result.value) : []
+      // 视图为空时 `attachContextWindows` 只是原样复制一份，不会把已有字段抹掉。
+      return result.ok ? attachContextWindows(readModelList(result.value), view) : []
     } catch (error) {
       console.warn(
         `[ChannelPack] 读取 ${id} 的模型目录失败：${error instanceof Error ? error.message : String(error)}`,
@@ -536,7 +628,14 @@ class AccountChannelManager {
     }
   }
 
-  private applyChannel(id: string, name: string, accountTotal: number, models: string[]): void {
+  private applyChannel(
+    id: string,
+    name: string,
+    accountTotal: number,
+    models: Array<[displayName: string, actualModel: string]>,
+    legacyNames: Record<string, string>,
+    capabilities: Record<string, ModelCapabilityHint>,
+  ): void {
     const existing = storeManager.getProviderById(id)
     const usable = accountTotal > 0 && models.length > 0
     if (!usable) {
@@ -546,31 +645,50 @@ class AccountChannelManager {
       if (existing !== undefined && accountTotal === 0) {
         this.dropProvider(id)
       } else if (existing !== undefined && existing.enabled) {
-        storeManager.updateProvider(id, { supportedModels: [], modelMappings: {}, enabled: false })
+        storeManager.updateProvider(id, {
+          supportedModels: [],
+          modelMappings: {},
+          modelCapabilities: {},
+          // 这里也要带上 `loginKind`：登录方式与「上游目录是否拉得到模型」无关，
+          // 目录故障时卡片仍应说清这个渠道是靠网页登录还是设备码，否则又会退回
+          // 按 `authType` 显示成「API Key」。
+          loginKind: getChannelDefinition(id)?.loginKind,
+          enabled: false,
+        })
         this.writeMappings(id, {})
       }
       return
     }
 
-    const supportedModels = [...models]
-    const modelMappings: Record<string, string> = {}
-    for (const model of supportedModels) modelMappings[model] = model
+    // 改名前的目录快照：停用状态要跟着旧 id 迁到展示名上。
+    const servedBefore = new Map(storeManager.getModelCatalogue(id).map(model => [model.displayName, model.served]))
+
+    const supportedModels = models.map(([displayName]) => displayName)
+    const modelMappings: Record<string, string> = Object.fromEntries(models)
 
     const now = Date.now()
+    const definition = getChannelDefinition(id)
     const record: Provider = {
       id,
       name,
       type: 'account',
+      // ⚠️ `authType` 的枚举里没有「浏览器/设备码登录」这一档，所以这里只能
+      // 填最接近的 `token`。**真正要显示给用户的是 `loginKind`** —— 卡片上的
+      // 「认证方式」若照 `authType` 渲染，一个靠网页登录拿账号的渠道会显示成
+      // 「API Key」，而它根本没有 Key 这种东西。两者都写进记录：`authType`
+      // 供只有该枚举的旧代码路径使用，`loginKind` 是展示的事实来源。
       authType: 'token',
+      loginKind: definition?.loginKind,
       // 不发 HTTP：endpoint 只是记录完整性的一部分，请求一律走渠道 Worker。
       apiEndpoint: `channel://${id}`,
       headers: { 'Content-Type': 'application/json' },
       enabled: existing?.type === 'account' ? existing.enabled : true,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
-      description: getChannelDefinition(id)?.description,
+      description: definition?.description,
       supportedModels,
       modelMappings,
+      modelCapabilities: capabilities,
       credentialFields: [],
       supportsModelFetch: false,
     }
@@ -581,6 +699,28 @@ class AccountChannelManager {
     }
     this.ensureLocalAccount(id, name)
     this.writeMappings(id, modelMappings)
+    this.migrateServedNames(id, legacyNames, servedBefore)
+  }
+
+  /**
+   * 把旧版「内部 id」的停用标记迁到展示名上，并清掉旧键。
+   *
+   * 不做这一步，改名后 `excludedModels` 里的 `qodercn/qfmodel` 就不再匹配任何
+   * 目录行，用户关掉的模型会悄悄重新对外广告；反方向也要清旧键，否则以后用
+   * 展示名重新启用时旧键仍在。幂等：第二轮起旧键已被删掉。
+   */
+  private migrateServedNames(
+    id: string,
+    legacyNames: Record<string, string>,
+    servedBefore: Map<string, boolean>,
+  ): void {
+    const renamed = Object.entries(legacyNames).filter(([legacy, displayName]) => legacy !== displayName)
+    if (renamed.length === 0) return
+    const stopped = renamed
+      .filter(([legacy]) => servedBefore.get(legacy) === false)
+      .map(([, displayName]) => displayName)
+    if (stopped.length > 0) storeManager.setModelsServed(id, stopped, false)
+    storeManager.setModelsServed(id, renamed.map(([legacy]) => legacy), true)
   }
 
   private ensureLocalAccount(providerId: string, providerName: string): void {

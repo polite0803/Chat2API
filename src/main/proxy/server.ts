@@ -16,22 +16,22 @@ import {
   checkStartupSecurity,
   corsAllowHeaders,
   evaluateApiKeyAuth,
+  extractApiKey,
   requiresApiKey,
   resolveCorsOrigin,
   safeKeyEquals,
 } from './authPolicy'
 import { autoRouter } from './autoRouter'
+import { buildRouteError, isModelApiPath } from './routeErrorPolicy'
+import { buildRejectionLogEntry, requestedModelOf } from './rejectionLog'
 
 const SLOW_REQUEST_THRESHOLD_MS = 1500
 
 function extractProvidedKey(ctx: Context): string | null {
-  const authHeader = ctx.get('Authorization') || ''
-  if (authHeader.startsWith('Bearer ')) {
-    const token = authHeader.slice(7).trim()
-    return token || null
-  }
-  const headerKey = ctx.get('X-API-Key')
-  return headerKey ? headerKey.trim() : null
+  return extractApiKey({
+    authorization: ctx.get('Authorization'),
+    xApiKey: ctx.get('X-API-Key'),
+  })
 }
 
 function recordKeyUsage(providedKey: string): void {
@@ -44,6 +44,32 @@ function recordKeyUsage(providedKey: string): void {
       : entry
   )
   storeManager.updateConfig({ apiKeys: updatedKeys })
+}
+
+/**
+ * A request the proxy refused never reaches a provider, so no route records it.
+ * Without these rows a client hammering a wrong path or a stale key reads as
+ * "no traffic" on the same dashboard that reports the refusals as errors.
+ */
+function recordRejectedRequest(ctx: Context, statusCode: number, code: string, message: string): void {
+  if (!isModelApiPath(ctx.path)) {
+    return
+  }
+
+  const startedAt = typeof ctx.state.startedAt === 'number' ? ctx.state.startedAt : Date.now()
+  const entry = buildRejectionLogEntry({
+    method: ctx.method,
+    path: ctx.path,
+    statusCode,
+    code,
+    message,
+    startedAt,
+    now: Date.now(),
+    model: requestedModelOf(ctx.request.body),
+  })
+
+  storeManager.addRequestLog(entry)
+  storeManager.recordRequestInStats(false, entry.latency, entry.model || undefined)
 }
 
 /**
@@ -70,6 +96,7 @@ export class ProxyServer {
    */
   private setupMiddleware(): void {
     this.app.use(async (ctx, next) => {
+      ctx.state.startedAt = Date.now()
       const config = storeManager.getConfig()
       const allowedOrigin = resolveCorsOrigin({
         origin: ctx.get('Origin') || undefined,
@@ -102,7 +129,7 @@ export class ProxyServer {
       }
 
       // Skip management API paths - they have their own authentication
-      if (ctx.path.startsWith('/v0/management')) {
+      if (ctx.path.startsWith('/v1/management')) {
         await next()
         return
       }
@@ -120,6 +147,7 @@ export class ProxyServer {
             code: 'missing_api_key',
           },
         }
+        recordRejectedRequest(ctx, 401, 'missing_api_key', 'API key is required')
         return
       }
 
@@ -132,6 +160,7 @@ export class ProxyServer {
             code: 'invalid_api_key',
           },
         }
+        recordRejectedRequest(ctx, 401, 'invalid_api_key', 'Invalid API key')
         return
       }
 
@@ -154,8 +183,11 @@ export class ProxyServer {
       await next()
 
       const latency = Date.now() - startTime
+      // The model list is polled by every client, so only its reads stay silent;
+      // anything else on that path is a client misconfiguration worth a trace.
+      const isModelListRead = ctx.method === 'GET' && ctx.path.startsWith('/v1/models')
       const shouldRecordAccessLog =
-        !ctx.path.startsWith('/v1/models') &&
+        !isModelListRead &&
         (ctx.status >= 400 || latency >= SLOW_REQUEST_THRESHOLD_MS)
 
       if (shouldRecordAccessLog) {
@@ -221,7 +253,7 @@ export class ProxyServer {
     // Management API enable check middleware
     // This must be registered before management routes
     const managementEnableCheck = async (ctx: Context, next: Next) => {
-      if (!ctx.path.startsWith('/v0/management')) {
+      if (!ctx.path.startsWith('/v1/management')) {
         await next()
         return
       }
@@ -254,7 +286,7 @@ export class ProxyServer {
 
     this.app.use(managementEnableCheck)
 
-    // Register all management routes (they already have /v0/management prefix)
+    // Register all management routes (they already have /v1/management prefix)
     for (const route of managementRoutes) {
       this.app.use(route.routes())
       this.app.use(route.allowedMethods())
@@ -264,13 +296,19 @@ export class ProxyServer {
     this.app.use(this.router.allowedMethods())
 
     this.app.use(async (ctx) => {
-      ctx.status = 404
-      ctx.body = {
-        error: {
-          message: `Route not found: ${ctx.method} ${ctx.path}`,
-          type: 'not_found_error',
-        },
+      const routeError = buildRouteError({
+        method: ctx.method,
+        path: ctx.path,
+        matched: (ctx as { matched?: Array<{ methods?: string[] }> }).matched,
+      })
+      // Answering the 405 here keeps koa-router's allowedMethods() from later
+      // overwriting the status while this body still says "route not found".
+      ctx.status = routeError.status
+      if (routeError.allow) {
+        ctx.set('Allow', routeError.allow)
       }
+      ctx.body = routeError.body
+      recordRejectedRequest(ctx, routeError.status, routeError.body.error.code, routeError.body.error.message)
     })
   }
 

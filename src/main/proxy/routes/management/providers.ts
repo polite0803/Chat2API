@@ -15,7 +15,7 @@ import type {
   ManagementApiResponse,
 } from '../../../../shared/types'
 
-const router = new Router({ prefix: '/v0/management/providers' })
+const router = new Router({ prefix: '/v1/management/providers' })
 
 router.use(managementAuthMiddleware)
 

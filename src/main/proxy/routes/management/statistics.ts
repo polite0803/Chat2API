@@ -18,7 +18,7 @@ import type {
 } from '../../../../shared/types'
 import type { RequestLogEntry } from '../../../store/types'
 
-const router = new Router({ prefix: '/v0/management' })
+const router = new Router({ prefix: '/v1/management' })
 
 router.use(managementAuthMiddleware)
 

@@ -145,3 +145,10 @@ subscribe to OpenCode Go to keep going
 11. **添加时不需要凭据**：「添加供应商 → 内置供应商 → OpenCode」直接添加，页面会说明该供应商
     无需凭据；主进程给无凭据的内置供应商建一个空的本地账号，否则负载均衡不肯把请求发出去。
 12. 首次请求会拉起运行时（npx 兜底时第一次要下载，可能数十秒），之后进程常驻直到应用退出。
+13. **模型名带 `opencode/` 前缀**：对外名字是 `opencode/<运行时模型id>`（如 `opencode/deepseek-v4.1-flash-free`），
+    与聚合条目（`<entryId>/<id>`）、账号通道（`<channel>/<id>`）同一命名空间；客户端请求这个名字，
+    转发层经 `modelMappings` 翻回运行时认的裸 id。带前缀也把本机运行时与 `opencode_zen` 聚合条目里
+    同名的免费模型（mimo/nemotron/big-pickle）分开了——裸名会撞车，前缀是点名。旧安装里用户侧的
+    目录残留（上次同步的清单、停用名单）在启动时由 `namespaceModelOverrides`（`store/modelServing.ts`）
+    一并搬进新命名空间，不会出现新旧两行；而能力徽章与探针仍按裸 id 查（`actualModelId`），
+    所以模型页的体检结果不受影响。

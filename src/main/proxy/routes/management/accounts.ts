@@ -15,7 +15,7 @@ import type {
   ValidationResult 
 } from '../../../../shared/types'
 
-const router = new Router({ prefix: '/v0/management' })
+const router = new Router({ prefix: '/v1/management' })
 
 /**
  * Mask sensitive credential fields
@@ -57,7 +57,7 @@ function createSuccessResponse<T>(data: T): ManagementApiResponse<T> {
 }
 
 /**
- * GET /v0/management/accounts
+ * GET /v1/management/accounts
  * List all accounts (credentials masked)
  */
 router.get('/accounts', managementAuthMiddleware, async (ctx: Context) => {
@@ -75,7 +75,7 @@ router.get('/accounts', managementAuthMiddleware, async (ctx: Context) => {
 })
 
 /**
- * GET /v0/management/providers/:providerId/accounts
+ * GET /v1/management/providers/:providerId/accounts
  * List accounts by provider (credentials masked)
  */
 router.get('/providers/:providerId/accounts', managementAuthMiddleware, async (ctx: Context) => {
@@ -94,7 +94,7 @@ router.get('/providers/:providerId/accounts', managementAuthMiddleware, async (c
 })
 
 /**
- * GET /v0/management/accounts/:id
+ * GET /v1/management/accounts/:id
  * Get account by ID (credentials masked)
  * Returns 404 if account not found
  */
@@ -120,7 +120,7 @@ router.get('/accounts/:id', managementAuthMiddleware, async (ctx: Context) => {
 })
 
 /**
- * POST /v0/management/accounts
+ * POST /v1/management/accounts
  * Create new account
  */
 router.post('/accounts', managementAuthMiddleware, async (ctx: Context) => {
@@ -171,7 +171,7 @@ router.post('/accounts', managementAuthMiddleware, async (ctx: Context) => {
 })
 
 /**
- * PUT /v0/management/accounts/:id
+ * PUT /v1/management/accounts/:id
  * Update account
  */
 router.put('/accounts/:id', managementAuthMiddleware, async (ctx: Context) => {
@@ -223,7 +223,7 @@ router.put('/accounts/:id', managementAuthMiddleware, async (ctx: Context) => {
 })
 
 /**
- * DELETE /v0/management/accounts/:id
+ * DELETE /v1/management/accounts/:id
  * Delete account
  */
 router.delete('/accounts/:id', managementAuthMiddleware, async (ctx: Context) => {
@@ -248,7 +248,7 @@ router.delete('/accounts/:id', managementAuthMiddleware, async (ctx: Context) =>
 })
 
 /**
- * POST /v0/management/accounts/:id/validate
+ * POST /v1/management/accounts/:id/validate
  * Validate account credentials
  */
 router.post('/accounts/:id/validate', managementAuthMiddleware, async (ctx: Context) => {

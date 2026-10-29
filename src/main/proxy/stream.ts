@@ -6,6 +6,7 @@
 import { PassThrough, Transform } from 'stream'
 import { SSEEvent, ChatCompletionResponse, ChatCompletionChoice, ToolCall } from './types'
 import { parseToolCalls } from './utils/toolParser/index'
+import { readUsageFromBody, toWireUsage, type TokenUsage } from './quota/usage'
 
 /**
  * SSE Parser
@@ -436,6 +437,7 @@ export class StreamHandler {
       let content = ''
       let reasoningContent = ''
       let finishReason: ChatCompletionChoice['finish_reason'] = null
+      let usage: TokenUsage | null = null
       const toolCalls: ToolCall[] = []
       const created = Math.floor(Date.now() / 1000)
 
@@ -486,6 +488,11 @@ export class StreamHandler {
                   })
                 }
               }
+            }
+
+            const reported = readUsageFromBody(data)
+            if (reported) {
+              usage = reported
             }
 
             if (data.choices?.[0]?.finish_reason) {
@@ -541,11 +548,7 @@ export class StreamHandler {
             message,
             finish_reason: finishReason || 'stop',
           }],
-          usage: {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-          },
+          usage: usage ? toWireUsage(usage) : null,
         })
       })
 
