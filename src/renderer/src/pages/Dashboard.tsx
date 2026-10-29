@@ -9,6 +9,7 @@ import {
   RequestChart,
   QuickActions,
   RecentActivity,
+  TokenUsageCard,
 } from '@/components/dashboard'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useDashboardStore } from '@/stores/dashboardStore'
@@ -24,6 +25,7 @@ export function Dashboard() {
     providers,
     activities,
     chartData,
+    tokenUsage,
     isLoading,
     error,
     lastUpdated,
@@ -158,6 +160,12 @@ export function Dashboard() {
             label: t('dashboard.vsYesterday'),
           }}
         />
+      </div>
+
+      {/* Token 面板独立一行：它有两行口径（上游真值 / 本地估算），塞进
+          单值 StatsCard 会强迫把两个不可相加的数合并成一个。 */}
+      <div className="mt-4">
+        <TokenUsageCard usage={tokenUsage} />
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">

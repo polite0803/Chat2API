@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { localDayKey } from '@shared/localDay'
 import type { ProxyStatus, ProxyStatistics, LoadBalanceStrategy, ModelMapping, AppConfig } from '@/types/electron'
 
 export interface ProxyConfig {
@@ -129,7 +130,7 @@ export const useProxyStore = create<ProxyState>((set, get) => ({
     }
     try {
       const persistentStats = await window.electronAPI.statistics.get()
-      const today = new Date().toISOString().split('T')[0]
+      const today = localDayKey(Date.now())
       const todayStats = persistentStats?.dailyStats?.[today] || {
         totalRequests: 0,
         successRequests: 0,

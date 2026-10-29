@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Dialog,
@@ -9,8 +9,9 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Copy, Check, Clock, Zap, Server, User, FileJson, AlertCircle, Globe, Brain } from 'lucide-react'
+import { Copy, Check, Clock, Zap, Server, User, FileJson, AlertCircle, Globe, Brain, SlidersHorizontal } from 'lucide-react'
 import type { RequestLogEntry } from '@/types/electron'
+import { useSettingsStore } from '@/stores/settingsStore'
 
 interface RequestLogDetailProps {
   log: RequestLogEntry
@@ -97,6 +98,14 @@ function InfoItem({ label, value, icon }: InfoItemProps) {
 export function RequestLogDetail({ log, onClose }: RequestLogDetailProps) {
   const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState('info')
+  const includeBodies = useSettingsStore((state) => state.config?.requestLogConfig?.includeBodies)
+  const fetchConfig = useSettingsStore((state) => state.fetchConfig)
+
+  useEffect(() => {
+    if (includeBodies === undefined) {
+      void fetchConfig()
+    }
+  }, [includeBodies, fetchConfig])
 
   const formatTime = (timestamp: number) => {
     return new Date(timestamp).toLocaleString('en-US', {
@@ -121,12 +130,25 @@ export function RequestLogDetail({ log, onClose }: RequestLogDetailProps) {
   }
 
   const renderJsonViewer = (jsonString: string | undefined) => {
-    if (!jsonString) return (
-      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-        <FileJson className="h-12 w-12 mb-3 opacity-30" />
-        <p className="text-sm">{t('logs.noRequestData')}</p>
-      </div>
-    )
+    if (!jsonString) {
+      // 「没开正文记录」和「这次请求没有正文」是两种缺席，不能都显示成“暂无数据”。
+      if (includeBodies === false) {
+        return (
+          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground text-center px-6">
+            <SlidersHorizontal className="h-12 w-12 mb-3 opacity-30" />
+            <p className="text-sm font-medium text-foreground">{t('logs.bodiesNotRecorded')}</p>
+            <p className="text-xs mt-1.5 max-w-md leading-relaxed">{t('logs.bodiesNotRecordedHint')}</p>
+          </div>
+        )
+      }
+
+      return (
+        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+          <FileJson className="h-12 w-12 mb-3 opacity-30" />
+          <p className="text-sm">{t('logs.noRequestData')}</p>
+        </div>
+      )
+    }
 
     try {
       const parsed = JSON.parse(jsonString)
@@ -256,6 +278,20 @@ export function RequestLogDetail({ log, onClose }: RequestLogDetailProps) {
                   label={t('logs.reasoningEffort')} 
                   value={log.reasoningEffort || '-'}
                   icon={<Brain className="h-3 w-3" />}
+                />
+                <InfoItem 
+                  label={t('logs.maxTokens')} 
+                  value={log.maxTokens ?? '-'}
+                />
+                <InfoItem 
+                  label={t('logs.finishReason')} 
+                  value={log.finishReason || '-'}
+                />
+                <InfoItem 
+                  label={t('logs.streamTruncated')} 
+                  value={log.streamTruncated === undefined
+                    ? '-'
+                    : log.streamTruncated ? t('common.yes') : t('common.no')}
                 />
               </div>
             </TabsContent>

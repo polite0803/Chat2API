@@ -13,6 +13,7 @@ import type {
   ModelMapping,
   AppConfig,
   AutoRoutingConfig,
+  AutoPreference,
   AccountStatus,
   ProviderType,
   ProviderVendor,
@@ -20,12 +21,21 @@ import type {
   ApiKey,
   ToolCallingConfig,
   LegacyToolPromptConfig,
+  CompressionConfig,
+  CompressionAggressiveness,
+  OutputSteeringConfig,
   EffectiveModel,
+  CatalogueModel,
   RequestLogEntry,
+  RequestLogTrendPoint,
+  AppLogTrendPoint,
   ModelsFetchFailure,
 } from '../../../shared/types'
 import type {
+  AggregateDetail,
   AggregateListResult,
+  AggregateModelTestResult,
+  AggregateMutationResult,
   AggregateOperationResult,
   AggregateSaveInput,
 } from '../../../shared/aggregate'
@@ -55,6 +65,7 @@ export type {
   ModelMapping,
   AppConfig,
   AutoRoutingConfig,
+  AutoPreference,
   AccountStatus,
   ProviderType,
   ProviderVendor,
@@ -62,7 +73,11 @@ export type {
   ApiKey,
   ToolCallingConfig,
   LegacyToolPromptConfig,
+  CompressionConfig,
+  CompressionAggressiveness,
+  OutputSteeringConfig,
   EffectiveModel,
+  CatalogueModel,
   RequestLogEntry,
   ModelsFetchFailure,
 }
@@ -127,6 +142,12 @@ interface ProvidersAPI {
     fetchedAt?: number
   }>
   getEffectiveModels: (providerId: string) => Promise<EffectiveModel[]>
+  getModelCatalogue: (providerId: string) => Promise<CatalogueModel[]>
+  setModelsServed: (providerId: string, names: string[], served: boolean) => Promise<{
+    success: boolean
+    catalogue: CatalogueModel[]
+    error?: string
+  }>
   addCustomModel: (providerId: string, model: { displayName: string; actualModelId: string }) => Promise<{
     success: boolean
     models: EffectiveModel[]
@@ -184,7 +205,17 @@ interface AggregateAPI {
   }>
   remove: (id: string) => Promise<{ success: boolean }>
   test: (id: string) => Promise<AggregateOperationResult>
-  discoverModels: (id: string) => Promise<AggregateOperationResult>
+  syncModels: (id: string) => Promise<AggregateOperationResult>
+  detail: (id: string) => Promise<AggregateDetail | null>
+  addKey: (id: string, apiKey: string) => Promise<AggregateMutationResult>
+  removeKey: (accountId: string) => Promise<AggregateMutationResult>
+  setKeyEnabled: (accountId: string, enabled: boolean) => Promise<AggregateMutationResult>
+  validateKey: (id: string, accountId: string) => Promise<AggregateMutationResult>
+  addModel: (id: string, modelId: string) => Promise<AggregateMutationResult>
+  removeModel: (id: string, modelId: string) => Promise<AggregateMutationResult>
+  setModelEnabled: (id: string, modelId: string, enabled: boolean) => Promise<AggregateMutationResult>
+  setModelParams: (id: string, modelId: string, params: Record<string, unknown>) => Promise<AggregateMutationResult>
+  testModel: (id: string, modelId: string) => Promise<AggregateModelTestResult>
 }
 
 interface OAuthAPI {
@@ -235,23 +266,14 @@ interface LogStats {
   debug: number
 }
 
-interface LogTrend {
-  date: string
-  total: number
-  info: number
-  warn: number
-  error: number
-}
-
 interface LogsAPI {
   get: (filter?: LogFilter) => Promise<LogEntry[]>
   getStats: () => Promise<LogStats>
-  getTrend: (days?: number) => Promise<LogTrend[]>
-  getAccountTrend: (accountId: string, days?: number) => Promise<LogTrend[]>
+  getTrend: (days?: number) => Promise<AppLogTrendPoint[]>
+  getAccountTrend: (accountId: string, days?: number) => Promise<AppLogTrendPoint[]>
   clear: () => Promise<void>
   export: (format?: 'json' | 'txt') => Promise<string>
   getById: (id: string) => Promise<LogEntry | undefined>
-  onNewLog: (callback: (log: LogEntry) => void) => () => void
 }
 
 interface UpdateProgressInfo {
@@ -361,10 +383,16 @@ interface RequestLogEntry {
   webSearch?: boolean
   /** Reasoning effort level */
   reasoningEffort?: 'low' | 'medium' | 'high'
+  /** Output cap the client asked for; absent when it sent neither max_tokens field */
+  maxTokens?: number
   responseStatus: number
   responsePreview?: string
   /** Response body JSON string */
   responseBody?: string
+  /** Finish reason the client actually received */
+  finishReason?: string
+  /** Streaming only: upstream ended without a finish reason */
+  streamTruncated?: boolean
   latency: number
   isStream: boolean
   errorMessage?: string
@@ -386,20 +414,13 @@ interface RequestLogStats {
   todayError: number
 }
 
-interface RequestLogTrend {
-  date: string
-  total: number
-  success: number
-  error: number
-  avgLatency: number
-}
-
 interface RequestLogsAPI {
   get: (filter?: RequestLogFilter) => Promise<RequestLogEntry[]>
   getById: (id: string) => Promise<RequestLogEntry | undefined>
   getStats: () => Promise<RequestLogStats>
-  getTrend: (days?: number) => Promise<RequestLogTrend[]>
+  getTrend: (days?: number) => Promise<RequestLogTrendPoint[]>
   clear: () => Promise<void>
+  /** Live push of one already-persisted row; subscribe for as long as the list is mounted. */
   onNewLog: (callback: (log: RequestLogEntry) => void) => () => void
 }
 
@@ -415,6 +436,35 @@ interface PersistentStatistics {
   dailyStats: Record<string, DailyStatistics>
 }
 
+/**
+ * One local day of token counters. Mirrors `shared/tokenAccounting.ts`.
+ *
+ * The two pools are separate fields on purpose: `upstream*` is what providers
+ * actually reported (bill-reconcilable), `estimated*` is the `chars/4` fallback
+ * used when they reported nothing. Merging them would read as fact while being
+ * mostly arithmetic.
+ */
+export interface DayTokenSummary {
+  day: string
+  upstreamPrompt: number
+  upstreamCompletion: number
+  estimatedPrompt: number
+  estimatedCompletion: number
+  /** Tokens compression actually removed (only requests where it took effect). */
+  savedTokens: number
+  /**
+   * Input tokens the upstream reported as **cache reads** (subset of
+   * `upstreamPrompt`). Accumulated only from upstream-reported usage, so a
+   * channel that never reports it stays 0 *with no claim attached* — this is
+   * not evidence that caching failed, only that we could not measure it.
+   */
+  upstreamCacheRead: number
+  requests: number
+  upstreamRequests: number
+  /** `upstreamRequests / requests`, or null when nothing was recorded. */
+  upstreamCoverage: number | null
+}
+
 interface DailyStatistics {
   date: string
   totalRequests: number
@@ -428,6 +478,10 @@ interface DailyStatistics {
 interface StatisticsAPI {
   get: () => Promise<PersistentStatistics>
   getToday: () => Promise<DailyStatistics>
+  /** Today's token counters, upstream-reported and estimated kept apart. */
+  getTokenUsage: () => Promise<DayTokenSummary>
+  /** The newest `days` local days of token counters, oldest first. */
+  getTokenUsageHistory: (days?: number) => Promise<DayTokenSummary[]>
 }
 
 interface TrayAPI {
@@ -475,10 +529,21 @@ interface ContextManagementAPI {
   updateConfig: (updates: Partial<ContextManagementConfig>) => Promise<ContextManagementConfig>
 }
 
+export interface ToolCallingSmokeFixture {
+  model: string
+  stream: boolean
+  messages: Array<{ role: string; content: string }>
+  tools: Array<{
+    type: string
+    function: { name: string; description?: string; parameters?: Record<string, unknown> }
+  }>
+  tool_choice: unknown
+}
+
 interface ToolCallingAPI {
   runSmoke: (input: { clientAdapterId: string }) => Promise<{
     success: boolean
-    data?: { result?: { message?: string } }
+    data?: { result?: { message?: string }; fixture?: ToolCallingSmokeFixture }
     error?: { message?: string }
   }>
 }
@@ -500,6 +565,7 @@ interface OpencodeAPI {
 
 interface ChannelsAPI {
   list: () => Promise<{ success: boolean; reason?: string; channels: ChannelView[] }>
+  accountCounts: () => Promise<Record<string, { total: number; enabled: number }>>
   rpc: (method: string, payload?: unknown) => Promise<ChannelRpcResult>
   credits: (id: string) => Promise<ChannelCredits>
   setEnabled: (id: string, enabled: boolean) => Promise<ChannelOperationResult>

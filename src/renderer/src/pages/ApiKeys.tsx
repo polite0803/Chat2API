@@ -232,7 +232,11 @@ export default function ApiKeysPage({ embedded = false }: { embedded?: boolean }
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <code className="text-sm bg-muted px-2 py-1 rounded">
+                        <code
+                          className={`text-sm bg-muted px-2 py-1 rounded ${
+                            visibleKeys.has(apiKey.id) ? 'select-all' : 'select-none'
+                          }`}
+                        >
                           {visibleKeys.has(apiKey.id) 
                             ? apiKey.key 
                             : maskKey(apiKey.key)}

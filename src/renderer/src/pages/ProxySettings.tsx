@@ -9,6 +9,8 @@ import {
   SessionManagement,
 } from '@/components/proxy'
 import { ContextManagement } from '@/components/proxy/ContextManagement'
+import { CompressionSettings } from '@/components/proxy/CompressionSettings'
+import { OutputSteeringSettings } from '@/components/proxy/OutputSteeringSettings'
 import ApiKeys from '@/pages/ApiKeys'
 import { useProxyStore } from '@/stores/proxyStore'
 import { Settings, Scale, Settings2, Key } from 'lucide-react'
@@ -71,6 +73,8 @@ export function ProxySettings() {
             <AdvancedConfig />
             <SessionManagement />
             <ContextManagement />
+            <CompressionSettings />
+            <OutputSteeringSettings />
           </div>
         </TabsContent>
       </Tabs>

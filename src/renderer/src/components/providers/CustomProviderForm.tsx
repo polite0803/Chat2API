@@ -59,15 +59,23 @@ export function CustomProviderForm({
 }: CustomProviderFormProps) {
   const { t } = useTranslation()
   
-  const authTypeOptions: { value: AuthType; labelKey: string; descKey: string }[] = [
-    { value: 'token', labelKey: 'providers.authToken', descKey: 'providers.authTokenDesc' },
-    { value: 'userToken', labelKey: 'providers.authUserToken', descKey: 'providers.authUserTokenDesc' },
-    { value: 'refresh_token', labelKey: 'providers.authRefreshToken', descKey: 'providers.authRefreshTokenDesc' },
-    { value: 'jwt', labelKey: 'providers.authJwt', descKey: 'providers.authJwtDesc' },
-    { value: 'realUserID_token', labelKey: 'providers.authUserIdToken', descKey: 'providers.authUserIdTokenDesc' },
-    { value: 'tongyi_sso_ticket', labelKey: 'providers.authSso', descKey: 'providers.authSsoDesc' },
-    { value: 'cookie', labelKey: 'providers.authCookie', descKey: 'providers.authCookieDesc' },
-    { value: 'oauth', labelKey: 'providers.authOAuth', descKey: 'providers.authOAuthDesc' },
+  /**
+   * 认证方式的显示文案。
+   *
+   * ⚠️ 标签一律取自 `providers.authLabels.*`（与卡片上的「认证方式」同一个
+   * 来源）。此前这里引用的是 `providers.authToken` / `authTokenDesc` 等键，
+   * **两个语言文件里都没有**，于是 `t()` 原样回显键名——选择器里显示的是
+   * `providers.authToken` 这种字面量。新增枚举值时只需补一处。
+   */
+  const authTypeOptions: { value: AuthType; descKey: string }[] = [
+    { value: 'token', descKey: 'providers.authTokenDesc' },
+    { value: 'userToken', descKey: 'providers.authUserTokenDesc' },
+    { value: 'refresh_token', descKey: 'providers.authRefreshTokenDesc' },
+    { value: 'jwt', descKey: 'providers.authJwtDesc' },
+    { value: 'realUserID_token', descKey: 'providers.authUserIdTokenDesc' },
+    { value: 'tongyi_sso_ticket', descKey: 'providers.authSsoDesc' },
+    { value: 'cookie', descKey: 'providers.authCookieDesc' },
+    { value: 'oauth', descKey: 'providers.authOAuthDesc' },
   ]
 
   const defaultCredentialFields: Record<AuthType, CredentialField[]> = {
@@ -213,7 +221,7 @@ export function CustomProviderForm({
                     {authTypeOptions.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
                         <div className="flex flex-col">
-                          <span>{t(option.labelKey)}</span>
+                          <span>{t(`providers.authLabels.${option.value}`)}</span>
                           <span className="text-xs text-muted-foreground">
                             {t(option.descKey)}
                           </span>

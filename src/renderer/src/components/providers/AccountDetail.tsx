@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { AppLogTrendPoint } from '@shared/types'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -56,7 +57,7 @@ export function AccountDetail({
   const { t, i18n } = useTranslation()
   const [isValidating, setIsValidating] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
-  const [trendData, setTrendData] = useState<{ date: string; total: number; info: number; warn: number; error: number }[]>([])
+  const [trendData, setTrendData] = useState<AppLogTrendPoint[]>([])
 
   useEffect(() => {
     const fetchTrendData = async () => {
@@ -350,13 +351,14 @@ export function AccountDetail({
         </CardHeader>
         <CardContent>
           <div className="flex items-end justify-between h-32 gap-2">
-            {trendData.length > 0 && trendData.some(d => d.total > 0) ? (
+            {trendData.length > 0 && trendData.some(d => (d.total ?? 0) > 0) ? (
               trendData.map((day, i) => {
-                const date = new Date(day.date)
+                const date = new Date(`${day.date}T00:00:00`)
                 const dayName = date.toLocaleDateString(i18n.language, { weekday: 'short' })
-                const maxTotal = Math.max(...trendData.map(d => d.total), 1)
-                const heightPercent = maxTotal > 0 ? (day.total / maxTotal) * 100 : 0
-                const displayHeight = day.total > 0 ? Math.max(heightPercent, 5) : 2
+                const retainedTotal = day.total
+                const maxTotal = Math.max(...trendData.map(d => d.total ?? 0), 1)
+                const heightPercent = maxTotal > 0 ? ((retainedTotal ?? 0) / maxTotal) * 100 : 0
+                const displayHeight = (retainedTotal ?? 0) > 0 ? Math.max(heightPercent, 5) : 2
                 
                 return (
                   <div key={i} className="flex-1 flex flex-col items-center h-full">
@@ -364,10 +366,12 @@ export function AccountDetail({
                       <div 
                         className={cn(
                           "w-full rounded-t transition-all",
-                          day.total > 0 ? "bg-primary/20 hover:bg-primary/40" : "bg-muted/30"
+                          retainedTotal === null
+                            ? "bg-muted/10"
+                            : retainedTotal > 0 ? "bg-primary/20 hover:bg-primary/40" : "bg-muted/30"
                         )}
                         style={{ height: `${displayHeight}%` }}
-                        title={`${day.total} requests`}
+                        title={retainedTotal === null ? t('dashboard.chartDayNotRetained') : `${retainedTotal} requests`}
                       />
                     </div>
                     <span className="text-xs text-muted-foreground mt-1">{dayName}</span>
@@ -395,8 +399,8 @@ export function AccountDetail({
             )}
           </div>
           <p className="text-xs text-muted-foreground text-center mt-4">
-            {trendData.length > 0 && trendData.some(d => d.total > 0) 
-              ? `${trendData.reduce((sum, d) => sum + d.total, 0)} ${t('dashboard.totalRequests')}`
+            {trendData.length > 0 && trendData.some(d => (d.total ?? 0) > 0) 
+              ? `${trendData.reduce((sum, d) => sum + (d.total ?? 0), 0)} ${t('dashboard.totalRequests')}`
               : t('providers.sampleData')
             }
           </p>

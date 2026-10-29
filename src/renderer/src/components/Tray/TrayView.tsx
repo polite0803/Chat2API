@@ -4,6 +4,9 @@ import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/useTheme'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useProvidersStore } from '@/stores/providersStore'
+import { localAccountCounts, mergeChannelCounts } from '@/lib/accountCounts'
+import type { AccountCounts } from '@/lib/accountCounts'
+import type { Provider, Account } from '@/types/electron'
 import iconsPng from '@/assets/icons/icons.png'
 
 interface ProviderInfo {
@@ -25,6 +28,13 @@ export function TrayView() {
   const [copied, setCopied] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null)
+  /**
+   * 供应商卡片上的账号数。
+   *
+   * 渠道（`type: 'account'`）的真实账号在 Worker 池里，本地只有一条占位账号；
+   * 照本地表算会永远显示 1，与账号渠道页上的真实数量对不上。
+   */
+  const [accountCounts, setAccountCounts] = useState<AccountCounts>({})
 
   useEffect(() => {
     const loadProxyStatus = async () => {
@@ -88,11 +98,32 @@ export function TrayView() {
         setPort(config.proxyPort || 8080)
         setHost(config.proxyHost || '127.0.0.1')
       }
+      await loadAccountCounts(providersData, accountsData)
     } catch (error) {
       console.error('Failed to load data:', error)
     } finally {
       setIsLoading(false)
     }
+  }
+
+  /**
+   * 本地账号表 + 渠道池：渠道的真实账号在 Worker 里，本地表里那一条是占位账号。
+   * 池子读不到（Worker 没启动 / 调用失败）时保留本地计数，不把已连接渠道显示成 0。
+   */
+  const loadAccountCounts = async (
+    providersData: Provider[],
+    accountsData: Account[],
+  ) => {
+    const local = localAccountCounts(providersData, accountsData)
+    let pool: Record<string, { total: number; enabled: number }> = {}
+    if (providersData.some(provider => provider.type === 'account')) {
+      try {
+        pool = await window.electronAPI.channels.accountCounts()
+      } catch (error) {
+        console.warn('Failed to read channel account counts:', error)
+      }
+    }
+    setAccountCounts(mergeChannelCounts(local, providersData, pool))
   }
 
   const handleRefresh = async () => {
@@ -134,6 +165,11 @@ export function TrayView() {
 
   const providerList: ProviderInfo[] = useMemo(() => {
     return providers.map((p) => {
+      // 渠道计数取池子那份；其余供应商仍是本地账号表。
+      const counts = accountCounts[p.id]
+      if (counts !== undefined) {
+        return { id: p.id, name: p.name, accountCount: counts.total, activeCount: counts.active }
+      }
       const providerAccounts = accounts.filter((a) => a.providerId === p.id)
       return {
         id: p.id,
@@ -142,7 +178,7 @@ export function TrayView() {
         activeCount: providerAccounts.filter((a) => a.status === 'active').length,
       }
     })
-  }, [providers, accounts])
+  }, [providers, accounts, accountCounts])
 
   const selectedProviderAccounts = useMemo(() => {
     if (!selectedProvider) return []

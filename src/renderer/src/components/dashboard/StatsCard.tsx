@@ -1,5 +1,6 @@
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { useTranslation } from 'react-i18next'
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -8,7 +9,8 @@ export interface StatsCardProps {
   value: string | number
   icon: LucideIcon
   trend?: {
-    value: number
+    /** `null` means the comparison has no data behind it, which is not the same as 0%. */
+    value: number | null
     label?: string
   }
   /** Use "negative" when a rising value is bad (e.g. latency). */
@@ -24,15 +26,17 @@ export function StatsCard({
   trendPolarity = 'positive',
   className,
 }: StatsCardProps) {
+  const { t } = useTranslation()
+
   const getTrendIcon = () => {
-    if (!trend) return null
+    if (!trend || trend.value === null) return null
     if (trend.value > 0) return <TrendingUp className="h-3 w-3" />
     if (trend.value < 0) return <TrendingDown className="h-3 w-3" />
     return <Minus className="h-3 w-3" />
   }
 
   const getTrendColor = () => {
-    if (!trend || trend.value === 0) return 'text-[var(--text-muted)]'
+    if (!trend || trend.value === null || trend.value === 0) return 'text-[var(--text-muted)]'
     const isGood = trendPolarity === 'negative' ? trend.value < 0 : trend.value > 0
     return isGood ? 'text-[var(--success)]' : 'text-[var(--error)]'
   }
@@ -45,17 +49,21 @@ export function StatsCard({
       </div>
       <p className="stat-value mt-2">{value}</p>
       <div className={cn('mt-1.5 flex items-center gap-1 text-meta', getTrendColor())}>
-        {getTrendIcon()}
         {trend && (
-          <>
-            <span className="tabular-nums">
-              {trend.value > 0 ? '+' : ''}
-              {trend.value}%
-            </span>
-            {trend.label && (
-              <span className="ml-1 text-[var(--text-dim)]">{trend.label}</span>
-            )}
-          </>
+          trend.value === null ? (
+            <span className="text-[var(--text-dim)]">{t('dashboard.trendUnavailable')}</span>
+          ) : (
+            <>
+              {getTrendIcon()}
+              <span className="tabular-nums">
+                {trend.value > 0 ? '+' : ''}
+                {trend.value}%
+              </span>
+            </>
+          )
+        )}
+        {trend?.label && (
+          <span className="ml-1 text-[var(--text-dim)]">{trend.label}</span>
         )}
       </div>
     </Card>

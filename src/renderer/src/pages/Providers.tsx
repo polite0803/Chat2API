@@ -3,10 +3,14 @@
  * Integrates all components for CRUD operations on providers and accounts
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useToast } from '@/hooks/use-toast'
 import { useProvidersStore } from '@/stores/providersStore'
+import {
+  localAccountCounts,
+  mergeChannelCounts,
+} from '@/lib/accountCounts'
 import {
   ProviderCard,
   AddProviderDialog,
@@ -63,7 +67,45 @@ export function Providers() {
   const [modelEditorProvider, setModelEditorProvider] = useState<{ id: string; name: string } | null>(null)
 
   const [deleteProviderId, setDeleteProviderId] = useState<string | null>(null)
-  
+
+  /**
+   * 先把本地表算出来写进 store —— 同步、瞬时，页面不必等渠道 Worker。
+   *
+   * 渠道（`type: 'account'`）的真实账号在 Worker 里，本地只有一条占位账号；
+   * 只照本地表算，卡片就永远是 1/1，与 /channels 页上的「2/2」对不上。所以
+   * 这一步只是「先给个不离谱的数」，真正的池内计数由下面那次覆盖。
+   */
+  const applyLocalAccountCounts = useCallback(() => {
+    const { providers, accounts } = useProvidersStore.getState()
+    useProvidersStore.getState().setAccountCounts(localAccountCounts(providers, accounts))
+  }, [])
+
+  /**
+   * 用渠道池的计数覆盖本地那份。
+   *
+   * 刻意**不**在首屏 `await` 它：Worker 可能还没启动（启动要加载 WASM 与十一个
+   * 适配器，还有自己的超时），让供应商列表等它等于把首屏绑在一个后台初始化的
+   * 时序上。所以先画本地计数，池子答了再改。
+   *
+   * 读的是 store 的实时快照（不是闭包里那份）—— 调用点大多刚做完一次
+   * `addAccount` / `removeAccount`，拿旧快照会少算或多算一个。
+   */
+  const refreshAccountCounts = useCallback(async () => {
+    const { providers, accounts } = useProvidersStore.getState()
+    const local = localAccountCounts(providers, accounts)
+    let pool: Record<string, { total: number; enabled: number }> = {}
+    // 只有存在渠道供应商时才值得问一次 Worker。
+    if (providers.some(provider => provider.type === 'account')) {
+      try {
+        pool = await window.electronAPI.channels.accountCounts()
+      } catch (error) {
+        // 读不到池子不是「没有账号」：下面保留本地计数，界面不会凭空掉到 0。
+        console.warn('Failed to read channel account counts:', error)
+      }
+    }
+    useProvidersStore.getState().setAccountCounts(mergeChannelCounts(local, providers, pool))
+  }, [])
+
   useEffect(() => {
     if (hasLoadedRef.current) return
     hasLoadedRef.current = true
@@ -92,7 +134,6 @@ export function Providers() {
         
         const existingStatuses = useProvidersStore.getState().providerStatuses
         const statusMap: Record<string, ProviderStatus> = { ...existingStatuses }
-        const countMap: Record<string, { total: number; active: number }> = {}
         
         for (const provider of providersData) {
           if (provider.status) {
@@ -100,24 +141,35 @@ export function Providers() {
           } else if (!statusMap[provider.id]) {
             statusMap[provider.id] = 'unknown'
           }
-          const providerAccounts = accountsData.filter(a => a.providerId === provider.id)
-          countMap[provider.id] = {
-            total: providerAccounts.length,
-            active: providerAccounts.filter(a => a.status === 'active').length,
-          }
         }
         
         useProvidersStore.getState().setProviderStatuses(statusMap)
-        useProvidersStore.getState().setAccountCounts(countMap)
+        // 首屏不等 Worker：先落本地计数，池内计数在后台补上。
+        applyLocalAccountCounts()
       } catch (error) {
         console.error('Failed to load providers:', error)
       } finally {
         useProvidersStore.getState().setIsLoading(false)
       }
+
+      // Worker 可能还在冷启动，所以放在 finally 之后单独跑，不阻塞上面的 loading 收尾。
+      void refreshAccountCounts()
     }
     
     loadInitialData()
-  }, [])
+  }, [applyLocalAccountCounts, refreshAccountCounts])
+
+  /**
+   * 渠道账号在 Worker 内变化后（登录成功、增删账号、开关账号），池子自己会广播
+   * `channels:changed`；这里跟一次，供应商卡片才不用手动刷新页面才更新。
+   */
+  useEffect(() => {
+    if (!window.electronAPI?.channels?.onChanged) return
+    const unsubscribe = window.electronAPI.channels.onChanged(() => {
+      void refreshAccountCounts()
+    })
+    return unsubscribe
+  }, [refreshAccountCounts])
 
   const filteredProviders = store.providers.filter((provider) => {
     const matchesSearch = 
@@ -316,11 +368,14 @@ export function Providers() {
         empty: t('providers.updateModelsEmptyDesc'),
         unrecognized_shape: t('providers.updateModelsShapeDesc', { detail: result.detail ?? '' }),
         network_error: t('providers.updateModelsNetworkDesc', { detail: result.detail ?? '' }),
+        // 聚合同步特有：端点拒绝全部 Key（401/403），细节里带尝试过的 Key 数
+        invalid_api_key: t('providers.updateModelsInvalidKeyDesc', { detail: result.detail ?? '' }),
       }
 
       toast({
         title: t('providers.updateModelsFailed'),
-        description: failureDescriptions[result.reason ?? 'network_error'],
+        description:
+          failureDescriptions[result.reason ?? 'network_error'] ?? t('providers.updateModelsFailed'),
         variant: 'destructive',
       })
     } catch (error) {
@@ -383,11 +438,8 @@ export function Providers() {
         store.addAccount(account)
       }
     }
-    store.updateAccountCount(
-      targetProvider.id,
-      providerAccounts.length,
-      providerAccounts.filter(a => a.status === 'active').length
-    )
+    applyLocalAccountCounts()
+    void refreshAccountCounts()
 
     setShowAddProviderDialog(false)
     toast({
@@ -464,12 +516,8 @@ export function Providers() {
       })
       store.addAccount(account)
       
-      const providerAccounts = store.getAccountsByProvider(store.selectedProviderId)
-      store.updateAccountCount(
-        store.selectedProviderId,
-        providerAccounts.length,
-        providerAccounts.filter(a => a.status === 'active').length
-      )
+      applyLocalAccountCounts()
+      void refreshAccountCounts()
       
       setShowAddAccountDialog(false)
       toast({
@@ -494,14 +542,8 @@ export function Providers() {
       if (updated) {
         store.updateAccount(id, updates)
         
-        if (store.selectedProviderId) {
-          const providerAccounts = store.getAccountsByProvider(store.selectedProviderId)
-          store.updateAccountCount(
-            store.selectedProviderId,
-            providerAccounts.length,
-            providerAccounts.filter(a => a.status === 'active').length
-          )
-        }
+        applyLocalAccountCounts()
+        void refreshAccountCounts()
         
         toast({
           title: t('providers.updateSuccess'),
@@ -521,17 +563,10 @@ export function Providers() {
     try {
       const success = await window.electronAPI.accounts.delete(id)
       if (success) {
-        const account = store.getAccountById(id)
         store.removeAccount(id)
         
-        if (account && store.selectedProviderId) {
-          const providerAccounts = store.getAccountsByProvider(store.selectedProviderId)
-          store.updateAccountCount(
-            store.selectedProviderId,
-            providerAccounts.length,
-            providerAccounts.filter(a => a.status === 'active').length
-          )
-        }
+        applyLocalAccountCounts()
+        void refreshAccountCounts()
         
         toast({
           title: t('providers.deleteSuccess'),
@@ -553,14 +588,8 @@ export function Providers() {
       if (isValid) {
         store.updateAccount(id, { status: 'active' })
         
-        if (store.selectedProviderId) {
-          const providerAccounts = store.getAccountsByProvider(store.selectedProviderId)
-          store.updateAccountCount(
-            store.selectedProviderId,
-            providerAccounts.length,
-            providerAccounts.filter(a => a.status === 'active').length
-          )
-        }
+        applyLocalAccountCounts()
+        void refreshAccountCounts()
         
         toast({
           title: t('providers.validateSuccess'),
@@ -569,14 +598,8 @@ export function Providers() {
       } else {
         store.updateAccount(id, { status: 'error', errorMessage: t('providers.validateFailed') })
         
-        if (store.selectedProviderId) {
-          const providerAccounts = store.getAccountsByProvider(store.selectedProviderId)
-          store.updateAccountCount(
-            store.selectedProviderId,
-            providerAccounts.length,
-            providerAccounts.filter(a => a.status === 'active').length
-          )
-        }
+        applyLocalAccountCounts()
+        void refreshAccountCounts()
         
         toast({
           title: t('providers.validateFailed'),
@@ -588,14 +611,8 @@ export function Providers() {
       const errorMessage = error instanceof Error ? error.message : t('providers.operationFailed')
       store.updateAccount(id, { status: 'error', errorMessage })
       
-      if (store.selectedProviderId) {
-        const providerAccounts = store.getAccountsByProvider(store.selectedProviderId)
-        store.updateAccountCount(
-          store.selectedProviderId,
-          providerAccounts.length,
-          providerAccounts.filter(a => a.status === 'active').length
-        )
-      }
+      applyLocalAccountCounts()
+      void refreshAccountCounts()
       
       toast({
         title: t('providers.validateFailed'),

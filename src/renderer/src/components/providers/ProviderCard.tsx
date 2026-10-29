@@ -94,6 +94,23 @@ export function ProviderCard({
     return provider.description
   }
 
+  /**
+   * 卡片上「认证方式」的文案。
+   *
+   * 两件事一起修，都是同一个格子里的错：
+   *
+   * 1. **渠道要按登录方式说，不能按 `authType` 说。** `AuthType` 枚举里没有
+   *    「浏览器/设备码登录」，渠道记录只能填 `token`，照它渲染就把一个靠网页
+   *    登录拿账号的渠道显示成「API Key」——它根本没有 Key。
+   * 2. **标签走 i18n。** 旧的 `getAuthTypeLabel` 是写死的英文（'API Key'、
+   *    'User Token'…），中文界面上也照原样显示英文。
+   */
+  const authLabel = provider.type === 'account' && provider.loginKind !== undefined
+    ? t(`channels.loginKind.${provider.loginKind}`)
+    : t(`providers.authLabels.${provider.authType}`, {
+        defaultValue: getAuthTypeLabel(provider.authType),
+      })
+
   return (
     <Card hover className={cn('flex flex-col p-5', className)}>
       <div className="flex items-start justify-between gap-3">
@@ -153,7 +170,9 @@ export function ProviderCard({
                   {t('providers.manageModels')}
                 </DropdownMenuItem>
               )}
-              {isBuiltin && provider.supportsModelFetch && (
+              {/* 聚合记录也能在线同步（走聚合管理器的多 Key 轮换探测）；内置记录仍看
+                  supportsModelFetch（由启动同步按出厂配置写入）。 */}
+              {(provider.supportsModelFetch || provider.type === 'aggregate') && (
                 <DropdownMenuItem onClick={() => onUpdateModels?.(provider.id)}>
                   <Download className="mr-2 h-4 w-4" />
                   {t('providers.updateModels')}
@@ -198,7 +217,7 @@ export function ProviderCard({
           </div>
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="text-[var(--text-dim)]">{t('providers.authType')}</span>
-            <span className="truncate font-medium">{getAuthTypeLabel(provider.authType)}</span>
+            <span className="truncate font-medium">{authLabel}</span>
           </div>
         </div>
 

@@ -10,8 +10,6 @@ export interface ProviderStats {
   status: ProviderStatus
   requestCount: number
   successCount: number
-  quotaUsed?: number
-  quotaTotal?: number
   latency?: number
 }
 

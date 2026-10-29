@@ -41,5 +41,5 @@ test('tool calling smoke runs in the main process instead of fetching the manage
   )
 
   // the management endpoint shown in settings still has to be one the proxy serves
-  assert.match(managementSettingsSource, /const apiEndpoint = `http:\/\/127\.0\.0\.1:\$\{proxyPort\}\/v0\/management`/)
+  assert.match(managementSettingsSource, /const apiEndpoint = `http:\/\/127\.0\.0\.1:\$\{proxyPort\}\/v1\/management`/)
 })

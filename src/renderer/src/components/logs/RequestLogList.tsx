@@ -32,6 +32,10 @@ interface RowProps {
 }
 
 const ITEM_HEIGHT = 72
+const LOG_LIST_LIMIT = 200
+/** Safety net for rows written while the window was closed; the live push is the normal path. */
+const RECONCILE_INTERVAL_MS = 30_000
+const STATS_REFRESH_DEBOUNCE_MS = 400
 
 function getStatusColor(status: 'success' | 'error', statusCode: number) {
   if (status === 'success') return 'badge-success'
@@ -74,7 +78,7 @@ export function RequestLogList({ highlightId }: RequestLogListProps) {
   const fetchLogs = useCallback(async () => {
     try {
       const filter = statusFilter === 'all' ? {} : { status: statusFilter }
-      const result = await window.electronAPI?.requestLogs?.get({ ...filter, limit: 200 })
+      const result = await window.electronAPI?.requestLogs?.get({ ...filter, limit: LOG_LIST_LIMIT })
       if (result) {
         if (JSON.stringify(result) !== JSON.stringify(logsRef.current)) {
           logsRef.current = result
@@ -101,19 +105,44 @@ export function RequestLogList({ highlightId }: RequestLogListProps) {
     await Promise.all([fetchLogs(), fetchStats()])
   }, [fetchLogs, fetchStats])
 
+  const statsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   useEffect(() => {
     setIsLoading(true)
     refreshLogs().finally(() => setIsLoading(false))
   }, [refreshLogs])
 
+  // Rows arrive as they are persisted, so the list no longer polls every 3s. The
+  // debounced stats refetch keeps the counters authoritative instead of guessing +1,
+  // and the slow reconcile covers rows written while no window was listening.
   useEffect(() => {
-    const interval = setInterval(() => {
+    const unsubscribe = window.electronAPI?.requestLogs?.onNewLog?.((log) => {
+      if (statusFilter !== 'all' && log.status !== statusFilter) {
+        return
+      }
+      logsRef.current = [log, ...logsRef.current.filter((entry) => entry.id !== log.id)].slice(0, LOG_LIST_LIMIT)
+      setLogs(logsRef.current)
+      if (statsTimerRef.current) clearTimeout(statsTimerRef.current)
+      statsTimerRef.current = setTimeout(() => {
+        statsTimerRef.current = null
+        fetchStats().catch((error) => {
+          console.error('Failed to refresh request log stats:', error)
+        })
+      }, STATS_REFRESH_DEBOUNCE_MS)
+    })
+
+    const reconcile = setInterval(() => {
       refreshLogs().catch((error) => {
-        console.error('Failed to refresh request logs:', error)
+        console.error('Failed to reconcile request logs:', error)
       })
-    }, 3000)
-    return () => clearInterval(interval)
-  }, [refreshLogs])
+    }, RECONCILE_INTERVAL_MS)
+
+    return () => {
+      unsubscribe?.()
+      clearInterval(reconcile)
+      if (statsTimerRef.current) clearTimeout(statsTimerRef.current)
+    }
+  }, [statusFilter, refreshLogs, fetchStats])
 
   useEffect(() => {
     if (!highlightId || consumedHighlightRef.current === highlightId || logs.length === 0) return
@@ -166,6 +195,12 @@ export function RequestLogList({ highlightId }: RequestLogListProps) {
               {log.statusCode}
             </Badge>
 
+            {log.streamTruncated === true && (
+              <Badge variant="outline" className="badge-warning" title={t('logs.streamTruncated')}>
+                {t('logs.truncatedShort')}
+              </Badge>
+            )}
+
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <span className="font-medium text-sm truncate">{log.model}</span>
@@ -192,7 +227,7 @@ export function RequestLogList({ highlightId }: RequestLogListProps) {
         </div>
       )
     },
-    []
+    [t]
   )
 
   const rowProps = useMemo<RowProps>(() => ({

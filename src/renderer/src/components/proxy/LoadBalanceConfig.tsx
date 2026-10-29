@@ -10,14 +10,12 @@ import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import { useProxyStore, type AccountWeight } from '@/stores/proxyStore'
 import { useToast } from '@/hooks/use-toast'
-import type { LoadBalanceStrategy, Account, Provider, AutoRoutingConfig } from '@/types/electron'
+import type { LoadBalanceStrategy, Account, Provider, AutoRoutingConfig, AutoPreference } from '@/types/electron'
+import { AUTO_PREFERENCES, DEFAULT_AUTO_ROUTING_CONFIG } from '../../../../shared/types'
 import { Scale, RefreshCw, Info } from 'lucide-react'
 
-const DEFAULT_AUTO_ROUTING: AutoRoutingConfig = {
-  enabled: true,
-  maxAttempts: 3,
-  stickyMinutes: 30,
-}
+// 默认值只有一份：配置层归一化用的是同一个常量，避免两处漂移
+const DEFAULT_AUTO_ROUTING: AutoRoutingConfig = DEFAULT_AUTO_ROUTING_CONFIG
 
 interface LoadBalanceConfigProps {
   onConfigChange?: () => void
@@ -150,6 +148,8 @@ export function LoadBalanceConfig({ onConfigChange }: LoadBalanceConfigProps) {
       'round-robin': t('proxy.roundRobin'),
       'fill-first': t('proxy.fillFirst'),
       'failover': t('proxy.failover'),
+      'smart': t('proxy.smart'),
+      'pace': t('proxy.pace'),
     }
     return labels[strategy]
   }
@@ -159,6 +159,8 @@ export function LoadBalanceConfig({ onConfigChange }: LoadBalanceConfigProps) {
       'round-robin': t('proxy.roundRobinDesc'),
       'fill-first': t('proxy.fillFirstDesc'),
       'failover': t('proxy.failoverDesc'),
+      'smart': t('proxy.smartDesc'),
+      'pace': t('proxy.paceDesc'),
     }
     return descriptions[strategy]
   }
@@ -187,7 +189,7 @@ export function LoadBalanceConfig({ onConfigChange }: LoadBalanceConfigProps) {
               <SelectValue placeholder={t('proxy.selectStrategy')} />
             </SelectTrigger>
             <SelectContent>
-              {(['round-robin', 'fill-first', 'failover'] as LoadBalanceStrategy[]).map((strategy) => (
+              {(['round-robin', 'fill-first', 'failover', 'smart', 'pace'] as LoadBalanceStrategy[]).map((strategy) => (
                 <SelectItem key={strategy} value={strategy}>
                   {getStrategyLabel(strategy)}
                 </SelectItem>
@@ -278,41 +280,65 @@ export function LoadBalanceConfig({ onConfigChange }: LoadBalanceConfigProps) {
           </div>
 
           {autoRouting.enabled && (
-            <div className="grid gap-4 sm:grid-cols-2">
+            <>
               <div className="space-y-2">
-                <Label htmlFor="auto-max-attempts">{t('proxy.autoRoutingMaxAttempts')}</Label>
-                <Input
-                  id="auto-max-attempts"
-                  type="number"
-                  min={1}
-                  max={5}
-                  value={autoRouting.maxAttempts}
-                  onChange={(event) => handleAutoRoutingChange({
-                    maxAttempts: Number(event.target.value) || 1,
-                  })}
-                />
+                <Label htmlFor="auto-prefer">{t('proxy.autoRoutingPrefer')}</Label>
+                <Select
+                  value={autoRouting.prefer}
+                  onValueChange={(value) => handleAutoRoutingChange({ prefer: value as AutoPreference })}
+                >
+                  <SelectTrigger id="auto-prefer">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {AUTO_PREFERENCES.map((preference) => (
+                      <SelectItem key={preference} value={preference}>
+                        {t(`proxy.autoRoutingPrefer_${preference}`)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <p className="text-xs text-muted-foreground">
-                  {t('proxy.autoRoutingMaxAttemptsHelp')}
+                  {t('proxy.autoRoutingPreferHelp')}
                 </p>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="auto-sticky-minutes">{t('proxy.autoRoutingSticky')}</Label>
-                <Input
-                  id="auto-sticky-minutes"
-                  type="number"
-                  min={0}
-                  max={1440}
-                  value={autoRouting.stickyMinutes}
-                  onChange={(event) => handleAutoRoutingChange({
-                    stickyMinutes: Number(event.target.value) || 0,
-                  })}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {t('proxy.autoRoutingStickyHelp')}
-                </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="auto-max-attempts">{t('proxy.autoRoutingMaxAttempts')}</Label>
+                  <Input
+                    id="auto-max-attempts"
+                    type="number"
+                    min={1}
+                    max={5}
+                    value={autoRouting.maxAttempts}
+                    onChange={(event) => handleAutoRoutingChange({
+                      maxAttempts: Number(event.target.value) || 1,
+                    })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t('proxy.autoRoutingMaxAttemptsHelp')}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="auto-sticky-minutes">{t('proxy.autoRoutingSticky')}</Label>
+                  <Input
+                    id="auto-sticky-minutes"
+                    type="number"
+                    min={0}
+                    max={1440}
+                    value={autoRouting.stickyMinutes}
+                    onChange={(event) => handleAutoRoutingChange({
+                      stickyMinutes: Number(event.target.value) || 0,
+                    })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t('proxy.autoRoutingStickyHelp')}
+                  </p>
+                </div>
               </div>
-            </div>
+            </>
           )}
         </div>
 

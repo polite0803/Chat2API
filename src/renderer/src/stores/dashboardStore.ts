@@ -1,5 +1,8 @@
 import { create } from 'zustand'
-import type { ProxyStatus, ProxyStatistics, Provider, Account, ProviderCheckResult, LogEntry } from '@/types/electron'
+import type { ProxyStatus, ProxyStatistics, Provider, Account, ProviderCheckResult, LogEntry, DayTokenSummary } from '@/types/electron'
+import type { AppLogTrendPoint, RequestLogTrendPoint } from '@shared/types'
+import { localDayKey, recentLocalDays } from '@shared/localDay'
+import { dayCountsOf, differenceInPoints, percentChange, successRateOf } from '@shared/trendMath'
 import type { ProviderStats, ActivityItem, ChartDataPoint } from '@/components/dashboard'
 
 interface DashboardStats {
@@ -7,21 +10,14 @@ interface DashboardStats {
   successRate: number
   avgLatency: number
   activeAccounts: number
-  requestsTrend: number
-  successRateTrend: number
-  latencyTrend: number
-  accountsTrend: number
+  /** `null` when the comparison cannot be computed - shown as "no comparison", never as 0%. */
+  requestsTrend: number | null
+  successRateTrend: number | null
+  latencyTrend: number | null
+  accountsTrend: number | null
 }
 
 
-
-interface LogTrend {
-  date: string
-  total: number
-  info: number
-  warn: number
-  error: number
-}
 
 interface DashboardState {
   proxyStatus: ProxyStatus | null
@@ -30,12 +26,15 @@ interface DashboardState {
   providers: ProviderStats[]
   activities: ActivityItem[]
   chartData: ChartDataPoint[]
+  /** Today's token counters; null until the first fetch resolves. */
+  tokenUsage: DayTokenSummary | null
   isLoading: boolean
   error: string | null
   lastUpdated: number | null
 
   setProxyStatus: (status: ProxyStatus | null) => void
   setStatistics: (statistics: ProxyStatistics | null) => void
+  setTokenUsage: (usage: DayTokenSummary | null) => void
   setStats: (stats: Partial<DashboardStats>) => void
   setProviders: (providers: ProviderStats[]) => void
   setActivities: (activities: ActivityItem[]) => void
@@ -97,12 +96,12 @@ const convertRequestLogsToActivities = (logs: DashboardRequestLog[]): ActivityIt
   })
 }
 
-const convertTrendToChartData = (trends: LogTrend[]): ChartDataPoint[] => {
+const convertTrendToChartData = (trends: AppLogTrendPoint[]): ChartDataPoint[] => {
   return trends.map(trend => ({
     time: trend.date.slice(5),
     requests: trend.total,
     success: trend.info,
-    failed: trend.error + trend.warn,
+    failed: trend.error === null || trend.warn === null ? null : trend.error + trend.warn,
   }))
 }
 
@@ -114,20 +113,22 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     successRate: 0,
     avgLatency: 0,
     activeAccounts: 0,
-    requestsTrend: 0,
-    successRateTrend: 0,
-    latencyTrend: 0,
-    accountsTrend: 0,
+    requestsTrend: null,
+    successRateTrend: null,
+    latencyTrend: null,
+    accountsTrend: null,
   },
   providers: [],
   activities: [],
   chartData: [],
+  tokenUsage: null,
   isLoading: false,
   error: null,
   lastUpdated: null,
 
   setProxyStatus: (status) => set({ proxyStatus: status }),
   setStatistics: (statistics) => set({ statistics }),
+  setTokenUsage: (tokenUsage) => set({ tokenUsage }),
   setStats: (stats) => set((state) => ({ stats: { ...state.stats, ...stats } })),
   setProviders: (providers) => set({ providers }),
   setActivities: (activities) => set({ activities }),
@@ -139,7 +140,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   setError: (error) => set({ error }),
 
   refreshData: async () => {
-    const { setLoading, setError, setProxyStatus, setStatistics, setStats, setProviders, setActivities, setChartData } = get()
+    const { setLoading, setError, setProxyStatus, setStatistics, setTokenUsage, setStats, setProviders, setActivities, setChartData } = get()
     
     setLoading(true)
     setError(null)
@@ -154,8 +155,11 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       const logsPromise = window.electronAPI?.logs?.get?.({ limit: 10 }) ?? Promise.resolve([])
       const trendPromise = window.electronAPI?.logs?.getTrend?.(7) ?? Promise.resolve([])
       const requestLogTrendPromise = window.electronAPI?.requestLogs?.getTrend?.(7) ?? Promise.resolve([])
+      // Token counters live in their own store key (bounded by days, not rows),
+      // so they are fetched independently of the request-log window.
+      const tokenUsagePromise = window.electronAPI?.statistics?.getTokenUsage?.() ?? Promise.resolve(null)
 
-      const [proxyStatus, statistics, persistentStats, providers, accounts, providerStatuses, logs, trends, requestLogTrends] = await Promise.all([
+      const [proxyStatus, statistics, persistentStats, providers, accounts, providerStatuses, logs, trends, requestLogTrends, tokenUsage] = await Promise.all([
         proxyStatusPromise,
         statisticsPromise,
         persistentStatsPromise,
@@ -165,10 +169,12 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         logsPromise,
         trendPromise,
         requestLogTrendPromise,
-      ]) as [ProxyStatus | null, ProxyStatistics | null, any, Provider[], Account[], Record<string, ProviderCheckResult>, LogEntry[], LogTrend[], any[]]
+        tokenUsagePromise,
+      ]) as [ProxyStatus | null, ProxyStatistics | null, any, Provider[], Account[], Record<string, ProviderCheckResult>, LogEntry[], AppLogTrendPoint[], RequestLogTrendPoint[], DayTokenSummary | null]
 
       setProxyStatus(proxyStatus)
       setStatistics(statistics)
+      setTokenUsage(tokenUsage)
 
       const totalRequests = persistentStats?.totalRequests ?? statistics?.totalRequests ?? 0
       const successRequests = persistentStats?.successRequests ?? statistics?.successRequests ?? 0
@@ -176,7 +182,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         ? Math.round((successRequests / totalRequests) * 100)
         : 0
       
-      const today = new Date().toISOString().split('T')[0]
+      const today = localDayKey(Date.now())
       const todayStats = persistentStats?.dailyStats?.[today]
       const avgLatency = todayStats && todayStats.successRequests > 0
         ? Math.round(todayStats.totalLatency / todayStats.successRequests)
@@ -186,35 +192,27 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       
       const activeAccounts = accounts?.filter((a: Account) => a.status === 'active').length ?? 0
 
-      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      const yesterday = recentLocalDays(2)[0].key
 
-      const useRequestLogTrends = requestLogTrends && requestLogTrends.length > 0
-      const trendData = useRequestLogTrends ? requestLogTrends : trends
+      // Request-log rows are capped, so a day can be unknown (null) instead of zero.
+      // The app-log trend has its own retention window, so it only takes over when the
+      // request-log window says nothing at all.
+      const useRequestLogTrends = requestLogTrends.some((point) => point.total !== null)
+      const todayTrend = useRequestLogTrends
+        ? requestLogTrends.find((point) => point.date === today)
+        : trends.find((point) => point.date === today)
+      const yesterdayTrend = useRequestLogTrends
+        ? requestLogTrends.find((point) => point.date === yesterday)
+        : trends.find((point) => point.date === yesterday)
 
-      const todayTrend = trendData.find((t: any) => t.date === today)
-      const yesterdayTrend = trendData.find((t: any) => t.date === yesterday)
-
-      const todayRequests = todayTrend?.total ?? todayTrend?.info ?? 0
-      const yesterdayRequests = yesterdayTrend?.total ?? yesterdayTrend?.info ?? 0
+      const todayCounts = dayCountsOf(todayTrend, useRequestLogTrends)
+      const yesterdayCounts = dayCountsOf(yesterdayTrend, useRequestLogTrends)
       
-      let requestsTrend = 0
-      if (yesterdayRequests > 0) {
-        requestsTrend = Math.round(((todayRequests - yesterdayRequests) / yesterdayRequests) * 100)
-      } else if (todayRequests > 0) {
-        requestsTrend = 100
-      }
-
-      const todaySuccess = useRequestLogTrends ? (todayTrend?.success ?? 0) : (todayTrend?.info ?? 0)
-      const yesterdaySuccess = useRequestLogTrends ? (yesterdayTrend?.success ?? 0) : (yesterdayTrend?.info ?? 0)
-      const todaySuccessRate = todayRequests > 0 ? Math.round((todaySuccess / todayRequests) * 100) : 0
-      const yesterdaySuccessRate = yesterdayRequests > 0 ? Math.round((yesterdaySuccess / yesterdayRequests) * 100) : 0
-      const successRateTrend = yesterdaySuccessRate > 0 ? todaySuccessRate - yesterdaySuccessRate : 0
-
-      const todayAvgLatency = todayTrend?.avgLatency ?? 0
-      const yesterdayAvgLatency = yesterdayTrend?.avgLatency ?? 0
-      const latencyTrend = yesterdayAvgLatency > 0 && todayAvgLatency > 0
-        ? Math.round(((todayAvgLatency - yesterdayAvgLatency) / yesterdayAvgLatency) * 100)
-        : 0
+      const requestsTrend = percentChange(todayCounts.requests, yesterdayCounts.requests)
+      const successRateTrend = differenceInPoints(successRateOf(todayCounts), successRateOf(yesterdayCounts))
+      // A day with no successful request reports an average latency of 0, which means
+      // "not measured", not "instant".
+      const latencyTrend = percentChange(todayCounts.avgLatency || null, yesterdayCounts.avgLatency || null)
 
       setStats({
         totalRequests,
@@ -266,11 +264,11 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       }
       
       if (useRequestLogTrends) {
-        setChartData(requestLogTrends.map((t: any) => ({
-          time: t.date.slice(5),
-          requests: t.total,
-          success: t.success,
-          failed: t.error,
+        setChartData(requestLogTrends.map((point) => ({
+          time: point.date.slice(5),
+          requests: point.total,
+          success: point.success,
+          failed: point.error,
         })))
       } else {
         setChartData(convertTrendToChartData(trends))
@@ -284,10 +282,10 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         successRate: 0,
         avgLatency: 0,
         activeAccounts: 0,
-        requestsTrend: 0,
-        successRateTrend: 0,
-        latencyTrend: 0,
-        accountsTrend: 0,
+        requestsTrend: null,
+        successRateTrend: null,
+        latencyTrend: null,
+        accountsTrend: null,
       })
       setActivities([])
       setChartData([])
