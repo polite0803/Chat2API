@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Project Overview
 
-ModelPort is an Electron desktop application that provides an OpenAI-compatible API proxy for standard HTTP model endpoints. It ships four provider classes: the `opencode` local runtime, a 73-entry aggregate catalogue of key-based / key-less endpoints (see "Aggregate Provider Catalogue"), the ten account channels served by the vendored channel pack (see "Account Channels"), and user-defined custom providers. It runs on macOS, Windows, and Linux.
+ModelPort is an Electron desktop application that provides an OpenAI-compatible API proxy for standard HTTP model endpoints. It ships four provider classes: the `opencode` local runtime, a 74-entry aggregate catalogue of key-based / key-less endpoints (see "Aggregate Provider Catalogue"), the twelve account channels served by the vendored channel pack (see "Account Channels"), and user-defined custom providers. It runs on macOS, Windows, and Linux.
 
 ## Build Commands
 
@@ -46,9 +46,28 @@ real. Do not reintroduce a project reference between them - a composite `tsconfi
 renderer program resolve `@shared/*` through not-yet-built declaration outputs, which surfaces as
 `TS6305` "output file has not been built" and silently suppresses the real downstream type errors.
 
-Two `tests/skills/` files fail on a Windows checkout for environmental
-reasons (a child process spawned with a macOS-style `/private/tmp` fixture path, and a `\n`-only regex
-against CRLF files).
+**Eight test files cannot run in a pipe-blocking sandbox, and that is not a regression.** They fail
+with `spawn EPERM` before any assertion executes, on both of the suite's two child-process paths:
+
+| Files | Mechanism |
+|-------|-----------|
+| `tests/channels/{qoder-plan-gate,qoder-session-payload,workbuddy-port,minimax-tool-call-name}.test.ts` | `esbuild.build()` spawns the esbuild service binary |
+| `tests/skills/chat2api-{har-tool-fixture,tool-client-replay,provider-model-matrix,management-api}.test.mjs` | `spawnSync('node', …)` captures the child's stdout through a pipe |
+
+Both hit the same boundary: a confined process cannot open a named pipe. (`node --test` spawns one
+child per test file, so in a spawn-blocking sandbox the *whole* command fails regardless of content;
+running a single file as `node tests/…/<file>.test.ts` works for every dependency-free test, just
+not for the esbuild ones.) Counting these as regressions costs real time - re-run the same command in
+a normal environment before touching source. Before attributing a red to your own change, check
+whether the failing file mentions `esbuild` or `child_process` at all, and whether the file it reads
+is one you edited: this checkout carries a large body of uncommitted work, so a red in
+`tests/tool-calling/tool-settings-ui.test.ts` (which asserts on strings inside
+`src/renderer/src/components/models/ToolCallingPanel.tsx`) or a `tsconfig.node.json` error coming
+from `src/main/index.ts` can be somebody else's pending edit rather than your regression.
+
+Two further `tests/skills/` cases fail on a Windows checkout for environmental reasons independent
+of the above (a child process spawned with a macOS-style `/private/tmp` fixture path, and a `\n`-only
+regex against CRLF files).
 
 Packaging constraints worth knowing before a release: macOS produces **dmg only** (no zip), which
 breaks `electron-updater` on macOS; no build is code-signed and macOS is not notarized; the
@@ -69,7 +88,7 @@ src/
 │   │   ├── modelMapper.ts  # Model -> actual model / preferred provider / preferred account
 │   │   ├── adapters/       # Provider-specific adapters (+ stream handlers)
 │   │   ├── routes/         # chat.ts, completions.ts, models.ts
-│   │   │   └── management/ # /v0/management/* HTTP API
+│   │   │   └── management/ # /v1/management/* HTTP API
 │   │   ├── middleware/     # managementAuth
 │   │   ├── toolCalling/    # Tool-calling engine + client protocol adapters
 │   │   ├── services/       # contextManagementService (history trimming)
@@ -82,7 +101,7 @@ src/
 │   ├── providers/          # Provider configurations
 │   │   ├── builtin/        # Built-in provider configs (one file per provider)
 │   │   ├── aggregate/      # Aggregate catalogue (registry data + manager)
-│   │   ├── accountChannels/ # Ten login channels: catalogue, vault, manager, runtimeState
+│   │   ├── accountChannels/ # Twelve login channels: catalogue, vault, manager, runtimeState
 │   │   └── custom.ts       # Custom provider support
 │   ├── store/              # Persistent storage (electron-store)
 │   │   ├── store.ts        # Main store manager with IPC bridge
@@ -147,9 +166,28 @@ The `auth` rule list (`{ from, into: 'header', header, prefix }`, `{ from, into:
 builtin declares `modelsFetch` now. `{uuid}` placeholders in the url/body are still substituted
 with a fresh `crypto.randomUUID()` per call for any future declaration.
 
-Aggregate providers do not use `modelsFetch`; their discovery path lives in
-`providers/aggregate/manager.ts` and requests the catalogue's `modelsUrl` directly with the
-stored key, then rewrites the provider's namespaced model list (see "Aggregate Provider Catalogue").
+Aggregate providers do not use `modelsFetch`; their sync path lives in
+`providers/aggregate/manager.ts`. `syncModels(id)` probes the catalogue's `modelsUrl`, or
+`<baseUrl>/models` when the catalogue declares none, with every stored key in turn, then **merges**
+the upstream ids into the provider's namespaced model list (see "Aggregate Provider Catalogue").
+
+**models.dev is a fallback, and the upstream answer is tri-state.** When the probe fails
+(`no_model_list`, `invalid_api_key`, `http_status`, `network_error`) `syncModels` retries the
+**models.dev** catalogue (`https://models.dev/api.json`, read by `src/shared/modelsDev.ts`) under the
+same entry id, and the result carries `modelSource: 'models.dev'` so the UI can say the list may lag
+upstream. The decision lives in `planSyncModelIds()` and is unit-tested, because the easy mistake is
+treating "upstream answered zero models" as "unavailable":
+
+- `null` (probe failed) - **only** this unlocks the models.dev fallback;
+- `[]` (probe succeeded, zero models) - the upstream's own answer; it must never be replaced by a
+  third-party list, or a request is sent to a model the vendor does not serve;
+- `[...]` - upstream wins outright, even when models.dev lists more, so a curated registry list is
+  never widened behind the user's back.
+
+The reader is deliberately narrow: it takes only `id` + `name`, drops every non-chat `type`
+(`embedding` / `reranking` / `transcription` / `image` / `video` / `speech`), and never reads
+`cost` / `limit` / `tool_call` from models.dev - those belong to `aggregateQuota.ts` and
+`modelCapabilities.ts`, and copying them here would create a second source of truth.
 
 
 Fetched models are stored in `userModelOverrides[providerId].fetchedModels` (+ `fetchedAt`), **not** in
@@ -158,16 +196,31 @@ Fetched models are stored in `userModelOverrides[providerId].fetchedModels` (+ `
 that already exist or are excluded, and `providers:resetModels` clears them along with the rest of the
 overrides.
 
-The action is the single `providers:updateModels` channel. The card menu renders it only when the stored
-provider record carries `supportsModelFetch`, which startup derives from the shipped config. Failures
+The action is the single `providers:updateModels` channel. The card menu renders it for a builtin whose
+record carries `supportsModelFetch`, and for every `type: 'aggregate'` record; an aggregate id is
+routed to `aggregateProviderManager.syncModels` instead of the builtin `modelsFetch` path. Failures
 return a typed `reason` (`unsupported`, `no_active_account`, `http_status`, `empty`,
-`unrecognized_shape`, `network_error`), each with its own message in the UI.
+`unrecognized_shape`, `network_error`, plus aggregate-only `invalid_api_key`), each with its own
+message in the UI.
 
 ### Aggregate Provider Catalogue
 
 `src/main/providers/aggregate/registry.ts` is data transcribed from the reference registry:
-73 entries / 473 models after deliberately dropping `openai` and `github_copilot` (browser-login
-account channels - the class that was retired) and `fleetrelay_t1` (responses-only relay).
+74 entries / 473 models. Beyond dropping `openai` and `github_copilot` (browser-login account
+channels - the class that was retired) and `fleetrelay_t1` (responses-only relay), seven model rows
+were removed on 2026-10-29 because upstream no longer serves them (3 anthropic ids the API answers
+with an error, 4 xai ids retired 2026-05-15 whose slugs still resolve and silently redirect), and
+`mistral_codestral` was withdrawn as a whole because its host is absent from Mistral's published
+docs while `codestral-latest` is already covered by `mistral`. `agnes` was switched on the same day
+to the vendor's China host (`https://api.agnes-ai.cn/v1`) with `agnes-3.0-flash` / `agnes-2.5-flash`
+in place of the deprecated `agnes-2.0-flash` (`agnes-3.0-pro` is still 即将上线). `qiniu` was added
+for the Conatus campaign (model `qiniu/conatus-free`, 1亿 tokens/day for verified accounts to
+2026-11-30); its receipt carries `tpd`/`contextWindow`, and the entry must be withdrawn when the
+campaign ends because the vendor stops serving the model entirely. `sensenova` was added for the
+Token Plan public beta; its schema rejects fields the official table does not list, so the entry
+declares `dropParams` (`response_format`, `enable_thinking`, `tool_choice=auto`,
+`tools[].function.strict`).
+`tests/aggregate/registry.test.ts` pins that list so a re-transcription cannot resurrect them.
 `openai_api` stays and is served over the chat wire. `vertex` / `vertex-partner` are listed with
 `authKind: 'unsupported'` because Google ADC cannot be produced here.
 
@@ -176,9 +229,10 @@ account channels - the class that was retired) and `fleetrelay_t1` (responses-on
   `wire`, `authHeader`/`authPrefix`, `aggregateId`, `supportedModels`, `modelMappings`.
   `initializeDefaultProviders()` only repairs `type === 'builtin'` records, so aggregate records
   survive a restart.
-- Accounts: a keyed entry gets exactly one account holding `credentials.apiKey`; a key-less entry
-  (`kilo`, `ollama`, `lmstudio`, `llamacpp`) gets a credential-less active account so the load
-  balancer can route it.
+- Accounts: a keyed entry stores **one account per key** (the config dialog takes one key per line);
+  the load balancer round-robins the entry's requests over them, so a rate-limited key falls through
+  to the next. A key-less entry (`kilo`, `ollama`, `lmstudio`, `llamacpp`) gets a credential-less
+  active account so the load balancer can route it.
 - Display names are `<providerId>/<modelId>`. `save()` writes `provider.modelMappings`
   (displayName -> upstream id) and a global `config.modelMappings` entry with
   `preferredProviderId`, which is what makes `loadbalancer` route a name to exactly one entry.
@@ -186,23 +240,246 @@ account channels - the class that was retired) and `fleetrelay_t1` (responses-on
 - Wires: `openai-chat` reuses the forwarder's default branch (70 entries).
   `anthropic-messages` (`anthropic`, `glm`'s `/api/anthropic`, `minimax-cn`) uses
   `proxy/adapters/anthropic.ts`, which converts messages/system/tool_use blocks and re-emits the
-  SSE stream as OpenAI chunks with `skipTransform`. `openai-responses` is not implemented.
+  SSE stream as OpenAI chunks with `skipTransform`.
+- `openai-responses` is **outbound only** (`wire: 'openai-responses'`, path `/responses`), for
+  endpoints that expose nothing but the Responses API. `forwarder.forwardResponsesWire()` takes the
+  request over from the default branch *before* any chat body is built, because the two differ in
+  three ways:
+  - no prompt-based tool injection - Responses has native tools, and layering the managed prompt
+    on top would double the tool description;
+  - the body is rebuilt by `chatToResponsesRequest()` rather than copied field by field;
+  - the stream is translated per event, not buffered to the end, so time-to-first-byte stays equal
+    to the upstream's first delta.
+
+  `src/shared/responsesWire.ts` holds all of it as pure functions (`chatToResponsesRequest`,
+  `responsesBodyToChat`, `responsesEventToChatChunks`) so the translation is testable without
+  network. Four rules are load-bearing and each has a test in `tests/shared/responses-wire.test.ts`:
+  - `usage` is `null` when upstream did not report it - never zero-filled;
+  - exactly one `[DONE]`, emitted once even if upstream closes without `response.completed`;
+  - `response.failed` / `error` becomes a `{"error": ...}` frame, never assistant text;
+  - `refusal` and `function_call` output items never leak into `message.content`.
+
+  There is **no inbound `/v1/responses` route**: a client speaking Responses to this proxy would
+  need the reverse codec, and no known client asks for it yet.
 - Auth header: `Authorization: Bearer` by default, `x-api-key` for the anthropic wire, `api-key`
   for `azure_openai`; `forwarder.buildHeaders()` reads `provider.authHeader`/`authPrefix`.
 - A baseUrl containing `{placeholders}` is never expanded: the user has to override it. `test`
-  probes `modelsUrl`; `discoverModels` rewrites the exposed list from the same payload. `kilo`
+  probes the list endpoint for connectivity; `syncModels` merges what it answers into the exposed
+  list (only adds, never removes, so curated lists and per-model parameters survive). `kilo`
   uses the `openai-free-list` reader, so only `isFree: true` models are exposed.
 - Parametpolicy passes every parameter through for any `type !== 'builtin'` provider, so aggregate
   requests are never silently stripped.
 
+### Load Balance Strategies
+
+`LoadBalanceStrategy` is `round-robin | fill-first | failover | smart | pace`. The first three use
+pool order and failure history only. The last two are driven by the quota ledger
+(`src/main/proxy/quota/ledger.ts` + the pure logic in `src/shared/quotaPacing.ts`):
+
+- **`smart`** picks the candidate whose quota window **resets soonest**, so allowance that is about
+  to roll over gets used instead of wasted;
+- **`pace`** picks the candidate with the most **remaining allowance per hour** until its window
+  closes.
+
+Three rules, all encoded in `tests/shared/quota-pacing.test.ts`:
+
+1. **Reset time is derived, never stored.** The ledger keeps usage only; `quotaPacing` recomputes the
+   boundary from the window definition (rolling minute / rolling 24h aligned to whole windows, UTC
+   calendar month). `quota-ledger.json` keeps its current format.
+2. **No derivable reset means no opinion.** A candidate whose provider has no enforceable cap, or
+   whose ledger read failed, does not participate; `selectByQuotaPacing()` returns `null` and
+   `selectAccount()` falls back to `fill-first` order. Never a forced pick, never a dropped
+   candidate - "cannot compute" is not "cannot serve".
+3. **An exhausted candidate is a last resort.** `pickBestPace` skips candidates with zero remaining
+   when any usable one exists; `pickSoonestReset` ranks full candidates after every candidate that
+   still has allowance, even when the full one resets sooner.
+
+`auto` has its own scoring profile per strategy (`AutoRoutingStrategy` mirrors the same five values).
+Its `smart`/`pace` branches cannot see reset times - scoring runs before selection - so they only
+raise the weight of `headroom` and `quota`; the actual reset-aware step happens later in
+`loadbalancer`.
+
+The union is declared **twice** (`src/shared/types.ts` and `src/main/store/types.ts`) with no type
+wiring between them, and the UI carries two hard-coded maps plus the selector list.
+`tests/shared/load-balance-strategies.test.ts` pins all five values across the two unions, the auto
+enum, the selector, both label maps and both locales, because missing one produces a strategy that
+silently cannot be selected or renders as `undefined`.
+
+### Aggregate Free-Quota Layer
+
+The free-tier caps of the aggregate catalogue live in a generated sidecar,
+`src/shared/aggregateQuota.ts` (`entryId -> { rpm, rpd, tpm, tpd, monthlyTokens, contextWindow,
+source, perModel, docUrl, asOf, officialNote }`). It is produced by
+`scripts/build-aggregate-quota.mjs` from the evidence receipts in
+`docs/data/free-quota-research/*.json`; edit the receipts, then re-run the script - never hand-edit
+the output. Each receipt row must carry a verbatim quote and a `docUrl`, and the generator flips
+`source` to `documented` **only** when at least one number is present (a page that was found but
+publishes nothing is `undocumented`). Receipts may set `withdrawn: true` to keep the evidence for an
+entry that left the catalogue.
+
+Current coverage: 16 of 74 entries have at least one documented number; the rest are `undocumented`.
+Two rules follow from that and are easy to break:
+
+- **`undocumented` never blocks a candidate.** "No published cap" is not "no quota": the gate
+  (`proxy/quota/gate.ts`) and `limits.resolveCaps()` only enforce when a real cap exists, otherwise
+  the entry routes as before. 58 of 74 entries depend on this.
+- **A cap that is not in tokens is never converted.** `officialNote` carries the vendor's own unit
+  and conditions (Cloudflare's Neurons/day, kilo's requests/hour/IP, concurrency limits, monthly USD
+  spend, minimum-purchase thresholds). The panel displays it verbatim; it takes no part in
+  enforcement.
+
+Runtime accounting and enforcement:
+
+- `proxy/quota/ledger.ts` keeps per `(providerId, accountId, modelId)` counters in
+  `quota-ledger.json` (debounced write, temp-file rename, corrupt file set aside). Windows are
+  **rolling** last-minute / last-24h plus a **UTC calendar month** - intentionally not the vendor's
+  calendar day, so an exhausted window is detected earlier rather than later.
+- `proxy/quota/observations.ts` learns caps from what the user's own traffic already returned:
+  `x-ratelimit-limit-*` headers and `limit: N` plus an axis keyword in a 429 body. Learning is
+  fill-or-lower only, never raise, and an unparsable axis is not guessed. This is the only channel
+  through which `undocumented` entries ever gain a number.
+- `proxy/quota/limits.ts` merges entry caps, per-model caps and learned caps (each only lowers) and
+  reports which window is full; `monthlyTokens` > `rpd`/`tpd` > `rpm`/`tpm` in reporting order.
+- `routes/chat.ts` meters every success exit (non-stream body, both stream branches) and feeds the
+  learner from every response. Usage the upstream did not report is estimated for the ledger only -
+  it is never written into the client's response body, which stays `usage: null`.
+
+**The estimate has two rules that used to be violated in both directions at once**
+(`proxy/quota/usage.ts`, pinned by `tests/proxy/quota-usage.test.ts` and fenced by
+`tests/proxy/quota-metering.test.ts`):
+
+- **`sseDeltaText()` strips the SSE framing before estimating output.** Feeding the raw collected
+  stream to `chars/4` counts every frame envelope as model text — ~150-260 characters per emitted
+  token, i.e. output inflated 40-65x. Measured on this machine after the fix: raccoon's
+  ledger average fell **4.7x** (48,695 → 10,345 tokens/request) and loomy's 1.5x on identical
+  traffic, the difference being exactly the frame bytes. Do not read this as "every provider number
+  was 40x wrong": TRAE's 503,769 estimated tokens/request happened to sit within 0.1% of TRAE's own
+  reported 503,128 - the estimate was inflated there too, but its requests were near-empty of deltas,
+  so the two errors cancelled. An estimate is only trustworthy per provider, which is why the
+  upstream/estimated pools stay separate. Text with no `data:` lines passes through unchanged (the
+  non-stream path hands in plain content; returning `''` for it would erase real output). SSE with no
+  deltas at all estimates 0, because frame bytes are not the model's answer. Tool-call
+  `name`/`arguments` count as output.
+- **`usageInputText()` counts `messages` + `system` + `tools`.** The old
+  `JSON.stringify(request.messages ?? [])` omitted tool schemas, which for agent clients are
+  usually the largest part of the request - so input was underestimated while output was
+  overestimated, and the number that decides "is prefix replay worth fixing" was wrong in the
+  flattering direction.
+- **`cacheReadTokens` is an upstream-reported subset of input, and is absent, never 0, when the
+  upstream did not report it.** `0` is a claim ("nothing was cached"); absence is the fact ("this
+  path does not tell us"). The day counter stores `upstreamCacheRead` and the dashboard row renders
+  only above zero, so a channel that reports nothing cannot be read as "caching failed". Caps are
+  deliberately **unchanged**: `ledger.record()` still subtracts `totalTokens`, because whether a
+  cache read also consumes the vendor's own allowance is unevidenced, and crediting it as free would
+  make `smart`/`pace` believe a fuller window than we can prove.
+- `normalizeDayBucket()` derives its field list from `emptyBucket()` (loop, not transcription), and
+  `accumulateDayBucket()` runs its persisted input through it. Both exist because buckets come off
+  the disk: an older `data.json` predating any added field would otherwise make `base.field + x`
+  `NaN` and poison the whole day.
+
+**Inside the pack, `TokenUsage.inputTokens` means "input *excluding* cache reads."** The gateway adds
+`cacheReadTokens`/`cacheWriteTokens` back (`openai-gateway/usage.ts::toOpenAiUsage`) - that convention
+is what the documented 2026-10-04 Codex under-count fix rests on. So an adapter that starts reporting a
+cache field must know which convention that field carries, and `vendor/channel-pack/src/usage-cache.ts`
+is the single place that decides, **by field name rather than by provider** (a provider can change
+gateway without changing its name): `prompt_tokens_details.cached_tokens` and
+`prompt_cache_hit_tokens` are **subsets** of `prompt_tokens` → subtract; `cache_read_input_tokens`
+(Anthropic) is **parallel** to `input_tokens` → never subtract. Reversing it either double-counts the
+cache (inflated context, the client compacts too early) or double-deducts it (reported context pinned
+near zero, auto-compaction never fires). Pinned by `tests/channels/usage-cache.test.ts`, including
+"absent stays absent" and the `cached > prompt` clamp. TRAE previously read only three usage keys, so
+its cache-read total of 0 on this machine is *either* "TRAE does not cache" *or* "TRAE reports it and
+we never looked" - indistinguishable until this landed.
+
+Bare model names across entries:
+
+- A request for `glm-5.2` (no `<entry>/` prefix) is expanded by
+  `shared/aggregateRouting.ts` into an ordered chain over every entry serving that exact id, ordered
+  by headroom, and `loadbalancer.selectChainCandidates()` turns it into candidates. A prefixed name
+  (`glm/glm-5.2`) is a pinned choice and is never expanded; `preferredAccountId` is likewise a hard
+  pin.
+- `forwarder.forwardChainCompletion()` and `forwardAutoCompletion()` share one loop
+  (`forwardFirstReachable`), so both fail over on 429/5xx/no-status and stop on other 4xx. When the
+  chain is used, `routes/chat.ts` adopts the account that actually answered and sets
+  `X-Chat2API-Aggregate-Chain` to its entry id - observability without log-reading.
+
+The aggregate page renders one quota cell per entry with five mutually exclusive states
+(`needs-key`, `exhausted`, `documented`, `undocumented`, `absent`) plus a separate free-pool badge;
+the numbers always carry their window, and "exhausted" means the documented cap against **this
+app's** metering, not a live balance. Displaying a live balance would need a vendor quota endpoint,
+which this project deliberately does not call on its own.
+
+### Aggregate Per-Model Cost Classification
+
+Quota answers "how much may I send"; cost answers "does this model cost extra". Separate sidecars,
+because the sources differ in kind:
+
+- `src/shared/aggregateQuota.ts` - **vendor-official** caps, every number with `docUrl` + `asOf`.
+- `src/shared/aggregatePricing.ts` - **third-party** prices (`models.dev`, USD / 1M tokens) **and**
+  the vendor-official free list. Generated by `scripts/build-aggregate-pricing.mjs` from
+  `docs/data/models-dev-cost.json`; refresh the snapshot with `--payload <api.json>`, then re-run.
+  Never hand-edit either sidecar.
+
+`src/shared/aggregateCost.ts` is the single classifier (`aggregateCostOf`); consumers read
+`AggregateModelInfo.cost` rather than inspecting prices. Four classes, in evidence order:
+
+| class | evidence | meaning |
+|-------|----------|---------|
+| `free` | `official` > `catalogue` > `third-party` | no extra cash outlay |
+| `included` | `plan` | allowance already inside a subscription |
+| `priced` | `third-party` | metered by token |
+| `unknown` | `none` | nothing known - neither free nor paid |
+
+Four rules are load-bearing, each pinned by `tests/aggregate/aggregate-cost.test.ts`:
+
+1. **A zero price is not "free".** Subscription endpoints (`AGGREGATE_PLAN_ENTRIES`: `kimi_code`,
+   `zai`, `glm-cn`, `qwencloud`, `qwencloud_coding`, `xiaomi-tokenplan`, `sensenova`) show a zero
+   *marginal* price on models.dev because the allowance was bought up front; calling that "free"
+   says a user can run without paying when the plan allowance simply ends. The list is hand-written
+   with a per-entry reason - **do not** regex on "plan" in the id: `sensenova`'s host is
+   `token.sensenova.cn` (no "plan" substring), while `zai_api` is the same vendor's *metered*
+   endpoint (`api.z.ai/api/paas/v4`) and keeps its real prices.
+2. **Alignment is by exact `baseUrl` only** (host + path, trailing slash ignored). Brand names and
+   bare hosts collide: `zai` (coding-plan, zero) and `zai_api` (pay-as-you-go, metered) serve the
+   same ids at contradictory prices. A `baseUrl` matching more than one models.dev provider is
+   skipped, never guessed.
+3. **USD is never folded into a multiplier.** A multiplier is *relative*; a price is absolute.
+   Converting needs a base this repo does not have, so `costBucketOfAggregateClass` answers only
+   "does it cost extra": `free`/`included` -> `free`, `priced` -> `above-base`, `unknown` ->
+   `unknown` (neutral). No ordering, no price comparison.
+4. **Unknown is a real answer.** An unmarked, unpriced model stays `unknown`, never folded into the
+   free bucket. `aggregateCostCounts` keeps four separate counts so the panel shows "N free / N in
+   plan / N metered / N unlabelled" instead of a misleading free/paid split.
+
+`auto` routing reads this through `costBucketFor` in `autoRouter.ts`, replacing the old
+`freeModelsHint`-only branch that sent all 91 priced rows and every subscription endpoint to
+`unknown` (which left `cheap` preference unable to avoid paid models). The panel renders one badge
+per row plus a cost filter, and the free badge carries its evidence in the label ("Free
+(vendor-declared)" / "Free (catalogue)" / "Free (third-party price)") because only the first is a
+vendor claim.
+
+`AGGREGATE_OFFICIAL_FREE` reuses the `freeModelIds` the quota receipts were already collecting but
+the quota generator discarded; it keeps only ids the catalogue ships, since claiming a free model we
+cannot route to advertises something that never answers.
+
 ### Account Channels
 
-Ten browser/device-code login channels - `lobsterai`, `qoder`, `qodercn`, `trae`, `cline`, `loomy`,
-`raccoon`, `minimax`, `zcode`, `gemini` - are not HTTP endpoints either. Each one is a DSH
+Twelve browser/device-code login channels - `lobsterai`, `qoder`, `qodercn`, `trae`, `cline`, `loomy`,
+`raccoon`, `minimax`, `zcode`, `gemini`, `workbuddy`, `buddy` - are not HTTP endpoints either. Each one is a DSH
 "channel pack" provider that owns its own login flow, account pool, daily credit claim and model
 gating. The upstream implementation is **vendored as source**, not as a bundle:
 
-- `vendor/channel-pack/src/` is the upstream tree (149 TS files), replaced wholesale on upgrade.
+- `vendor/channel-pack/src/` is the upstream tree (149 upstream TS files plus the local
+  `qoder-plan-gate.ts`, `qoder-session.ts`, `queue-wait.ts` and the WorkBuddy family: `buddy.ts`,
+  `buddy-auth.ts`, `buddy-oauth.ts`,
+  `buddy-adapter.ts`, `buddy-balance-*.ts`, `product.ts`, `openai-gateway/tencent-fingerprint.ts`).
+  `qoder-session.ts` and `queue-wait.ts` are deliberately **import-free** so their rules can be
+  unit-tested by `import()`ing the source directly - vendor files carrying TS parameter properties
+  (`qoder-wasm.ts`) cannot be, and need the esbuild path.
+- Both buddy products resolve an account through `BuddyBalanceSelector` (`buddy-balance-rank.ts`
+  supplies the 15-day expiring/permanent split). A product with `permanentLocked` and no expiring
+  credits throws instead of falling back to pool order: the fallback would burn permanent credits
+  and make the lock meaningless. Free models skip the balance query entirely, since they cost 0.
 - `src/main/channelPack/compat/` holds the shims for the private packages the upstream imports
   (`virtual:*`, `@deepseek-ai/*`, `undici`, `image-pricing`). They are only reachable through
   esbuild aliases; `src/main/types/channelPack.d.ts` declares the virtual modules so `tsc` never
@@ -230,9 +507,12 @@ whose result is `{ok:true,value}` / `{ok:false,error}`; the methods used here ar
 `credits.claimAll`, `model.list` and `usage.autoCheckin` (the global one-switch daily auto-claim: no
 argument reads its state, a boolean writes it).
 
-The model catalogue comes from `model.list`, **not** from `bridge.models()`. The latter is the
-OpenAI-shaped `/v1/models` view: its `name` carries no multiplier and it cannot express `disabled` /
-`dead`. `model.list` returns `{models: [{id, name, disabled, dead, isFree?}]}` and is the only place
+The model catalogue comes from `model.list`, **not** from `bridge.models()` — with exactly one
+exception: `model.list` carries no context window, so `manager.models()` pulls the OpenAI-shaped
+`/v1/models` view **once per cache refresh** (shared by all twelve channels) and merges only
+`context_window` into the catalogue (`modelCatalog.ts::attachContextWindows`). The view cannot say a
+model's multiplier or its `disabled` / `dead` state, which is why `model.list` stays authoritative.
+`model.list` returns `{models: [{id, name, disabled, dead, isFree?}]}` and is the only place
 that knows a model's **credit weight** - there is no numeric field for it, the multiplier is appended
 to the display name in one of three shapes:
 
@@ -243,10 +523,13 @@ Qwen3.8-Flash · 免费        free               (qoder priceFactor 0 / cline /
 ```
 
 `providers/accountChannels/modelCatalog.ts` is the single parser (`splitModelLabel` +
-`readModelList`); everything else reads `ChannelModelInfo`. Two rules: a missing `weight` stays
+`readModelList`); everything else reads `ChannelModelInfo`. Three rules: a missing `weight` stays
 `undefined`, **never** `0` - trae / minimax report no rate at all, and treating "unknown" as free
-would make a user pick a metered model expecting a free quota; and an upstream `isFree: true` wins
-over the label, so a model is free when `isFree` is set **or** the weight parses to 0.
+would make a user pick a metered model expecting a free quota; an upstream `isFree: true` wins
+over the label, so a model is free when `isFree` is set **or** the weight parses to 0; and a missing
+`contextWindow` stays missing, **never** a guess - `autoRouting` hard-filters on `contextTokens`, so
+inventing a small number silently removes whole channels from every long-context request, which is
+the opposite of the "unknown is a real answer" rule the router is built on.
 
 The IPC surface is `channels:models` (one channel's catalogue, 30s cache),
 `channels:refreshModels` (re-read online, then rewrite the provider record and the global model
@@ -268,7 +551,7 @@ renewed through `channels:rpc('account.refresh', {accountId})` and the pool orde
 pool order, so reordering is how a user picks the preferred account.
 
 `manager.ts` mirrors that state into provider records. It only writes one when the channel has at
-least one account, so the provider list never grows ten unusable rows; records are
+least one account, so the provider list never grows twelve unusable rows; records are
 `type: 'account'`, `apiEndpoint: channel://<id>` (a placeholder that is never requested),
 `supportsModelFetch: false`, an identity `supportedModels` / `modelMappings` plus the global
 `config.modelMappings` entry carrying `preferredProviderId`, and a credential-less local account so
@@ -283,6 +566,160 @@ never send HTTP to the `channel://` endpoint and never start the worker as a sid
 check. The request path is one `providerForwarders` entry (`provider.type === 'account'`) that hands
 the body to `bridge.complete` / `bridge.openStream`; the stream is already OpenAI-shaped, so it
 returns `skipTransform: true`.
+
+**The host retry budget is per provider class, and for account channels it is one short retry**
+(`src/main/proxy/retryPolicy.ts::planForwardRetries`, the only consumer being
+`forwardChatCompletion`'s loop). Account channels already own queueing, quota and account-switch
+backoff inside the worker, so the old uniform `5000ms x retryCount(3)` stacked a second backoff on
+top - and a host-side retry is not free there: it re-resolves the credential across the thread
+boundary, re-encrypts the entire history through WASM and re-hits upstream. Dropping retries to zero
+would be the opposite mistake, because the pack does *not* cover two transient classes (worker
+restart, `TRANSPORT`), so the host keeps exactly one 500ms attempt. The policy only ever **lowers**
+a caller-supplied budget: `forwardAutoCompletion` passes `{ maxRetries: 0 }` as an instruction
+(fail the candidate, move to the next), and raising it would double the chain's wait.
+
+**Tool calls round-trip through the pack gateway twice, and both hops can lose the name.** The
+chat projection (`vendor/channel-pack/src/openai-gateway/stream.ts`) takes a tool call's `name`
+**only** from the `tool-call-delta` chunk and ignores the one in `block-end`, so an adapter that
+omits `name` on the delta yields an OpenAI-shaped `tool_calls` with no `function.name`. The client
+echoes that history back, the gateway's inbound check
+(`messages.ts` `convertToolCalls`) rejects it with `assistant.tool_calls contains an invalid
+function call`, and the whole conversation dies on a request that looks fine. minimax hit exactly
+this - it recorded the tool name in `content_block_start` but never put it on the delta; the fix
+adds `name` there, and `tests/channels/minimax-tool-call-name.test.ts` drives the real vendor
+parser plus the real gateway projection (bundled through esbuild, since vendor source cannot be
+imported directly under `node --test`) so a regression is caught at the wire format, not at the
+adapter's internals.
+
+That inbound error is also why the worker pre-validates the history itself
+(`src/main/channelPack/toolCallValidation.ts`, called from `worker.ts` before `toGenerateOptions`):
+the pack's own message says only "invalid function call", so a client developer has no way to tell
+which message, which call, or which field is wrong. The pre-check mirrors the gateway's rules
+exactly - it must never reject what the gateway accepts - and reports the coordinates plus the
+received type (`messages[2].tool_calls[0].function.arguments must be a string, received object`).
+It throws with `status: 400` so the client sees `invalid_request_error` rather than a 500.
+
+**Qoder's numeric business codes are classified by code/payload, never by HTTP status**, and each
+one has exactly one home: `model-queue.ts` for `10605` (queue) and `110` (daily billing quota:
+`QUOTA_EXCEEDED`, switch account and mark the model until 00:00 UTC+8), `qoder-plan-gate.ts` for
+`112`. The `10605` wait is **sliced, not truncated**: `rawQueueDelayMs()` returns the server's
+declared delay uncapped and `queue-wait.ts`'s `planQueueWait()` sleeps that whole delay in slices of
+≤ 10s (`DSH_QODER_QUEUE_SLICE_MS`), honoring at most 30s of it (`DSH_QODER_QUEUE_MAX_WAIT_MS`)
+before re-sending **once**. The old code clamped the *wait* to 10s and re-sent, so a server-said-30s
+queue cost three full encrypted requests plus three full prefills. `queueDelayMs()` keeps the old
+clamped semantics but is now only for callers that want a single `Retry-After` hint; the adapter must
+use the uncapped one. `112` is a **plan/tier gate**, not quota: the
+upstream answers (HTTP 200, inside the SSE envelope) with
+`{"code":112,"message":"{\"isHighestTier\":false,\"pricingUrl\":\"https://qoder.com.cn/pricing?client=qoder\"}"}`
+while a free model on the same account still works (measured 2026-10-29: `qodercn/dfmodel` gated,
+`qodercn/qfmodel` fine), so only an upgrade changes the answer. It is recognised in all three
+channels - the envelope-unwrapped frame, the bare frame, and a non-SSE JSON body - and becomes a
+readable `PERMISSION_DENIED` (non-retryable) error carrying the pricing URL, never a credential
+refresh. Leaving it as `SERVER` produced the reported symptom: raw JSON plus `(112/model_error)` in
+the client, and five pointless retries. `compat/dshLlm.ts` also keeps the upstream status in
+`failure.status` (the contract `openai-gateway/stream.ts` and `opencode-adapter.ts` already read),
+so a 4xx survives to the client instead of degrading to 502.
+
+**Qoder's `session_id` is a conversation identity, not a per-request nonce**
+(`qoder-session.ts::deriveQoderSessionId`, consumed by `buildQoderInferPayload` via
+`QoderInferAsk.sessionId`). The adapter re-sends the **whole** history every turn, so a random
+session id (`crypto.randomUUID()`, the old behaviour) makes turn N pay for a cold prefill of turns
+1..N-1 on every single round - that is the measured-feel "much slower than the IDE", because the IDE
+talks inside one server-side session. Derivation dims are `model / account / system / first user
+text` (same set `gemini.ts::deriveGeminiSessionId` uses; the hash itself is not the vendor's), and
+the value stays UUID-shaped so the wire does not change form. Three rules follow: **the first** user
+message, never the last (the last one changes every turn and would recreate the bug); `generation 0`
+must hash identically to "no generation" (otherwise shipping this rotates every live conversation
+and throws away the cache it was meant to build); and the account is part of the seed, so a
+queue/quota account switch rotates the session with it. Rotation is bounded and observed: a 409
+`duplicate_request` bumps `sessionGeneration` (a same-content resend under a reused session would
+otherwise hit the same dedupe), and `looksLikeSessionConflict` bumps it once more - but only on
+wording that is actually about the session or the context length, never on `10605` / `110` / `112`,
+each of which already has a correct handler. `DSH_QODER_SESSION_REUSE=0` restores random ids;
+`onSessionConflictFallback` logging is the only signal that reuse is being rejected upstream.
+
+**A test of the envelope path must peel the envelope first.** Production is
+`consumeOpenAiSse(unwrapQoderEnvelopeStream(response, 'qoder'))` (`qoder-adapter.ts`), and the two
+halves are not interchangeable: handing the raw envelope to `consumeOpenAiSse` shows it a frame with
+no `choices` and none of the inner `code`, so it drops the frame silently and the stream ends
+normally. A test written that way asserts on a `undefined` error and reads as a product regression -
+`tests/channels/qoder-plan-gate.test.ts` hit exactly this (it even destructured
+`unwrapQoderEnvelopeStream` and never called it), while every bare-frame and non-SSE case passed.
+Any new case for this pipeline should drive the pair in production order rather than testing the
+consumer in isolation.
+
+**Reasoning is replayed into the inbound history, because the client does not send it back.**
+DeepSeek-family upstreams reject an assistant turn that carries `tool_calls` without the
+`reasoning_content` it produced (see the reasoning note in `openai-gateway/messages.ts`). Measured
+2026-10-30 on one 274-turn capture: `trae/deepseek-v4.1-flash` was missing `reasoning_content` on
+**253 of 274** tool-call turns (92%) while `loomy/GLM-5.3-Flash` missed only 4 of 41 (its upstream
+does not require the pairing) - which is exactly why only the DeepSeek-family channels failed, with
+the upstream's own generic `assistant.tool_calls contains an invalid function call`.
+`channelPack/reasoningReplay.ts` fixes it on the proxy side: it observes **what we emit downstream**
+(not what the upstream produces, because upstreams express reasoning either as a field or as an
+inline `<think>` tag that `sse.ts` un-shifts, and the downstream is where those two forms have
+already merged), caches it **by `tool_call.id`** - the only stable anchor both sides share, since the
+client may rewrite content - and injects it on the next request when the client left it out.
+Four rules: a turn the client already sent reasoning for is **never touched**; a turn with genuinely
+no reasoning is never filled (no fabrication) and is not cached; the cache is **bounded**
+(`REPLAY_MAX_IDS`, 4096 ids, oldest-first) because it is cross-request state and an unbounded one
+would be a de-facto session table; and `DSH_REASONING_REPLAY=0` restores plain pass-through, which is
+the first thing to try if an upstream ever starts validating that the replayed reasoning matches its
+own record. Acceptance criterion, pinned by `tests/channels/reasoning-replay.test.ts`: after replay,
+`countToolCallShapes().missingReasoning` is 0 with the `assistantWithCalls` denominator unchanged.
+
+**The shadow counter exists because request-body logging structurally cannot answer this.**
+`countToolCallShapes()` (same file as the validator, and **pure observation** - it never affects
+validation) logs one line per request that has tool-call turns. Body logging was tried first and
+failed for a concrete reason: a real request body measured **1.8 MB** while
+`requestLogConfig.maxBodyChars` truncates **from the head** (8000 default, 40 000 at most), and
+`tool_calls` necessarily live in the tail of `messages` - so the evidence was always cut off, and
+raising the cap to fit would cost hundreds of MB per day. Logging counts instead of content answers
+"how many turns are missing reasoning" with no user text on disk.
+
+### Auto Routing (the virtual `auto` model)
+
+`auto` is a reserved display name routed by `src/main/proxy/autoRouter.ts` (data collection, sticky
+state, cooling) and `src/main/proxy/autoRouting.ts` (all pure decision logic, unit-tested directly).
+Its candidate pool is exactly `getEffectiveModels(provider)`, i.e. the models the user kept served -
+auto never widens that.
+
+**Capability is tri-state and unknown is a real answer.** `ModelCapability` (vision/tools) is
+`yes | no | unknown`; `contextTokens` is `undefined` when unknown and never defaulted to a number.
+Sources, highest first: `Provider.modelCapabilities` (written by the builtin sync and by the
+account-channel sync from `ChannelModelInfo`), the static table in
+`src/main/proxy/modelCapabilities.ts`, the provider-level fallback there, then the name heuristics.
+The static table is keyed by provider record id and *also* retried against the part after the last
+`/`, because aggregate display names are `<entryId>/<modelId>` and the old table silently missed
+every one of them.
+
+Filtering rules: an image request only reaches a model whose vision is `yes` (an image dropped
+upstream is a wrong answer); `tools: no` is excluded but unknown is allowed with a small penalty; a
+known `contextTokens` filters hard and an unknown one uses `UNANNOTATED_CONTEXT_FLOOR` (64000).
+
+**Contract filtering.** `contractNeeds()` derives what the response shape depends on - `n > 1` and
+`response_format: json_object | json_schema`. Only builtin providers fail those (see
+`parameterPolicy.ts`). If no candidate can satisfy the contract: `n > 1` is a 400
+`unsupported_parameter`, while `response_format` still routes and sets
+`X-Chat2API-Auto-Degraded: response_format` - returning free text beats refusing the request, but it
+must never be silent.
+
+**Cost and preference.** `costBucketOf()` (shared with the channels UI) turns the channel
+multiplier into a bucket; unknown is neutral, never "cheap". `prefer` is
+`balanced | fast | strong | cheap`, stored in `autoRouting.prefer`, overridable per request with
+`X-Auto-Prefer`. It changes both the target tier and the weight the cost factor carries: balanced
+0.2, fast 0.2, strong 0.1, cheap 0.6 (cost enters as `weight * (costScore - 0.5)`, so an unknown
+cost contributes exactly zero). Builtin and custom providers have no cost data at all.
+
+**Stickiness is a bonus, not a pin.** The previous candidate for the same conversation
+(`conversationKey` = system prompt + first user message) scores +0.12 (same account) or +0.06 (same
+model, another account). A cooled-down or exhausted candidate simply leaves the pool.
+
+Response headers on every `auto` response: `X-Chat2API-Route` (winner), `X-Chat2API-Auto-Prefer`,
+`X-Chat2API-Auto-Reason` (`only` / `sticky` / `score`), `X-Chat2API-Auto-Attempts` (set after
+forwarding), and `X-Chat2API-Auto-Degraded` when a contract was relaxed. An empty candidate pool
+answers 503 with `details.missing` (`vision` / `tools` / `context`) instead of a bare "no model".
+The same decision record is stored on `RequestLogEntry.auto`.
 
 ### Runtime-backed Providers (OpenCode)
 OpenCode does not talk HTTP: a builtin can declare `runtimeModels: true` in `builtin/<provider>.ts`,
@@ -370,7 +807,7 @@ that path.
   constant-time digest compare). With no key configured the server only binds a loopback host
   (`127.0.0.1` / `::1` / `localhost`) and `start()` refuses anything else; CORS `*` is sent only in
   that key-less loopback mode.
-- Config writes validate `apiKeys`, `proxyHost`, `enableApiKey`; `/v0/management/proxy/start` and
+- Config writes validate `apiKeys`, `proxyHost`, `enableApiKey`; `/v1/management/proxy/start` and
   `/restart` reject non-loopback hosts with `invalid_host`.
 - Errors use OpenAI shapes: 401/403 → `authentication_error`, 429 → `rate_limit_error` plus
   `Retry-After` (and the account is penalised), other 4xx → `invalid_request_error`, 5xx →
@@ -389,11 +826,19 @@ that path.
   additive `x_chat2api_tool_violation: "required"` field on the finish chunk (clients that ignore
   it see an unchanged stream).
 - Every `/v1/*` response carries `X-Request-Id`; it matches the request log row.
+- `/v1/models` (both the list and the single-model route) carries `context_window` **only when the
+  upstream declared one** - the key is omitted otherwise, never `0` and never a guessed default,
+  because clients time their own compaction off this number and an over-stated ceiling turns into a
+  hard upstream rejection. It is resolved by `store/modelServing.ts::contextWindowOf` from
+  `Provider.modelCapabilities`, so it covers exactly what the syncs could prove (builtin sync,
+  account-channel sync via the pack's `/v1/models` view). User aliases and the `auto` entry carry
+  nothing: `auto` can land on any model, so advertising a window for it would be a lie about a
+  number chosen later.
 - Tool call ids are `call_<requestId>-<n>`. Managed markup that fails to parse is stripped from
   content while the surrounding text is preserved. The anthropic wire maps upstream `tool_use`
   blocks to native OpenAI `tool_calls`; `opencode` streams go through
   `toolCalling/streamPlanWrapper.ts`.
-- `/v0/management/sessions*` is retired and answers 501: there is no server-side session table.
+- `/v1/management/sessions*` is retired and answers 501: there is no server-side session table.
 
 ## Data Storage
 
@@ -409,6 +854,8 @@ the moment the package is renamed.
 - `system-prompts.orphaned.json` - written once by the first start after the prompt library was
   removed: whatever a user had saved is moved here and the `systemPrompts` key is dropped
 - `request-logs/` - detailed request logs
+- `quota-ledger.json` - aggregate free-quota counters (per provider/account/model, rolling minute
+  and 24h windows plus a UTC month) and the caps learned from upstream responses
 - `channel-pack/` - the channel pack's own state (its account pool, whatever the upstream pack
   writes under `DSH_CHANNEL_PACK_STATE_DIR`) plus `credentials.json`, which holds the login
   credentials handed to the worker, one encrypted value per account

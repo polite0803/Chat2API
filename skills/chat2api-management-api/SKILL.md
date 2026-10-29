@@ -5,7 +5,7 @@ description: Use when operating Chat2API Manager's management API for testing, i
 
 # Chat2API Management API
 
-Use this skill before live proxy testing that needs `/v0/management/*`.
+Use this skill before live proxy testing that needs `/v1/management/*`.
 
 ## Rules
 

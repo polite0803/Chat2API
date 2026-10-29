@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import test from 'node:test'
 
 const script = 'skills/chat2api-management-api/scripts/management-api.mjs'
@@ -62,7 +63,7 @@ test('restore-tool-config exits nonzero on non-2xx response', async () => {
   fs.writeFileSync(configFile, JSON.stringify({ enabled: true }))
   fs.writeFileSync(mockFile, `
 globalThis.fetch = async (url, options = {}) => {
-  if (!String(url).endsWith('/v0/management/config/toolCallingConfig')) {
+  if (!String(url).endsWith('/v1/management/config/toolCallingConfig')) {
     throw new Error('unexpected url ' + url)
   }
   if (options.method !== 'PUT') {
@@ -84,7 +85,8 @@ globalThis.fetch = async (url, options = {}) => {
       CHAT2API_BASE_URL: 'http://mock.local',
       CHAT2API_MGMT_SECRET: 'mgmt_super_secret_value',
     }, {
-      nodeArgs: ['--import', mockFile],
+      // `--import` 只认 URL：Windows 绝对路径（`c:\...`）会被 ESM 加载器拒绝。
+      nodeArgs: ['--import', pathToFileURL(mockFile).href],
     })
 
     assert.notEqual(result.status, 0)

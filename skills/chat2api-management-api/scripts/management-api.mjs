@@ -90,22 +90,22 @@ async function snapshot() {
   if (args['dry-run']) return dryRun('snapshot')
   const [health, proxy, config, providers, accounts, sessions] = await Promise.all([
     fetch(`${baseUrl}/health`).then(async response => ({ status: response.status, body: await response.text() })),
-    request('/v0/management/proxy/status'),
-    request('/v0/management/config'),
-    request('/v0/management/providers/'),
-    request('/v0/management/accounts'),
-    request('/v0/management/sessions'),
+    request('/v1/management/proxy/status'),
+    request('/v1/management/config'),
+    request('/v1/management/providers/'),
+    request('/v1/management/accounts'),
+    request('/v1/management/sessions'),
   ])
   const output = { health, proxy, config, providers, accounts, sessions }
   if (args['include-logs']) {
-    output.logs = await request('/v0/management/logs?type=request&limit=20')
+    output.logs = await request('/v1/management/logs?type=request&limit=20')
   }
   console.log(JSON.stringify(redact(output), null, 2))
 }
 
 async function createApiKey() {
   if (args['dry-run']) return dryRun('create-api-key', { name: args.name || 'codex-live-test' })
-  const result = await request('/v0/management/api-keys', {
+  const result = await request('/v1/management/api-keys', {
     method: 'POST',
     body: JSON.stringify({
       name: args.name || `codex-live-test-${Date.now()}`,
@@ -123,7 +123,7 @@ async function createApiKey() {
 async function deleteApiKey() {
   if (!args.id) throw new Error('--id is required')
   if (args['dry-run']) return dryRun('delete-api-key', { id: args.id })
-  const result = await request(`/v0/management/api-keys/${encodeURIComponent(args.id)}`, { method: 'DELETE' })
+  const result = await request(`/v1/management/api-keys/${encodeURIComponent(args.id)}`, { method: 'DELETE' })
   console.log(JSON.stringify(result, null, 2))
 }
 
@@ -131,7 +131,7 @@ async function restoreToolConfig() {
   if (!args.file) throw new Error('--file is required')
   if (args['dry-run']) return dryRun('restore-tool-config', { file: args.file })
   const value = JSON.parse(await fs.promises.readFile(args.file, 'utf8'))
-  const result = await request('/v0/management/config/toolCallingConfig', {
+  const result = await request('/v1/management/config/toolCallingConfig', {
     method: 'PUT',
     body: JSON.stringify({ value }),
   })

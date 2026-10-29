@@ -58,6 +58,15 @@ test('the flag tracks the shipped config on every startup', () => {
   assert.equal(Boolean(opencodeConfig.runtimeModels), true)
 })
 
+test('the shipped OpenCode snapshot carries the provider prefix like every other catalogue', () => {
+  assert.ok(opencodeConfig.supportedModels.length > 0)
+  for (const displayName of opencodeConfig.supportedModels) {
+    assert.match(displayName, /^opencode\//, `shipped model "${displayName}" must be namespaced`)
+    // 对外名字翻回运行时认的裸 id，转发层拿到的就是它
+    assert.equal(opencodeConfig.modelMappings[displayName], displayName.slice('opencode/'.length))
+  }
+})
+
 test('the local-account helper never demands a finished initialization', () => {
   const source = readFileSync(join(root, 'src/main/store/store.ts'), 'utf8')
   const start = source.indexOf('ensureLocalAccount(providerId: string): void {')

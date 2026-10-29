@@ -6,8 +6,7 @@ test('normal tool-calling UI exposes client adapter and managed mode controls', 
   const panel = readFileSync('src/renderer/src/components/models/ToolCallingPanel.tsx', 'utf8')
 
   assert.match(panel, /toolCallingConfig/)
-  assert.match(panel, /standard-openai-tools/)
-  assert.match(panel, /cherry-studio-mcp/)
+  assert.match(panel, /P0_TOOL_CLIENT_ADAPTERS/)
   assert.match(panel, /mode.*off/s)
   assert.match(panel, /mode.*auto/s)
   assert.match(panel, /mode.*force/s)
@@ -23,11 +22,12 @@ test('normal UI hides protocol and prompt-template internals', () => {
   assert.match(panel, /advanced\.customPromptTemplate/)
 })
 
-test('provider support matrix shows display labels instead of provider ids', () => {
+test('wire coverage matrix replaces the provider id matrix', () => {
   const panel = readFileSync('src/renderer/src/components/models/ToolCallingPanel.tsx', 'utf8')
 
-  assert.match(panel, /provider\.label/)
-  assert.doesNotMatch(panel, /<span className="text-sm font-medium">\{provider\.providerId\}<\/span>/)
+  assert.match(panel, /toolCalling\.wireMatrix/)
+  assert.doesNotMatch(panel, /P0_TOOL_PROVIDER_SUPPORT/)
+  assert.doesNotMatch(panel, /provider\.label/)
 })
 
 test('Models page delegates tool settings to ToolCallingPanel', () => {
