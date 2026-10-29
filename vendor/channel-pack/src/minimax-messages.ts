@@ -571,6 +571,12 @@ export async function* consumeMinimaxSse(
           type: 'tool-call-delta',
           index,
           id: ToolCallId(state?.toolId ?? ''),
+          // ⚠️ **工具名必须随 delta 一起下发**（`zcode-anthropic.ts` / `openai-compat.ts`
+          // 同款做法）。chat 投影（`openai-gateway/stream.ts` 的 `consumeChunk`）只从
+          // `tool-call-delta` 取 name，`block-end` 里带的那个名字它直接忽略 —— 缺了它，
+          // OpenAI 形状的 `tool_calls` 就没有 `function.name`：客户端把这条历史回传时
+          // 被网关判成「invalid function call」，整条会话报废。
+          ...state?.toolName !== undefined && state.toolName.length > 0 ? { name: state.toolName } : {},
           argumentsDelta: d.partial_json,
         }
       }

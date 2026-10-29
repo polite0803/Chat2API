@@ -2,7 +2,7 @@
 
 本目录基于 [Jet（iJetLi）](https://gitee.com/iJetLi) 发布的 MIT 渠道实现
 吸收并裁剪的渠道实现，由 `dsh-our-free-model` 的 Host 半身在独立 fiber 上挂载，
-提供 LobsterAI、Qoder、Qoder 中国版、TRAE、Cline、Loomy、Raccoon、MiniMax Code、ZCode、Gemini 十个账号渠道的
+提供 LobsterAI、Qoder、Qoder 中国版、TRAE、Cline、Loomy、Raccoon、MiniMax Code、ZCode、Gemini、WorkBuddy、CodeBuddy 十二个账号渠道的
 登录流程、账号池、积分领取、模型黑名单与本地 OpenAI 网关可用。OFM 挂载时关闭上游 OpenCode 账号接入，原有匿名免费车道保持独立。
 目录名与内部标识符在本插件的再构建中统一改为 channel-pack；出处与许可证不变。
 
@@ -45,6 +45,22 @@ OFM_ESBUILD_DIR=/tmp/ofm-channel-build npm run channel-pack
 - 打包入口改为 `src/index.ts`；宿主模块仍保持外部，undici 内联。
 - 再构建使用 esbuild 0.25.12，undici 8.11.2 沿用根目录锁文件，未借此升级运行依赖。
 - `src/credential-expiry.ts` 与 `src/credit-expiry-window.ts` 提供渠道间共享的纯函数。积分临时窗口默认 15 天，可通过 `DSH_CREDIT_EXPIRING_WINDOW_DAYS` 显式设置为非负天数。
+
+## 本地新增：WorkBuddy / CodeBuddy（腾讯）
+
+两者都不在上述 OFM 提交里，是 2026-10-29 从 **OFM v2.5.1**（commit `3df868a`）单独移植的源码。
+国际版（WorkBuddy）没有签到接口，每日积分只能在中国版（CodeBuddy）领取，故两个都要注册：
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/buddy.ts`、`src/product.ts`、`src/buddy-oauth.ts`、`src/buddy-auth.ts`、`src/buddy-adapter.ts`、`src/buddy-balance-rank.ts`、`src/buddy-balance-selector.ts`、`src/openai-gateway/tencent-fingerprint.ts` | 逐字拷贝（快照与校验和见 `docs/upstream/workbuddy-v2.5.1/`） |
+| `src/buddy-adapter.ts` | `./llm-adapter.js` 的限流辅助改为 `./rate-limit.js`（本目录没有 `llm-adapter.ts`） |
+| `src/buddy-oauth.ts` | 浏览器打开器从动态 `./login.js` 改为本目录既有的 `./open-browser.js` |
+| `src/rate-limit.ts` | 补 `isModelSaturationError`（业务码 14003，与额度限流 6004 语义相反） |
+| `src/channel-pack-store.ts` | 恢复前缀表补 `BUDDY` / `WORKBUDDY` |
+| `src/index.ts` / `src/channel-pack-rpc.ts` | 注册 `workbuddy` 与 `buddy` 的 auth / adapter / 续期 / 两步登录；签到只挂 `buddy`，`workbuddy` 显式返回"国际版不支持签到" |
+
+升级上游时这 9 个文件需重新移植。余额分档（`BuddyBalanceSelector`）已接线：两个产品各一份缓存，按「15 天内到期 / 永久」分档选号，锁定永久积分时不会回落到账号池顺序。
 
 本目录**不含**上游的浏览器半身（`plugin-src/client`）与其设置页——
 界面由 `dsh-our-free-model` 自己的三页界面取代，渠道操作经上游的

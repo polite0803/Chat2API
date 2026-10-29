@@ -167,6 +167,15 @@ export interface QoderInferAsk {
   userText: string
   /** 系统提示（可选）。 */
   systemText?: string
+  /**
+   * 服务端会话 id。
+   *
+   * ⚠️ **必须由适配器按会话身份派生后传入**（见 `src/qoder-session.ts`）。
+   * 缺省时回退到 `crypto.randomUUID()` —— 那是**旧行为**，保留只为不破坏
+   * 既有调用方与单测：每轮一个新会话 ⇒ 服务端无会话记忆、前缀缓存也命中
+   * 不了，表现就是"经本应用走比 IDE 慢"（这正是本字段存在的理由）。
+   */
+  sessionId?: string
   /** 该模型是否支持思考（写入 `model_config.is_reasoning`）。 */
   isReasoning?: boolean
   /** 会话里已发生的消息（历史），按顺序。首条 user 即 `userText`。 */
@@ -274,7 +283,9 @@ export function buildQoderInferPayload(
     request_id: requestId,
     request_set_id: requestId,
     chat_record_id: requestId,
-    session_id: crypto.randomUUID(),
+    // ⚠️ 由适配器按**会话身份**派生（见字段注释与 `src/qoder-session.ts`）。
+    // 缺省随机只是兼容回退；生产路径一定会传值。
+    session_id: ask.sessionId ?? crypto.randomUUID(),
     stream: true,
     chat_task: 'FREE_INPUT',
     chat_context: {

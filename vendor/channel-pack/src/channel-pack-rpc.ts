@@ -21,7 +21,8 @@ import { isSupportedProvider } from './channel-pack-store.js'
 import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { AccountPool } from './account-pool.js'
 import { isGatewayEnabled } from './openai-gateway/config.js'
-import { collectGatewayEffortViews, collectGatewayModels, toGatewayModelIds, type GatewayModelSource } from './openai-gateway/models.js'
+import { collectGatewayModelDetails, collectGatewayModels, toGatewayModelIds, type GatewayModelSource } from './openai-gateway/models.js'
+import type { GatewayEffortView } from './openai-gateway/effort-view.js'
 import {
   applyGatewayDesiredState,
   gatewayAddress,
@@ -60,6 +61,13 @@ import { GEMINI, geminiAccountLabel, geminiCredentialExpiresAtMs, isGeminiRefres
 import type { GeminiCredential } from './gemini.js'
 import type { GeminiAuth, StartedGeminiLoginFlow } from './gemini-auth.js'
 import { fetchGeminiCreditBalance } from './gemini-credits.js'
+import type { BuddyAuth } from './buddy-auth.js'
+import { credentialExpiresAtMs } from './buddy.js'
+import type { BuddyCredential } from './buddy.js'
+import { decorateLoginUrl, fetchAuthState, runBuddyLoginFlow } from './buddy-oauth.js'
+import { claimDailyCheckin, fetchCheckinStatus, fetchCreditBalance } from './buddy-credits.js'
+import { buddyExpiringWindowDays } from './buddy-balance-rank.js'
+import { CODEBUDDY, WORKBUDDY, productById, type BuddyProduct } from './product.js'
 import { LOOMY_TASK_POINTS, LOOMY_TASK_TITLES } from './loomy-onboarding.js'
 import { LOBSTERAI } from './lobsterai-product.js'
 import { QODER, QODER_CN, type QoderProduct } from './qoder-product.js'
@@ -288,6 +296,18 @@ function parseLobsteraiCredential(raw: string): LobsteraiCredential | undefined 
 function parseQoderCredential(raw: string): QoderCredential | undefined {
   try {
     const parsed = JSON.parse(raw) as QoderCredential
+    return typeof parsed === 'object' && parsed !== null && typeof parsed.access_token === 'string'
+      ? parsed
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** 解析 buddy 系凭据 JSON；解析失败返回 undefined。 */
+function parseBuddyCredential(raw: string): BuddyCredential | undefined {
+  try {
+    const parsed = JSON.parse(raw) as BuddyCredential
     return typeof parsed === 'object' && parsed !== null && typeof parsed.access_token === 'string'
       ? parsed
       : undefined
@@ -695,7 +715,13 @@ async function collectGatewayCatalog(
     source.resolveModelInfo = (provider, model) => resolve.call(llm, provider, model)
   }
   const groups = await collectGatewayModels(source, onError)
-  const views = await collectGatewayEffortViews(source, groups, onError)
+  const details = await collectGatewayModelDetails(source, groups, onError)
+  // 本函数只对外给「档位」视图（`toGatewayModelIds` 的 `reasoning` 字段）；
+  // 上下文窗口由 `/v1/models` 路径使用，见 `toOpenAiModels(groups, details)`。
+  const views = new Map<string, GatewayEffortView>()
+  for (const [id, detail] of details) {
+    if (detail.reasoning !== undefined) views.set(id, detail.reasoning)
+  }
   return toGatewayModelIds(groups, views)
 }
 
@@ -759,6 +785,18 @@ export function registerChannelPackRpc(
    */
   gemini: GeminiAuth,
   /**
+   * WorkBuddy（腾讯国际版）实例（external-link 两步轮询登录）。
+   *
+   * ⚠️ 与 gemini 一样**只能追加在末尾**（`modelAdapters` 之前）：全部调用点
+   * 都是位置传参，历史上已因少传/插队错位复发 6 次。
+   */
+  workbuddy: BuddyAuth,
+  /**
+   * CodeBuddy（腾讯中国版）实例。与国际版同协议，但**只有中国版有每日签到**，
+   * 因此必须单独注册（国际版拿不到每日积分）。
+   */
+  buddy: BuddyAuth,
+  /**
    * provider → 适配器实例（可选）。
    *
    * 用于「显示列表」拿到**不受用户黑名单影响**的全量目录（`listAllModels`），
@@ -771,7 +809,7 @@ export function registerChannelPackRpc(
   ctx.inject(['connection'], (connectionCtx) => {
     registerChannelPackEndpoints(
       connectionCtx as Context, pool, lobsterai,
-      qoder, qoderCn, trae, cline, loomy, raccoon, minimax, zcode, gemini, modelAdapters, config,
+      qoder, qoderCn, trae, cline, loomy, raccoon, minimax, zcode, gemini, workbuddy, buddy, modelAdapters, config,
     )
   })
 }
@@ -782,7 +820,7 @@ export function registerChannelPackRpc(
  * 只声明用到的方法（结构化类型），避免让本模块依赖五个具体适配器类。
  */
 export interface ModelCatalogSource {
-  listAllModels(): readonly { id: string; name: string; isFree?: boolean }[]
+  listAllModels(): readonly { id: string; name: string; isFree?: boolean; supportsImage?: boolean }[]
 }
 
 /**
@@ -862,6 +900,8 @@ function registerChannelPackEndpoints(
   minimax: MinimaxAuth,
   zcode: ZcodeAuth,
   gemini: GeminiAuth,
+  workbuddy: BuddyAuth,
+  buddy: BuddyAuth,
   modelAdapters?: Readonly<Record<string, ModelCatalogSource>>,
   config: ChannelPackRpcConfig = {},
 ): void {
@@ -1267,7 +1307,53 @@ function registerChannelPackEndpoints(
         const id = `${provider}-${shortId()}`
         const suffix = shortId().toUpperCase()
         const refName = `${provider.toUpperCase()}_ACCOUNT_${suffix}`
-if (provider === LOBSTERAI.id) {
+        // WorkBuddy（腾讯国际版）：两步登录 —— 先只取 state 与 loginUrl 立即返回，
+        // 后台用同一个 state 轮询 token/account。不能 await 整个流程：客户端只在
+        // 用户手势的短暂窗口内允许 window.open，阻塞数十秒会被拦截。
+        const buddyProduct = productById(provider)
+        if (buddyProduct !== undefined) {
+          let state: string
+          let authUrl: string
+          try {
+            const authState = await fetchAuthState(undefined, undefined, buddyProduct)
+            state = authState.state
+            authUrl = decorateLoginUrl(authState.authUrl, buddyProduct)
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error)
+            throw new Error(`无法获取 ${buddyProduct.displayName} 登录地址（网络请求失败）：${reason}`)
+          }
+          const ref = credentialRef(refName)
+          // 先登记启用的占位条目（无凭据），使前端 login.poll 能立即看到该账号。
+          await pool.addAccount({
+            id,
+            provider: buddyProduct.id,
+            nickname: id,
+            enabled: true,
+            credentialRef: refName,
+            refreshable: false,
+            createdAt: Date.now(),
+          })
+          // 后台异步执行完整登录流程，使用同一个 state。
+          // 续期定时器归属该产品自己的服务实例（buddy / workbuddy 各一份）。
+          const buddyAuth = buddyProduct.id === CODEBUDDY.id ? buddy : workbuddy
+          runBuddyLoginFlow({ openBrowser: () => {}, state, product: buddyProduct }).then(async (flow) => {
+            await ctx.credentials.set(ref, flow.access)
+            buddyAuth.scheduleRefresh()
+            const credential = parseBuddyCredential(flow.access)
+            await pool.updateAccount(id, {
+              nickname: credential?.nickname ?? id,
+              // Buddy 的 expires_at 是字符串形式的毫秒时间戳，必须用
+              // credentialExpiresAtMs 解析（Date.parse 对纯数字串会得到 NaN）。
+              expiresAt: credential ? credentialExpiresAtMs(credential) : undefined,
+              refreshable: Boolean(credential?.refresh_token),
+            })
+          }).catch((error: unknown) => {
+            ctx.logger.warn(`[channel-pack] background ${buddyProduct.id} login failed for ${id}: ${String(error)}`)
+            // 登录失败：移除占位条目，避免留下无凭据的幽灵账号。
+            void pool.removeAccount(id).catch(() => {})
+          })
+          return { ok: true, value: { accountId: id, loginUrl: authUrl } }
+        } else if (provider === LOBSTERAI.id) {
 
           const started = await lobsterai.startLogin({ refName })
           await pool.addAccount({
@@ -1854,6 +1940,15 @@ if (provider === LOBSTERAI.id) {
               // ⚠️ Google 会**轮换 refresh_token**，`GeminiAuth` 内部已回写新值。
               await gemini.refreshAccountCredential(entry.credentialRef, pool, entry.id)
               break
+            case CODEBUDDY.id:
+              // CodeBuddy 中国版与国际版同协议，但凭据/池各自独立。
+              await buddy.refreshAccountCredential(entry.credentialRef, pool, entry.id)
+              break
+            case WORKBUDDY.id:
+              // WorkBuddy **有** refresh 端点（`/v2/plugin/auth/token/refresh`，
+              // refresh_token 轮换）。必须传 pool + entry.id 回写 expiresAt。
+              await workbuddy.refreshAccountCredential(entry.credentialRef, pool, entry.id)
+              break
             default:
               throw new Error(`Unknown provider: ${entry.provider}`)
           }
@@ -2284,8 +2379,30 @@ if (provider === LOBSTERAI.id) {
       // 各渠道显式分派协议，未知或退役渠道不调用任何默认端点。
       case 'credits.status': {
         const req = payload as RpcCreditsStatusRequest
+        if (req.provider === CODEBUDDY.id) {
+          // 只有中国版有签到接口；单账号失败按 null 处理，不中断整批。
+          const buddyAccounts = await pool.listAccounts(req.provider)
+          const value = await collectCreditsStatus<BuddyCredential, typeof CODEBUDDY>(
+            buddyAccounts, CODEBUDDY, {
+              resolve: (ref) => ctx.credentials.resolve(ref),
+              fetchStatus: (credential, product) => fetchCheckinStatus(credential, product),
+              warn: (msg) => ctx.logger?.warn?.(msg),
+            },
+          )
+          return { ok: true, value: { accounts: value } satisfies RpcCreditsStatusResponse }
+        }
+        if (req.provider === WORKBUDDY.id) {
+          // WorkBuddy 国际版后端**没有签到接口**：如实返回 null，
+          // 不臆造一份状态对象（客户端也不会渲染领取按钮）。
+          const accounts = await pool.listAccounts(req.provider)
+          return {
+            ok: true,
+            value: {
+              accounts: accounts.map((entry) => ({ accountId: entry.id, nickname: entry.nickname, status: null })),
+            } satisfies RpcCreditsStatusResponse,
+          }
+        }
         if (req.provider === LOBSTERAI.id) {
-          // LobsterAI 没有独立的「签到状态」端点：活动状态要经
 
           // CheckinStatus 不同构（无 streak/dailyCredit 等概念）。
           // 故这里如实返回 null，而不是臆造一份状态对象。
@@ -2358,6 +2475,30 @@ if (provider === LOBSTERAI.id) {
       case 'credits.claimAll': {
         const req = payload as RpcCreditsClaimAllRequest
         const accounts = await pool.listAccounts(req.provider)
+        if (req.provider === CODEBUDDY.id) {
+          // 每日签到只存在于中国版；`precheckStatus` 保持默认 true ——
+          // 重复领取虽幂等，但会显示成「领取成功 +0 积分」。
+          const value = await collectClaimResults<BuddyCredential, typeof CODEBUDDY>(
+            accounts, CODEBUDDY, {
+              resolve: (ref) => ctx.credentials.resolve(ref),
+              fetchStatus: (credential, product) => fetchCheckinStatus(credential, product),
+              claim: (credential, product) => claimDailyCheckin(credential, product),
+              warn: (msg) => ctx.logger?.warn?.(msg),
+            },
+          )
+          return { ok: true, value }
+        }
+        if (req.provider === WORKBUDDY.id) {
+          // 国际版没有签到接口：显式拒绝，别落到 `productById` 的通用
+          // `unsupported provider` 文案（那会让排查者以为 provider 没注册）。
+          return {
+            ok: false,
+            error: {
+              code: 'bad-request',
+              message: 'WorkBuddy 国际版不支持每日签到（其后端没有签到接口）',
+            },
+          }
+        }
         if (isQoderFamily(req.provider)) {
           const { product } = requireQoderFamily(req.provider)
           // Qoder 的领取流程**自带活动列表查询**（loadCampaigns → 逐个 claim），
@@ -2569,6 +2710,27 @@ if (provider === LOBSTERAI.id) {
       case 'credits.balances': {
         const req = payload as RpcCreditsBalancesRequest
         const accounts = await pool.listAccounts(req.provider)
+        if (req.provider === CODEBUDDY.id || req.provider === WORKBUDDY.id) {
+          // 两个产品共用同一套积分口径：`get-user-resource` 两边都实现，
+          // 只有签到（`daily-checkin`）是中国版独占。余额查询失败按 null 上报，
+          // 卡片显示原因而不是 0。
+          const product: BuddyProduct = req.provider === CODEBUDDY.id ? CODEBUDDY : WORKBUDDY
+          const values = await collectCreditBalances<BuddyCredential, BuddyProduct>(
+            accounts, product, {
+              resolve: (ref) => ctx.credentials.resolve(ref),
+              fetchBalance: (credential, buddyProduct) => fetchCreditBalance(credential, buddyProduct),
+              warn: (msg) => ctx.logger?.warn?.(msg),
+            },
+          )
+          return {
+            ok: true,
+            value: {
+              accounts: values,
+              // 临时积分窗口：面板必须用这个值，不能写死 15 天。
+              windowDays: buddyExpiringWindowDays(),
+            } satisfies RpcCreditsBalancesResponse,
+          }
+        }
         if (req.provider === LOBSTERAI.id) {
           const values = await collectCreditBalances<LobsteraiCredential, typeof LOBSTERAI>(accounts, LOBSTERAI, {
             resolve: (ref) => ctx.credentials.resolve(ref),
@@ -3089,7 +3251,7 @@ if (provider === LOBSTERAI.id) {
         // 对话框模型选择器读的仍是过滤后的 `listModels`，可见性行为完全不变。
         const catalogSource = modelAdapters?.[req.provider]
         const all = catalogSource?.listAllModels()
-        let catalog: Array<{ id: string; name: string; isFree?: boolean }>
+        let catalog: Array<{ id: string; name: string; isFree?: boolean; supportsImage?: boolean }>
         if (all !== undefined) {
           catalog = [...all]
           // 全量目录里若仍有黑名单命中却缺失者，一并补上（保底，正常不会发生）。
@@ -3137,6 +3299,9 @@ if (provider === LOBSTERAI.id) {
             // 模型列表按「计费/来源」分组，把「适配器没报」当成「按量计费」是
             // 保守归组，但字段本身仍保持「未知」语义（与全仓约定一致）。
             ...model.isFree === undefined ? {} : { isFree: model.isFree },
+            // ⚠️ 模态同理**缺失就不写**：适配器没报 ≠ 确认纯文本，客户端据此显示
+            // 「未知」而不是编造一个类型。
+            ...model.supportsImage === undefined ? {} : { supportsImage: model.supportsImage },
           })),
         }
         return { ok: true, value }

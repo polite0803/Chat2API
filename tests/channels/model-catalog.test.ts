@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  capabilityHintOf,
   readModelList,
   splitModelLabel,
 } from '../../src/main/providers/accountChannels/modelCatalog.ts'
@@ -47,10 +48,46 @@ test('model.list payloads are normalised, malformed entries dropped', () => {
   assert.deepEqual(models, [
     { id: 'MiniMax-M3', name: 'MiniMax M3', free: false, disabled: false, dead: false, weight: 4 },
     { id: 'Qwen3.8-Flash', name: 'Qwen3.8-Flash', free: true, disabled: false, dead: false, weight: 0 },
-    // `isFree` 是上游的权威标记：即使展示名里写着倍率，也照上游算免费。
-    { id: 'paid', name: 'Paid', free: true, disabled: false, dead: false, weight: 2 },
+    // 免费的唯一判据是权重 0：展示名写了 `x2`，即使上游标了 `isFree` 也不算免费。
+    { id: 'paid', name: 'Paid', free: false, disabled: false, dead: false, weight: 2 },
   ])
 
   assert.deepEqual(readModelList(undefined), [])
   assert.deepEqual(readModelList({ models: 'nope' }), [])
+})
+
+test('image support is carried through only when the channel declares it', () => {
+  const models = readModelList({
+    models: [
+      { id: 'vision', name: 'Vision', supportsImage: true },
+      { id: 'text-only', name: 'Text', supportsImage: false },
+      // 上游没写 / 类型不对时保持「未知」，不能当成「不支持」。
+      { id: 'silent', name: 'Silent' },
+      { id: 'weird', name: 'Weird', supportsImage: 'yes' },
+    ],
+  })
+  assert.deepEqual(
+    models.map((model) => [model.id, model.supportsImage]),
+    [
+      ['vision', true],
+      ['text-only', false],
+      ['silent', undefined],
+      ['weird', undefined],
+    ],
+  )
+})
+
+test('capability hints carry only what the catalogue actually declares', () => {
+  const models = readModelList({
+    models: [
+      { id: 'vision-free', name: 'Vision Free · 免费', supportsImage: true },
+      { id: 'text-paid', name: 'Text Paid · x2', supportsImage: false },
+      // 没有任何已知字段：返回 undefined，调用方据此保持「未知」
+      { id: 'silent', name: 'Silent' },
+    ],
+  })
+
+  assert.deepEqual(capabilityHintOf(models[0]), { vision: 'yes', weight: 0, free: true })
+  assert.deepEqual(capabilityHintOf(models[1]), { vision: 'no', weight: 2 })
+  assert.equal(capabilityHintOf(models[2]), undefined)
 })

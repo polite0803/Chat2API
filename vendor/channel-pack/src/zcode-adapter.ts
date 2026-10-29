@@ -381,9 +381,14 @@ export class ZcodeAdapter extends LlmAdapter {
    * 补回，而那条路径拿不到展示名，会退化成裸 id
    * （`AGENTS.md` 记过 Raccoon 的同款用户报障）。
    */
-  listAllModels(): readonly { id: string; name: string }[] {
+  listAllModels(): readonly { id: string; name: string; supportsImage: boolean }[] {
     const source = this.remoteModels ?? this.product.fallbackModels.map(fallbackToRemote)
-    return source.map((model) => ({ id: model.id, name: model.name }))
+    // 兜底表与远端目录都声明 `supportsImage`（见 `fallbackToRemote`）。
+    return source.map((model) => ({
+      id: model.id,
+      name: model.name,
+      supportsImage: model.supportsImage,
+    }))
   }
 
   /**

@@ -242,9 +242,14 @@ export class MinimaxAdapter extends LlmAdapter {
    * 而 `listModels` 内部会 `await this.loadModels()` 落缓存。
    * 与 `raccoon-adapter.ts:229-232` 逐字同构。
    */
-  listAllModels(): readonly { id: string; name: string }[] {
+  listAllModels(): readonly { id: string; name: string; supportsImage: boolean }[] {
     const source = this.remoteModels ?? minimaxFallbackEntries(this.product)
-    return source.map((model) => ({ id: model.id, name: model.name }))
+    // 条目恒声明 `supportsImage`（远端 `modalities.input` 或兜底表）。
+    return source.map((model) => ({
+      id: model.id,
+      name: model.name,
+      supportsImage: model.supportsImage,
+    }))
   }
 
   private inputModalitiesFor(

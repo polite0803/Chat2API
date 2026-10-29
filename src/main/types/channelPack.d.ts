@@ -51,6 +51,17 @@ declare module 'virtual:channel-pack-models' {
     llm: unknown,
     onError?: (provider: string, error: unknown) => void,
   ): Promise<Array<{ provider: string; models: readonly Record<string, unknown>[] }>>
+  /**
+   * 逐模型解析出的附加信息（档位 + 上下文窗口）。
+   *
+   * ⚠️ 窗口**只能**从这里拿到：`listModels` 不带它。宿主侧若只取档位，
+   * `/v1/models` 的 `context_window` 就永远缺席，客户端因此退回自己的默认窗口。
+   */
+  export function collectGatewayModelDetails(
+    llm: unknown,
+    groups: readonly unknown[],
+    onError?: (provider: string, error: unknown) => void,
+  ): Promise<Map<string, { reasoning?: unknown; contextWindow?: number }>>
   export function collectGatewayEffortViews(
     llm: unknown,
     groups: readonly unknown[],
@@ -58,6 +69,6 @@ declare module 'virtual:channel-pack-models' {
   ): Promise<Map<string, unknown>>
   export function toOpenAiModels(
     groups: readonly unknown[],
-    effortViews?: ReadonlyMap<string, unknown>,
+    details?: ReadonlyMap<string, { reasoning?: unknown; contextWindow?: number }>,
   ): Array<Record<string, unknown>>
 }

@@ -250,9 +250,14 @@ export class RaccoonAdapter extends LlmAdapter {
    * 设置页需要它渲染被关闭的模型 —— 否则那些条目只能凭 `disabledMap` 的 key
    * 补回，而那条路径拿不到展示名，会退化成裸 id（倍率与模型名随之丢失）。
    */
-  listAllModels(): readonly { id: string; name: string }[] {
+  listAllModels(): readonly { id: string; name: string; supportsImage: boolean }[] {
     const source = this.remoteModels ?? this.product.fallbackModels.map(fallbackToRemote)
-    return source.map((model) => ({ id: model.id, name: model.name }))
+    // 兜底表与远端目录都声明 `supportsImage`（见 `fallbackToRemote`）。
+    return source.map((model) => ({
+      id: model.id,
+      name: model.name,
+      supportsImage: model.supportsImage,
+    }))
   }
 
   /**

@@ -755,6 +755,13 @@ export interface RpcModelListEntry {
    */
   isFree?: boolean
   /**
+   * 该模型是否接受**图片输入**（多模态），取自适配器持有的权威目录
+   * （远端 `modalities.input` / `display_config.multimodal` / models.dev 等）。
+   *
+   * ⚠️ **缺失 = 适配器没有这份信息**（不是「确认纯文本」），与 `isFree` 同一口径。
+   */
+  supportsImage?: boolean
+  /**
    * 该模型是否已被判定为**上游下架**（`dead-models.json` 命中）。
    *
    * ⚠️ 恒为布尔值、**不省略**：缺失即 false。客户端据此灰显并给出「重新显示」

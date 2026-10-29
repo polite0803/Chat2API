@@ -29,8 +29,15 @@
  * | trae 会话末 | 未命中 326134（trae 无缓存） | `total_tokens: 326742` | **34.39%** | 34.33% |
  *
  * trae 之所以「正常」**不是它被修好了，而是它不报缓存** ——
- * `trae-adapter.ts` 的 `token_usage` 只读 `prompt_tokens` / `completion_tokens`，
+ * `trae-adapter.ts` 的 `token_usage` 过去只读 `prompt_tokens` / `completion_tokens`，
  * 从不算 `cacheReadTokens`，于是旧的 `inputTokens + outputTokens` 恰好等于完整上下文。
+ *
+ * ⚠️ 2026-10-29 起 trae 改为经 `usage-cache.ts::readCachedInput` 读缓存，因此那个
+ * 「恰好正确」不再成立，也必须不再成立：它读不到缓存字段时行为与过去逐字节相同
+ * （`cacheReadTokens` 缺省、`inputTokens = prompt_tokens`，本网关加回 0），读到 OpenAI
+ * 系子集字段时才减。换句话说，**本网关的加回逻辑要求上游守住「`inputTokens` 不含缓存」
+ * 这一条约定** —— 新增适配器若把 `prompt_tokens` 原样塞进 `inputTokens` 又同时报
+ * `cacheReadTokens`，就会双计缓存并让客户端提前压缩。
  *
  * Codex 自己的判据（`agcodex_protocol::protocol::TokenUsage`，
  * 与 openai/codex 的 `tokens_in_context_window` 同源）：

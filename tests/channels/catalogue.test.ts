@@ -12,8 +12,8 @@ import {
 
 const PACK_INDEX = join(process.cwd(), 'vendor', 'channel-pack', 'src', 'index.ts')
 
-test('the catalogue ships exactly ten channels with unique ids', () => {
-  assert.equal(ACCOUNT_CHANNELS.length, 10)
+test('the catalogue ships exactly twelve channels with unique ids', () => {
+  assert.equal(ACCOUNT_CHANNELS.length, 12)
   const ids = new Set<string>()
   for (const channel of ACCOUNT_CHANNELS) {
     assert.equal(ids.has(channel.id), false, `duplicate channel id: ${channel.id}`)

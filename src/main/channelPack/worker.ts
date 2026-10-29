@@ -15,7 +15,7 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { apply } from 'virtual:channel-pack'
 import { markGatewayChannel } from 'virtual:channel-pack-gateway'
 import {
-  collectGatewayEffortViews,
+  collectGatewayModelDetails,
   collectGatewayModels,
   toOpenAiModels,
 } from 'virtual:channel-pack-models'
@@ -25,6 +25,8 @@ import {
   toGenerateOptions,
 } from 'virtual:channel-pack-messages'
 import { collectOpenAiCompletion, toOpenAiSse } from 'virtual:channel-pack-stream'
+import { assertValidToolCalls, countToolCallShapes } from './toolCallValidation'
+import { ReasoningReplay, reasoningReplayEnabled } from './reasoningReplay'
 
 type Adapter = {
   prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<{ stream: (options: unknown) => AsyncIterable<unknown> }>
@@ -123,6 +125,17 @@ const logger = {
   error: (message: unknown) => send({ type: 'log', level: 'error', message: String(message) }),
 }
 
+/**
+ * 跨请求的思考回放缓存（按 `tool_call.id`、有界）。
+ *
+ * ⚠️ 必须是**进程级单例**：一次请求发出的思考要在**下一次**请求里补回去，所以
+ * 不能按请求重建。容量上限见 `REPLAY_MAX_IDS`（默认 4096 个 id）。
+ *
+ * 可用 `DSH_REASONING_REPLAY=0` 关闭（见 {@link reasoningReplayEnabled}）。
+ */
+const reasoningReplay = new ReasoningReplay()
+const reasoningReplayOn = reasoningReplayEnabled()
+
 /** 渠道包看到的 `ctx.llm`（形状由 `openai-gateway/models.ts` 的采集器决定）。 */
 interface LlmRuntime {
   registerAdapter(providers: readonly string[], adapter: Adapter): void
@@ -202,8 +215,11 @@ async function models(): Promise<Array<Record<string, unknown>>> {
   const onError = (provider: string, error: unknown) =>
     logger.warn(`${provider} 模型目录读取失败：${error instanceof Error ? error.message : String(error)}`)
   const groups = await collectGatewayModels(ctx.llm, onError)
-  const views = await collectGatewayEffortViews(ctx.llm, groups, onError)
-  return toOpenAiModels(groups, views)
+  // ⚠️ 窗口只能在 `resolveModelInfo` 里拿到（`listModels` 不带它），此前这里只取
+  // 档位，于是 `/v1/models` 的 `context_window` 一次都没发出去。实测：宿主侧
+  // 12 个渠道全部 0/N，而客户端（DSH/Codex）拿不到窗口就退回自己的默认值决定压缩。
+  const details = await collectGatewayModelDetails(ctx.llm, groups, onError)
+  return toOpenAiModels(groups, details)
 }
 
 async function rpc(call: unknown, signal: AbortSignal): Promise<unknown> {
@@ -238,19 +254,56 @@ async function complete(request: CompleteRequest, jobId: string, signal: AbortSi
   })
   const requestedMax = body.max_completion_tokens ?? body.max_tokens
   const maxTokens = typeof requestedMax === 'number' ? normalizeMaxTokens(requestedMax, provider, model) : undefined
+
+  // ── 补回客户端丢弃的思考 ──────────────────────────────────────────
+  // DeepSeek 系上游要求「带 tool_calls 的 assistant 轮 reasoning_content 成对回传」，
+  // 而实测客户端 92% 不回传（trae/deepseek 274 轮缺 253 轮），后果是整段对话被判
+  // `invalid function call`。我们手里有那份思考（是本进程自己发出去的），按
+  // `tool_call.id` 补回去 —— 详见 `reasoningReplay.ts`。客户端已带回的一字节不动。
+  const recovered = reasoningReplayOn
+    ? reasoningReplay.recover(body.messages)
+    : { messages: body.messages, injected: 0 }
+  if (recovered.injected > 0) {
+    body.messages = recovered.messages
+    logger.info(`${request.model} 补回 reasoning_content：${recovered.injected} 轮客户端未回传`)
+  }
+
+  // 先按网关的同一套判据校验入站 tool_calls：网关那句「invalid function call」
+  // 不带坐标，客户端无从知道是哪条消息、哪个调用、哪个字段不对。
+  assertValidToolCalls(body.messages)
+  // 影子诊断（纯观测，不影响校验）：只记"规范合法但上游可能不认"的形状计数。
+  // 不记任何内容 —— 真实请求体 1.8MB，落盘只保留开头 2%，而 tool_calls 在尾部，
+  // 所以想从请求体日志取证这条路结构性地走不通（详见 countToolCallShapes 注释）。
+  const shapes = countToolCallShapes(body.messages)
+  if (shapes.assistantWithCalls > 0) {
+    logger.info(
+      `${request.model} 历史形状：带 tool_calls 的 assistant 轮 ${shapes.assistantWithCalls}，`
+      + `缺 reasoning_content ${shapes.missingReasoning}，空串参数 ${shapes.emptyArguments}，`
+      + `带前缀工具名 ${shapes.prefixedName}`,
+    )
+  }
   // 不钉 `sessionId`：各适配器按自己的口径派生（Gemini 按首条 user 文本，
   // 钉住一个固定值会把全部会话并成一个服务端会话，并在累计超限后无法升代自愈）。
   const options = await toGenerateOptions(body, signal, effort, maxTokens, { bridge: attachments })
 
   const stream = ctx.llm.stream(markGatewayChannel(options))
-  if (request.stream) {
-    for await (const chunk of toOpenAiSse(stream, request.requestId, request.model)) {
-      send({ type: 'sse', id: jobId, text: chunk })
+  // 观测**我们下行发出的**思考（两种上游形态在这里已合并成 reasoning_content）。
+  reasoningReplay.begin()
+  try {
+    if (request.stream) {
+      for await (const chunk of toOpenAiSse(stream, request.requestId, request.model)) {
+        if (reasoningReplayOn) reasoningReplay.observeSseChunk(chunk)
+        send({ type: 'sse', id: jobId, text: chunk })
+      }
+      return
     }
-    return
+    const completion = await collectOpenAiCompletion(stream, request.requestId, request.model)
+    if (reasoningReplayOn) reasoningReplay.observeCompletion(completion)
+    send({ type: 'completion', id: jobId, value: completion })
+  } finally {
+    // 无论成功、失败还是被取消都要收尾：失败时也把已产出的思考提交（下一轮同样要补）。
+    if (reasoningReplayOn) reasoningReplay.commit()
   }
-  const completion = await collectOpenAiCompletion(stream, request.requestId, request.model)
-  send({ type: 'completion', id: jobId, value: completion })
 }
 
 /* ------------------------------------------------------------------ 消息 */

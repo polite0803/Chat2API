@@ -58,8 +58,22 @@ import {
   nextUtc8DayStartMs,
   parseQueueError,
   queueDelayMs,
+  rawQueueDelayMs,
   type QueueInfo,
 } from './model-queue.js'
+import { looksLikePlanGate, planGateMessage } from './qoder-plan-gate.js'
+import {
+  deriveQoderSessionId,
+  firstUserTextOf,
+  looksLikeSessionConflict,
+  qoderContentText,
+} from './qoder-session.js'
+import {
+  DEFAULT_QUEUE_FALLBACK_MS,
+  DEFAULT_QUEUE_MAX_DECLARED_MS,
+  DEFAULT_QUEUE_SLICE_MS,
+  planQueueWait,
+} from './queue-wait.js'
 
 /**
  * 本模块内使用的别名（`export { … as …
@@ -67,7 +81,9 @@ import {
  */
 type QoderQueueInfo = QueueInfo
 const parseQoderQueueError = parseQueueError
-const qoderQueueDelayMs = queueDelayMs
+// ⚠️ 曾经的 `const qoderQueueDelayMs = queueDelayMs` 别名已删除：适配器改用
+// **未封顶**的 `rawQueueDelayMs` 交给 `planQueueWait` 切分。用封顶版会让
+// `retryAfterSeconds: 30` 退化成「每 10 秒重打一次整笔加密请求」。
 
 /**
  * ⚠️ **向后兼容的再导出**：排队解析的实现已移到 `src/model-queue.ts`
@@ -223,10 +239,98 @@ function resolveQueueTimeoutMs(): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 30 * 60_000
 }
 
+/**
+ * 单次排队 sleep 的上限（毫秒），可用 `DSH_QODER_QUEUE_SLICE_MS` 覆盖。
+ *
+ * ⚠️ 它**不再**限制「一次请求最多等多久」—— 那只由总预算
+ * （{@link resolveQueueTimeoutMs}）与服务端声明值封顶
+ * （{@link resolveQueueMaxDeclaredMs}）决定。这里的职责只剩一件：
+ * 让一次阻塞不至于长到用户分不清「排队」与「卡死」、且取消信号能及时生效。
+ * 设成 `0` = 不切分（整段一次睡完，仅排查时用）。
+ */
+function resolveQueueSliceMs(): number {
+  const raw = process.env.DSH_QODER_QUEUE_SLICE_MS
+  if (raw === undefined || raw.length === 0) return DEFAULT_QUEUE_SLICE_MS
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_QUEUE_SLICE_MS
+}
+
+/**
+ * 服务端**单次声明**延迟可采信的上限（毫秒），`DSH_QODER_QUEUE_MAX_WAIT_MS` 覆盖。
+ *
+ * 默认 30 秒 —— 与 `model-queue.ts` 实测到的 `retryAfterSeconds: 30` 对齐：
+ * 服务端说等 30 秒就等满 30 秒**然后只重发一次**，而不是每 10 秒重打一次
+ * （每一发都是完整加密请求 + 全量 prefill，白烧两发的 prefill 正是旧实现
+ * 把 10 秒当总封顶的后果）。
+ *
+ * ⚠️ 必须**每次 `stream()` 调用时读取**：模块顶层常量在 import 时定型，
+ * 测试里设环境变量就不生效了（与 {@link resolveQueueTimeoutMs} 同因）。
+ */
+function resolveQueueMaxDeclaredMs(): number {
+  const raw = process.env.DSH_QODER_QUEUE_MAX_WAIT_MS
+  if (raw === undefined || raw.length === 0) return DEFAULT_QUEUE_MAX_DECLARED_MS
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_QUEUE_MAX_DECLARED_MS
+}
+
+/**
+ * 会话复用总开关（`DSH_QODER_SESSION_REUSE=0` 关闭）。
+ *
+ * ⚠️ 留这个开关的唯一理由是**可回退**：稳定 session 依赖「服务端把
+ * `session_id` 当会话身份用」这一推断 —— 我们只知道官方请求体里有这个字段，
+ * 不知道它如何分桶。若上游反过来按 session 累计记账（Gemini 就是），
+ * 表现是「长对话越用越差甚至开始报错」，届时置 0 即回到旧行为。
+ * 冲突自愈（见 `looksLikeSessionConflict`）只兜得住**明确报错**的那一类。
+ */
+function qoderSessionReuseEnabled(): boolean {
+  return process.env.DSH_QODER_SESSION_REUSE !== '0'
+}
+
 /** 同一账号连续排队到此次数后，优先试下一个可用账号。 */
 const QUEUE_ACCOUNT_MAX_ATTEMPTS = 3
+/**
+ * 一次 `stream()` 内**会话冲突换代**的最大次数。
+ *
+ * 一次就够：换代等价于「放弃本会话的缓存假设、按随机会话重跑」，那是旧行为。
+ * 换代后仍失败说明原因不是会话，继续换只会把同一笔失败重复计费。
+ */
+const SESSION_CONFLICT_MAX_BUMPS = 1
 /** 长时间卡在同一账号时提前换号，避免等完服务端长延迟才发现队列没有进展。 */
 const QUEUE_ACCOUNT_MAX_WAIT_MS = 20_000
+
+/**
+ * 上游「首字超时」（`504/model_error`）的重试预算与退避间隔。
+ *
+ * Qoder 网关等不到上游第一个 token 时会回
+ * `{code:504, message:"First Token Timeout or Upstream Timeout", type:"model_error"}`
+ * （HTTP 504 与 SSE 错误帧两种形态都实测出现过）。这是**瞬时**容量问题：
+ * 同一请求稍后重发通常能成功。客户端自己只隔约 0.5 秒就重试，几乎必然再撞
+ * 同一拥塞节点，所以这里在适配器内部先退避重试，把这类瞬时超时消化掉。
+ *
+ * ⚠️ **只在尚未向下游发出任何 chunk 时重试**：已经发出的正文 / 工具调用无法
+ * 撤回，重放会让工具被执行两次。判据见 `retryUpstreamTimeout`。
+ */
+const UPSTREAM_TIMEOUT_BACKOFF_MS = [2_000, 8_000] as const
+
+/**
+ * 首字超时的重试次数（不含首次请求），可用环境变量覆盖（便于测试）。
+ *
+ * ⚠️ 必须**每次 `stream()` 调用时读取** —— 模块顶层常量在 import 时定型，
+ * 测试里设环境变量就不生效了（与 `resolveFirstTokenTimeoutMs` 同因）。
+ */
+function resolveUpstreamTimeoutRetries(): number {
+  const raw = process.env.DSH_QODER_UPSTREAM_TIMEOUT_RETRIES
+  const parsed = raw === undefined ? Number.NaN : Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 2
+}
+
+/** 判据：Qoder 网关的首字 / 上游超时（SSE 错误帧形如 `qoder: … (504/model_error)`）。 */
+function isUpstreamTimeoutError(error: unknown): boolean {
+  if (!(error instanceof LlmError)) return false
+  if ((error as { status?: unknown }).status === 504) return true
+  return /\(504\/model_error\)/.test(error.message)
+    || /First Token Timeout|Upstream Timeout/i.test(error.message)
+}
 
 /**
  * 读 `AbortSignal.aborted`（**刻意做成函数**）。
@@ -288,20 +392,13 @@ interface QoderWireMessage {
   tool_call_id?: unknown
 }
 
-/** 把 wire 消息的 content 归一化为字符串（工具调用消息的正文是空串）。 */
-function qoderContentText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    return content
-      .filter((block): block is { type: string; text: unknown } =>
-        typeof block === 'object' && block !== null && (block as { type?: unknown }).type === 'text')
-      .map((block) => String(block.text))
-      .join('')
-  }
-  // `null`（assistant 只带 tool_calls 时的 OpenAI 规范值）与畸形值都退化为空串：
-  // 客户端 `t2c()` 的 content 恒为字符串（`udn(r, '')`）。
-  return ''
-}
+/**
+ * 把 wire 消息的 content 归一化为字符串（工具调用消息的正文是空串）。
+ *
+ * ⚠️ 实现已移到 `src/qoder-session.ts`：会话身份派生必须按**同一口径**取首条
+ * user 文本，两处各写一份必然漂移（症状是"会话按 A 口径派生、请求体按 B 口径
+ * 序列化"）。本模块直接从那里导入，不再保留本地副本。
+ */
 
 /**
  * 把 wire 消息的 content 数组**逐字段搬运**成多模态 parts。
@@ -494,6 +591,13 @@ export interface QoderAdapterOptions {
   onQueueAccountSwitch?: () => void
   /** 排队换号失败时供宿主记录诊断日志。 */
   onQueueRotationFailure?: (reason: unknown) => void
+  /**
+   * 稳定会话被判为冲突、已换成全新会话重发时通知宿主。
+   *
+   * 这是「服务端不接受复用 session_id」的**唯一可观测信号** —— 没有它，
+   * 用户只会看到「偶尔慢一点」，而我们要回答的正是「复用到底对不对」。
+   */
+  onSessionConflictFallback?: () => void
   /** 注入时钟，仅用于让超时/排队边界测试不必真实等待。 */
   now?: () => number
   /**
@@ -587,8 +691,13 @@ export class QoderAdapter extends LlmAdapter {
    * 黑名单过滤掉它们 —— RPC 层只能凭裸 id 补回，展示名与倍率随之丢失
    * （用户报障：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
    */
-  listAllModels(): readonly { id: string; name: string }[] {
-    return this.product.fallbackModels.map((model) => ({ id: model.id, name: qoderDisplayName(model) }))
+  listAllModels(): readonly { id: string; name: string; supportsImage?: boolean }[] {
+    // 兜底表逐条声明 `supportsImage`（目录 `is_vl`）；缺失时保持未知。
+    return this.product.fallbackModels.map((model) => ({
+      id: model.id,
+      name: qoderDisplayName(model),
+      ...model.supportsImage === undefined ? {} : { supportsImage: model.supportsImage },
+    }))
   }
 
   async listModels(_provider: string): Promise<readonly LlmModelInfo[]> {
@@ -755,6 +864,22 @@ export class QoderAdapter extends LlmAdapter {
 
     const fallback = this.fallbackIndex.get(options.model)
 
+    // ===== 会话身份 =====
+    //
+    // ⚠️ `session_id` **必须按会话身份派生**，不能每轮随机（旧实现是
+    // `crypto.randomUUID()`）。本适配器每轮重发**全量历史**，随机 session 等于
+    // 每轮都开一个全新服务端会话：服务端既没有会话记忆，前缀缓存也命中不到，
+    // 于是第 N 轮要为前 N-1 轮重新 prefill —— 这正是「经本应用走 Qoder 明显
+    // 比 IDE 慢」的主要成因（IDE 在同一会话里发增量）。
+    //
+    // 派生维度与 `gemini.ts` 的 `deriveGeminiSessionId` 对齐：吃 模型 / 账号 /
+    // system / **首条** user 文本；不吃 轮数、后续文本、机器特征。
+    // 首条而不是最后一条 —— 最后一条每轮都变，用它派生等于每轮换会话。
+    const firstUserText = firstUserTextOf(messages)
+    /** 会话代数：仅在拿到「服务端在讲会话冲突」的阳性证据时 +1（见下）。 */
+    let sessionGeneration = 0
+    let sessionBumpsUsed = 0
+
     /** 用给定凭据构造一次加密请求（首次与 401 重试共用，避免两处漂移）。 */
     const buildRequest = async (c: QoderCredential): Promise<QoderInferRequest> => {
       const client = await QoderEncryptedInfer.create({
@@ -770,6 +895,18 @@ export class QoderAdapter extends LlmAdapter {
         modelKey: options.model,
         userText,
         ...(systemText !== undefined ? { systemText } : {}),
+        // ⚠️ 会话身份。**账号也是派生维度**：额度与计费是「账号 + 模型」维度，
+        // 两个账号共用一个服务端会话会把记账搅在一起 —— 故这里用**当前凭据**
+        // 的 uid 而不是闭包外的固定值，排队/额度换号后会话自然跟着切。
+        sessionId: qoderSessionReuseEnabled()
+          ? deriveQoderSessionId({
+              modelKey: options.model,
+              accountSeed: c.uid ?? c.machine_id,
+              systemText,
+              firstUserText,
+              generation: sessionGeneration,
+            })
+          : undefined,
         isReasoning: fallback?.supportsThinking ?? false,
         history,
         // 工具定义：这是模型**唯一**能学到函数 schema 的通道，
@@ -844,6 +981,9 @@ export class QoderAdapter extends LlmAdapter {
     let accountQueueLastCheckAt: number | undefined
     let queueRotationNoticeEmitted = false
     let emittedAnyChunk = false
+    /** 已为「首字超时」重发过几次（见 `retryUpstreamTimeout`）。 */
+    let upstreamTimeoutAttempts = 0
+    const maxUpstreamTimeoutRetries = resolveUpstreamTimeoutRetries()
 
     /** HTTP 与 SSE 排队共用：宽限后只在本次请求里切换，不写额度限制。 */
     const retryQueuedRequest = async (queueInfo: QoderQueueInfo | undefined): Promise<void> => {
@@ -904,6 +1044,57 @@ export class QoderAdapter extends LlmAdapter {
 
       await this.waitForQueue(queueInfo, attempts, queueDeadline, options)
     }
+
+    /**
+     * 上游 504「首字超时」的退避重试：返回 `true` 表示「已退避，可重发」。
+     *
+     * ⚠️ 调用方必须保证**尚未向下游发出任何 chunk**（HTTP 504 天然满足；
+     * SSE 错误帧由 `emittedAnyChunk` 把关）—— 已发出的正文 / 工具调用无法
+     * 撤回，重放会让工具被执行两次。
+     *
+     * 退避而非立即重发：客户端自己那 0.5 秒的重试证明「立刻再打」只会落到
+     * 同一个拥塞节点上。等待期间被用户取消时返回 `false`，由调用方原样抛出。
+     */
+    const retryUpstreamTimeout = async (): Promise<boolean> => {
+      if (upstreamTimeoutAttempts >= maxUpstreamTimeoutRetries) return false
+      const delayMs = UPSTREAM_TIMEOUT_BACKOFF_MS[
+        Math.min(upstreamTimeoutAttempts, UPSTREAM_TIMEOUT_BACKOFF_MS.length - 1)
+      ]
+      upstreamTimeoutAttempts += 1
+      await this.sleep(delayMs, options.signal)
+      return !isAborted(options.signal)
+    }
+
+    /**
+     * **会话冲突自愈**：换一个全新 `session_id` 再试一次。
+     *
+     * 稳定会话的唯一未知风险是「服务端按 `session_id` 累计记账」（Gemini 就是
+     * 那样：累计过 1M 后该 id 的每个请求都 400，且只能靠换会话自愈）。
+     * 这里不等那个风险被证实，而是**只在拿到阳性证据时**换代一次：
+     *
+     * - 判据是 `looksLikeSessionConflict`（只认「上游在讲会话 / 上下文长度」的
+     *   措辞），**不是**「任何失败都升代」—— 无条件升代会让缓存永远建立不起来，
+     *   并且会把排队（10605）、额度（110）、套餐（112）这三条**已有正确处置路径**
+     *   的原因统统吞掉，反而更慢。
+     * - 与 504 重发同一前提：`emittedAnyChunk` 为真时绝不重放（已发出的正文与
+     *   工具调用无法撤回）。
+     * - 每次 `stream()` 最多一次，且必须是复用开着的时候。
+     *
+     * @returns `true` 表示已换代，调用方应回到循环顶部重发。
+     */
+    const retryWithFreshSession = (text: string): boolean => {
+      if (!qoderSessionReuseEnabled()) return false
+      if (emittedAnyChunk) return false
+      if (sessionBumpsUsed >= SESSION_CONFLICT_MAX_BUMPS) return false
+      if (!looksLikeSessionConflict(text)) return false
+      sessionBumpsUsed += 1
+      sessionGeneration += 1
+      try {
+        this.options.onSessionConflictFallback?.()
+      } catch { /* 诊断回调不影响请求 */ }
+      return true
+    }
+
     // 4. 剥掉加密端点的响应信封，交给统一的 OpenAI SSE 消费器。
     //
     // ⚠️ **必须放在重试循环内**：排队错误的**第二种**下发形态是
@@ -923,6 +1114,20 @@ export class QoderAdapter extends LlmAdapter {
         if (queueInfo !== undefined) {
           await retryQueuedRequest(queueInfo)
           continue
+        }
+
+        // ⚠️ **套餐档位闸门（112）**：与凭据无关，也与排队/额度无关 ——
+        // 续期一次再重试只会白跑一趟（与 cline 的 403 地域限制同型：
+        // 拿到 403 的第一件事是排除「重试无意义」的那类原因）。
+        //
+        // 这条与 SSE 层那条**必须都有**：实测 112 走 SSE（HTTP 200），
+        // 但若服务端改成用状态码下发，只处理一条就会漏（10605 已踩过两次）。
+        if (looksLikePlanGate(errorText)) {
+          throw new LlmError(
+            `qoder: ${planGateMessage(errorText)}`,
+            'PERMISSION_DENIED',
+            { status: response.status },
+          )
         }
 
         // ⚠️ **额度受限也要切账号**（用户要求，2026-09-27）。
@@ -954,17 +1159,30 @@ export class QoderAdapter extends LlmAdapter {
           credential = await this.ensureUid(refreshed)
           continue
         }
+        // 401/403 也可能是**会话**被服务端拒绝（复用开关引入的新风险面）。
+        // 判据仍是「上游在讲会话」，续期已经用完了才轮到它，顺序不能反。
+        if (retryWithFreshSession(errorText)) continue
         throw new LlmError(`qoder: ${errorDetail(errorText)}`, httpErrorCode(response.status), { status: response.status })
       }
 
       // 重复请求（客户端 `duplicate_request`）：凭据没问题，重发一次即可。
+      //
+      // ⚠️ 重发**必须换会话**：会话复用打开后，同一 `session_id` + 同一内容
+      // 的第二次投递有可能正是被判重复的那一维 —— 原样重发等于再撞一次 409，
+      // 而这里的预算只有一次（`duplicateRetried`），下一次就直接失败了。
+      // 换会话让重发成为一次**真正的新请求**。
       if (!response.ok && response.status === 409 && !duplicateRetried) {
         duplicateRetried = true
+        sessionGeneration += 1
         continue
       }
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '')
+        // 504 = 网关等首字超时（与 SSE 里那条 `(504/model_error)` 同类），
+        // 响应体还没有任何内容，重发安全；见 `retryUpstreamTimeout`。
+        if (response.status === 504 && await retryUpstreamTimeout()) continue
+        if (retryWithFreshSession(errorText)) continue
         throw new LlmError(`qoder: ${errorDetail(errorText)}`, httpErrorCode(response.status), { status: response.status })
       }
 
@@ -994,6 +1212,12 @@ export class QoderAdapter extends LlmAdapter {
             queued = true
             break
           }
+          // 上游 504「首字超时」：瞬时故障。尚未发出任何 chunk 时退避重发；
+          // 已发出正文 / 工具调用则如实抛出（重放会造成重复内容与重复执行工具）。
+          if (!emittedAnyChunk && isUpstreamTimeoutError(error) && await retryUpstreamTimeout()) {
+            queued = true
+            break
+          }
           // ⚠️ **额度受限（110）要标记 + 切账号**（用户要求，2026-09-27）。
           //
           // ⚠️ 必须**在这里**捕获（SSE 层）而不只在 HTTP 层：Qoder 的额度错误
@@ -1012,6 +1236,12 @@ export class QoderAdapter extends LlmAdapter {
               break
             }
             throw error // 无可用账号 → 如实抛出（已含额度语义）
+          }
+          // ⚠️ 会话冲突判据**必须排在排队 / 504 / 额度之后**：这三类各有
+          // 正确处置路径，把它们一并当成「会话问题」会既掩盖真因又白重发。
+          if (retryWithFreshSession(error instanceof Error ? error.message : String(error))) {
+            queued = true // 复用「回到循环顶部重发」的语义
+            break
           }
           throw error
         }
@@ -1137,6 +1367,17 @@ export class QoderAdapter extends LlmAdapter {
    * 排队等待（HTTP 层与 SSE 层**共用**）。
    *
    * 两处形态必须走同一套判据，否则会再次出现「只修了一条路径」的缺陷。
+   *
+   * ## 为什么是「切分睡满」而不是「截到 10 秒后重发」
+   *
+   * 旧实现在这里只睡 `min(服务端延迟, 10s)`，然后回循环顶部**重发整笔请求**。
+   * 服务端回 `retryAfterSeconds: 30` 时，那是 3 发完整加密请求 + 3 次全量
+   * prefill，其中 2 次完全白烧 —— 而它换来的收益只有「单次阻塞别超过 10 秒」
+   * 这一条 UI 诉求。把同一个延迟**切成若干 ≤ 10 秒的连续 sleep**，每片之间照旧
+   * 检查取消与 deadline，那条诉求一并满足，且整笔请求只重发一次。
+   *
+   * ⚠️ 分片规则本身在 `src/queue-wait.ts`（纯函数、可单测）；这里只做
+   * 「读配置 → 按计划睡 → 每片后复查」。
    */
   private async waitForQueue(
     queueInfo: QoderQueueInfo | undefined,
@@ -1152,23 +1393,24 @@ export class QoderAdapter extends LlmAdapter {
     // 而同一毫秒内 `Date.now() > now + 0` 为 **false**，会让它**先等一次**才
     // 超时 —— 那与「0 = 不等待」的语义不符（单测专门守这一点）。
     this.assertQueueCanContinue(attempts, deadline, options)
-    const waitMs = qoderQueueDelayMs(queueInfo)
-    // ⚠️ 拿不到服务端延迟时**不忙等**：用保守的短退避，避免瞬间烧掉机会
-    // （客户端 W7c() 此时会退回 ltA() 指数退避）。
-    // 预留剩余总预算，不能因为一次较长的 Retry-After 越过用户设定的总超时。
-    // 服务端给出 0 时保留极短间隔，避免不同机器上出现无间隔的忙循环。
-    const requestedWaitMs = Math.max(100, waitMs ?? 1_000)
-    const remainingMs = Math.max(0, deadline - this.now())
-    await this.sleep(Math.min(requestedWaitMs, remainingMs), options.signal)
-    // ⚠️ 这次检查**不是**上一次的重复：它检测的是「**等待期间**被中止」。
-    // `AbortSignal.aborted` 是随时间的可变状态，但 TS 会静态窄化成字面量
-    // `false` 而报「无重叠」—— 故经**不透明函数**读取，避免静态收窄掩盖
-    // 这个真实场景（`await` 之后状态可能已变）。
-    if (isAborted(options.signal)) {
-      throw new LlmError('qoder: 排队等待期间请求已取消', 'QUEUE')
-    }
-    if (this.now() >= deadline) {
-      throw new LlmError('qoder: 排队等待超时', 'QUEUE')
+    const slices = planQueueWait(rawQueueDelayMs(queueInfo), {
+      sliceMs: resolveQueueSliceMs(),
+      maxDeclaredMs: resolveQueueMaxDeclaredMs(),
+      fallbackMs: DEFAULT_QUEUE_FALLBACK_MS,
+    })
+    for (const sliceMs of slices) {
+      // 预留剩余总预算，不能因为一次较长的 Retry-After 越过用户设定的总超时。
+      const remainingMs = Math.max(0, deadline - this.now())
+      await this.sleep(Math.min(sliceMs, remainingMs), options.signal)
+      // ⚠️ 每次 `await` 之后都要复查：`AbortSignal.aborted` 是随时间的可变状态，
+      // 但 TS 会静态窄化成字面量 `false` 而报「无重叠」—— 故经**不透明函数**
+      // 读取（`isAborted`），避免静态收窄掩盖「等待期间被中止」这个真实场景。
+      if (isAborted(options.signal)) {
+        throw new LlmError('qoder: 排队等待期间请求已取消', 'QUEUE')
+      }
+      if (this.now() >= deadline) {
+        throw new LlmError('qoder: 排队等待超时', 'QUEUE')
+      }
     }
   }
 

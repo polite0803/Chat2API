@@ -815,9 +815,14 @@ export class LobsteraiAdapter extends LlmAdapter {
    * 黑名单过滤掉它们 —— RPC 层只能凭裸 id 补回，展示名与倍率随之丢失
    * （用户报障：「关闭的就没有显示倍率」）。详见 `model.list` 端点的注释。
    */
-  listAllModels(): readonly { id: string; name: string }[] {
+  listAllModels(): readonly { id: string; name: string; supportsImage?: boolean }[] {
     const source = this.remoteModels ?? this.staticFallbackModels()
-    return source.map((model) => ({ id: model.id, name: displayNameFor(model) }))
+    return source.map((model) => ({
+      id: model.id,
+      name: displayNameFor(model),
+      // 远端目录带 `supportsImage`；兜底表没有该信息 —— 缺失即未知。
+      ...model.supportsImage === undefined ? {} : { supportsImage: model.supportsImage },
+    }))
   }
 
   async listModels(_provider: string): Promise<readonly LlmModelInfo[]> {

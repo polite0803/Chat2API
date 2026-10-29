@@ -9,7 +9,7 @@ import { resolveGatewayConfig, type OpenAiGatewayConfig } from './config.js'
 import { markGatewayChannel } from './channel.js'
 import { toGenerateOptions, OpenAiGatewayError, parseModelRoute, normalizeReasoningEffort, normalizeMaxTokens, type OpenAiChatRequest, type ReasoningEffortNotice } from './messages.js'
 import type { AttachmentBridge, ImageLimits } from './images.js'
-import { collectGatewayEffortViews, collectGatewayModelIds, collectGatewayModels, toGatewayModelIds, toOpenAiModels } from './models.js'
+import { collectGatewayEffortViews, collectGatewayModelDetails, collectGatewayModelIds, collectGatewayModels, toGatewayModelIds, toOpenAiModels } from './models.js'
 import { effortResolutions } from './effort-view.js'
 import { CANONICAL_REASONING_EFFORTS } from '../reasoning-ladder.js'
 import { findCaseInsensitiveSuggestion, looksLikeMissingModel } from './model-errors.js'
@@ -145,12 +145,12 @@ export function createOpenAiGateway(options: OpenAiGatewayOptions): OpenAiGatewa
     const groups = await collectGatewayModels(options.llm, (provider, error) => {
       logger.warn(`[openai-gateway] ${provider} 模型目录读取失败，已从 /v1/models 跳过：${describe(error)}`)
     })
-    // 档位视图是**附加信息**：某个模型解析不出来就只是它没有该字段，
-    // 绝不能让整份目录跟着失败（同理，见 collectGatewayEffortViews 的注释）。
-    const effortViews = await collectGatewayEffortViews(options.llm, groups, (provider, error) => {
+    // 档位与上下文窗口都是**附加信息**：某个模型解析不出来就只是它没有这两个
+    // 字段，绝不能让整份目录跟着失败（同理，见 collectGatewayModelDetails 的注释）。
+    const details = await collectGatewayModelDetails(options.llm, groups, (provider, error) => {
       logger.warn(`[openai-gateway] ${provider}：${describe(error)}`)
     })
-    jsonResponse(response, 200, { object: 'list', data: toOpenAiModels(groups, effortViews) })
+    jsonResponse(response, 200, { object: 'list', data: toOpenAiModels(groups, details) })
   }
 
   /**

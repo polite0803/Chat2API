@@ -1,5 +1,6 @@
 import { withQueueAccountRotation } from './queue-rotation.js'
 import { checkQueuedResponse } from './model-queue.js'
+import { readCachedInput, uncachedInput } from './usage-cache.js'
 /**
  * TRAE（字节跳动 TRAE IDE）LLM 适配器。
  *
@@ -804,14 +805,22 @@ export class TraeAdapter extends LlmAdapter {
    * 每个 id 的**真实展示名（含倍率）**，再自行回填 `disabled` 状态。
    * 对话框模型选择器读的仍是 `listModels`（已过滤），可见性行为不变。
    */
-  listAllModels(): readonly { id: string; name: string }[] {
+  listAllModels(): readonly { id: string; name: string; supportsImage?: boolean }[] {
     // 过滤逻辑与 `listModels` 的第一、二层一致（usage / config_switch /
     // is_invisible_to_user 已在解析器里剔除；这里再挡 isHidden 与 is_custom_model），
     // **唯一区别是不套用户黑名单**。
     const source = this.remoteModels === undefined
       ? this.staticFallbackModels()
       : this.remoteModels.filter((model) => isTraeModelCallable(model) && model.isHidden !== true)
-    return source.map((model) => ({ id: model.id, name: traeDisplayName(model) }))
+    return source.map((model) => ({
+      id: model.id,
+      name: traeDisplayName(model),
+      // `multimodal` 是远端 `display_config` 的**权威准入判据**（实测，见
+      // `trae.ts` 的注释）；兜底表没有这份信息 —— 缺失即未知。
+      ...'multimodal' in model && typeof model.multimodal === 'boolean'
+        ? { supportsImage: model.multimodal }
+        : {},
+    }))
   }
 
   async listModels(_provider: string): Promise<readonly LlmModelInfo[]> {
@@ -1488,11 +1497,22 @@ export class TraeAdapter extends LlmAdapter {
                     const promptTokens = typeof ev.usage.prompt_tokens === 'number' ? ev.usage.prompt_tokens : 0
                     const completionTokens = typeof ev.usage.completion_tokens === 'number' ? ev.usage.completion_tokens : 0
                     const reasoningTokens = typeof ev.usage.reasoning_tokens === 'number' ? ev.usage.reasoning_tokens : undefined
+                    // 缓存命中：**过去这里只读三个键**，TRAE 于是永远贡献 0 命中率 ——
+                    // 我们因此无法区分「TRAE 不缓存」与「TRAE 报了但没读」（本机一天
+                    // TRAE 有 8.2 亿 inputTokens 全部记为未命中，这个数既是 (C) 的唯一
+                    // 大项，也可能是纯记账假象）。现在按 `usage-cache.ts` 的**口径判定**
+                    // 读取：OpenAI 系字段是 prompt 的子集，必须从 `inputTokens` 里减掉，
+                    // 因为网关 `toOpenAiUsage` 会把命中加回总输入 —— 不减就是双计，
+                    // 上下文虚高、客户端提前压缩，正是 `openai-gateway/usage.ts` 文件头
+                    // 那份报障的镜像方向。
+                    const cached = readCachedInput(ev.usage as Record<string, unknown>)
                     yield {
                       type: 'usage',
                       usage: {
-                        inputTokens: promptTokens,
+                        inputTokens: uncachedInput(promptTokens, cached),
                         outputTokens: completionTokens,
+                        ...cached.cachedTokens !== undefined ? { cacheReadTokens: cached.cachedTokens } : {},
+                        ...cached.cacheWriteTokens !== undefined ? { cacheWriteTokens: cached.cacheWriteTokens } : {},
                         ...reasoningTokens !== undefined && reasoningTokens > 0 ? { reasoningTokens } : {},
                       },
                     }

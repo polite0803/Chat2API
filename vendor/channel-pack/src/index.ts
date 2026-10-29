@@ -66,6 +66,12 @@ import { deriveProjectId, opencodeUserAgent, opencodeUserAgentForVersion } from 
 import { primeOpencodeCapabilities, refreshOpencodeCapabilities } from './opencode-capability.js'
 import { closeAllProxyDispatchers } from './opencode-proxy.js'
 import { createChannelFetch, type ChannelOutlet } from './channel-fetch.js'
+import { registerBuddyLlm } from './buddy-adapter.js'
+import { BuddyAuth, createPoolRefresh } from './buddy-auth.js'
+import { CODEBUDDY, WORKBUDDY, type BuddyProduct } from './product.js'
+import { BuddyBalanceSelector, pickBuddyAccount } from './buddy-balance-selector.js'
+import { buddyExpiringWindowDays } from './buddy-balance-rank.js'
+import type { BuddyCredential } from './buddy.js'
 export { createChannelFetch, parseWindowsProxy, channelProxyBypassed } from './channel-fetch.js'
 import { execFile } from 'node:child_process'
 
@@ -475,6 +481,12 @@ export function apply(ctx: Context, config: { disableOpencode?: boolean; outlet?
       ctx.logger?.warn?.(`[channel-pack] ${QODER.displayName} 排队换号失败，将继续等待并重试`)
       if (reason !== undefined) ctx.logger?.debug?.(`[channel-pack] ${QODER.id} queue rotation detail: ${String(reason)}`)
     },
+    // 稳定会话被判为冲突并已换代 —— 这是「上游不接受复用 session_id」的**唯一**
+    // 可观测信号。没有它，用户只看到「偶尔慢一点」，我们无法判断该不该置
+    // `DSH_QODER_SESSION_REUSE=0` 回到旧的随机会话行为。
+    onSessionConflictFallback: () => {
+      ctx.logger?.warn?.(`[channel-pack] ${QODER.displayName} 服务端拒绝复用会话，已换新 session_id 重发一次`)
+    },
   })
 
   // ===== Qoder 中国版（qodercn）=====
@@ -539,6 +551,11 @@ export function apply(ctx: Context, config: { disableOpencode?: boolean; outlet?
     onQueueRotationFailure: reason => {
       ctx.logger?.warn?.(`[channel-pack] ${QODER_CN.displayName} 排队换号失败，将继续等待并重试`)
       if (reason !== undefined) ctx.logger?.debug?.(`[channel-pack] ${QODER_CN.id} queue rotation detail: ${String(reason)}`)
+    },
+    // 同国际版：换代是可观测事件，不是静默自愈（两站共用同一个 QoderAdapter 类，
+    // 这条回调**必须两处都有**，否则 CN 出问题时日志里什么都看不到）。
+    onSessionConflictFallback: () => {
+      ctx.logger?.warn?.(`[channel-pack] ${QODER_CN.displayName} 服务端拒绝复用会话，已换新 session_id 重发一次`)
     },
   })
 
@@ -1063,6 +1080,146 @@ export function apply(ctx: Context, config: { disableOpencode?: boolean; outlet?
     ...ctx.logger === undefined ? {} : { logger: ctx.logger },
   })
 
+  // ===== WorkBuddy（腾讯国际版）/ CodeBuddy（腾讯中国版）服务 =====
+  // 两者同后端同协议，差异全部由 product 配置承载。**两个都要注册**：
+  // 国际版没有签到接口（product.ts 的 WORKBUDDY 注释），每日积分只能在
+  // 中国版（CodeBuddy）领取 —— 只注册国际版等于拿不到每日免费积分。
+  // 服务名由 BuddyAuth 依 product.id 派生：buddyAuth / workbuddyAuth。
+  const buddy = new BuddyAuth(ctx, { product: CODEBUDDY, fetcher: network.fetch })
+  const workbuddy = new BuddyAuth(ctx, { product: WORKBUDDY, fetcher: network.fetch })
+
+  /** 按凭据 ref 解析 buddy 系凭据（选号与兜底路径共用，避免两份 JSON 解析漂移）。 */
+  const resolveBuddyCredentialByRef = async (refName: string): Promise<BuddyCredential | undefined> => {
+    const resolved = await ctx.credentials.resolve(credentialRef(refName))
+    if (!resolved) return undefined
+    try {
+      return JSON.parse(resolved.value) as BuddyCredential
+    } catch {
+      return undefined
+    }
+  }
+
+  // 选号：按「临时/永久积分」分档（窗口默认 15 天，可被
+  // DSH_BUDDY_EXPIRING_WINDOW_DAYS 覆盖）。两个产品各一份缓存，绝不串味。
+  const buddyBalanceSelector = new BuddyBalanceSelector({
+    product: CODEBUDDY,
+    resolveCredential: resolveBuddyCredentialByRef,
+    fetcher: network.fetch,
+  })
+  const workbuddyBalanceSelector = new BuddyBalanceSelector({
+    product: WORKBUDDY,
+    resolveCredential: resolveBuddyCredentialByRef,
+    fetcher: network.fetch,
+  })
+
+  /**
+   * 选一个账号并解析凭据（M3 余额分档）。
+   *
+   * - 免费模型（`isFreeModel === true`）跳过余额分档，也不受「锁定永久积分」
+   *   约束：它不扣任何积分，没必要为它查余额。
+   * - 锁定且无临时积分时**抛错，绝不回落**到账号池顺序 —— 否则锁定形同虚设。
+   * - 返回 `credential` 为空时，`tried` 是「档位最优但凭据坏了」的账号集合，
+   *   调用方应作为排除集合继续兜底。
+   */
+  const pickBuddyCredential = async (options: {
+    product: BuddyProduct
+    selector: BuddyBalanceSelector
+    modelId?: string
+    /** 必须是**已确认**的免费：误判会让付费模型绕开永久积分锁定。 */
+    isFreeModel?: boolean
+  }): Promise<{ credential?: BuddyCredential; accountId?: string; tried: Set<string> }> => {
+    const tried = new Set<string>()
+    const candidates = pool
+      .listAccountsByProvider(options.product.id)
+      .filter(a => a.enabled)
+      .filter((a) => {
+        // 与 `getAvailableAccount` 的限流判据保持一致（空 modelId = 不过滤）。
+        const key = options.modelId ?? ''
+        if (key.length === 0) return true
+        if (!a.modelRateLimits) return true
+        const resetAt = a.modelRateLimits[key]
+        return resetAt === undefined || resetAt === 0 || Date.now() >= resetAt
+      })
+      .map(a => ({ id: a.id, credentialRef: a.credentialRef }))
+
+    if (options.isFreeModel === true) {
+      for (const candidate of candidates) {
+        const credential = await resolveBuddyCredentialByRef(candidate.credentialRef)
+        if (credential !== undefined) return { credential, accountId: candidate.id, tried }
+        tried.add(candidate.id)
+      }
+    }
+
+    const picked = await pickBuddyAccount(options.selector, candidates, {
+      allowPermanent: !pool.permanentLocked(options.product.id),
+      resolveCredential: resolveBuddyCredentialByRef,
+    })
+    if (picked.kind === 'account') {
+      return {
+        credential: picked.credential,
+        accountId: picked.account.id,
+        tried: new Set(picked.tried),
+      }
+    }
+    for (const id of picked.tried) tried.add(id)
+    if (picked.kind === 'locked') {
+      const days = buddyExpiringWindowDays()
+      if (picked.reason?.kind === 'unknown') {
+        throw new Error(
+          `${options.product.displayName}：无法确认是否有可用账号。已锁定永久积分，而部分账号的余额查询失败`
+          + `（${picked.reason.errors.slice(0, 2).join('；')}）。这些账号**可能仍有**「${days} 天内到期」`
+          + '的积分 —— 请重试，或在渠道页检查凭据是否失效。',
+        )
+      }
+      throw new Error(
+        `${options.product.displayName}：没有可用账号。已锁定永久积分，而所有账号的「${days} 天内到期」`
+        + '积分都已用尽。请在渠道页解锁永久积分，或等待资源包到期后重新发放额度。',
+      )
+    }
+    return { tried }
+  }
+
+  const createBuddyAdapter = (
+    product: BuddyProduct,
+    auth: BuddyAuth,
+    selector: BuddyBalanceSelector,
+  ): ReturnType<typeof registerBuddyLlm> => {
+    // 先声明、后赋值：`isFreeModel` 是适配器实例方法，而解析函数在构造参数里。
+    let adapter: ReturnType<typeof registerBuddyLlm> | undefined
+    adapter = registerBuddyLlm(ctx, {
+      credentialRef: credentialRef(product.defaultCredentialRef),
+      resolveCredential: async (modelId?: string) => {
+        const free = modelId === undefined || modelId.length === 0
+          ? false
+          : await (adapter?.isFreeModel(modelId) ?? false)
+        const picked = await pickBuddyCredential({ product, selector, modelId, isFreeModel: free })
+        if (picked.credential !== undefined) {
+          if (picked.accountId !== undefined) reportLedgerAccount(product.id, picked.accountId)
+          return picked.credential
+        }
+        // 兜底：选号器给不出可用账号（例如全部余额查询失败且未锁定）时，
+        // 仍按账号池顺序取一个，并把「档位最优但凭据坏了」的账号排除。
+        const available = await pool.getAvailableAccount(product.id, modelId ?? '', picked.tried)
+        if (available) {
+          reportLedgerAccount(product.id, available.entry.id)
+          return available.credential as BuddyCredential
+        }
+        return resolveBuddyCredentialByRef(product.defaultCredentialRef)
+      },
+      refresh: createPoolRefresh(pool, product.id, auth),
+      fetchRemoteModels: () => auth.fetchModels(pool),
+      product,
+      // ⚠️ 必须注入宿主的 channelFetch：默认的全局 fetch 会绕过应用内代理设置。
+      fetchImpl: network.fetch,
+      readImage: makeReadImage(ctx),
+      readImageRequest: makeReadImageRequest(ctx),
+    })
+    return adapter
+  }
+
+  const buddyAdapter = createBuddyAdapter(CODEBUDDY, buddy, buddyBalanceSelector)
+  const workbuddyAdapter = createBuddyAdapter(WORKBUDDY, workbuddy, workbuddyBalanceSelector)
+
   //
   // 早期实现把服务端的 `name` 直接当昵称用，而实测它是**自动生成的默认名**
   //（本机账号是 `RaccoonAva`），注册第二个账号时会重名、无法区分；
@@ -1404,6 +1561,11 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
     // ⚠️ 漏了这一行定时器不武装：凭据到期后**不会自动续期**，
     // 用户会看到「每隔一小时就要重新登录」，且日志里一个字都没有。
     ['gemini', (p) => gemini.refreshAll(p)],
+    // WorkBuddy 可续期（refresh_token 轮换）：与 raccoon/minimax 同款，只按
+    // refreshable 过滤、不看 enabled。
+    ['workbuddy', (p) => workbuddy.refreshAll(p)],
+    // CodeBuddy 同协议；独立实例，绝不能复用 workbuddy 的凭据/池。
+    ['buddy', (p) => buddy.refreshAll(p)],
   ]
 
   async function refreshAllCredentials(): Promise<void> {
@@ -1455,6 +1617,8 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
       trae.stop()
       cline.stop()
       loomy.stop()
+      workbuddy.stop()
+      buddy.stop()
       zcode.stop()
       // ⚠ 必须 dispose captcha 浏览器 —— 否则会留下孤儿 chromium
       //（约 200-400MB，且用户没有界面能关掉它）。
@@ -1478,6 +1642,8 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
     trae.stop()
     cline.stop()
     loomy.stop()
+    workbuddy.stop()
+    buddy.stop()
     zcode.stop()
     // 同上：captcha 浏览器必须随插件一起回收。
     zcodeAdapter.stop()
@@ -1656,6 +1822,8 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
     raccoon: pruned(RACCOON.id, raccoonAdapter),
     minimax: pruned(MINIMAX.id, minimaxAdapter),
     gemini: pruned(GEMINI.id, geminiAdapter),
+    workbuddy: pruned(WORKBUDDY.id, workbuddyAdapter),
+    buddy: pruned(CODEBUDDY.id, buddyAdapter),
     zcode: pruned(ZCODE.id, zcodeAdapter),
     ...(opencodeAdapter === undefined ? {} : { opencode: pruned(OPENCODE.id, opencodeAdapter) }),
   }
@@ -1665,7 +1833,7 @@ const zcodeAdapter = registerZcodeLlm(ctx, {
   // 丢的却是「下一轮工具调用能不能带上签名」。
   ctx.effect(() => () => { void geminiSigStore.flush().catch(() => {}) })
 
-  registerChannelPackRpc(ctx, pool, lobsterai, qoder, qoderCn, trae, cline, loomy, raccoon, minimax, zcode, gemini, modelAdapters, {
+  registerChannelPackRpc(ctx, pool, lobsterai, qoder, qoderCn, trae, cline, loomy, raccoon, minimax, zcode, gemini, workbuddy, buddy, modelAdapters, {
     ...config,
   })
   // 网关是旁路功能：这里传 `pool` 只为读设置页里的开关，其内部任何失败都已

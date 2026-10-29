@@ -19,6 +19,34 @@ export function isRateLimited(body: string, status?: number): boolean {
 
 const RESET_TIME_PATTERN = /(?:将在|reset at)\s+([\d-]+\s+[\d:]+)\s+(UTC[+-]\d+(?::\d+)?)/i
 
+/**
+ * 腾讯系「模型饱和」业务码（上游背压），与账号级额度限流 `6004` **语义相反**：
+ * 6004 换号有效且必须标记；14003 换号无益、**不许**标记（否则整池锁一小时）。
+ */
+export const MODEL_SATURATION_BUSINESS_CODE = 14003
+
+/** 模型饱和的文案兜底；关键词必须窄，且调用方要求 HTTP 状态 ≥ 400 才看文案。 */
+const MODEL_SATURATION_PATTERN = /模型繁忙|请求量饱和|model\s+busy|currently\s+saturated/i
+
+/**
+ * 判断一次失败是否为**模型饱和**（上游背压），而不是账号级额度限流。
+ *
+ * ⚠️ 必须在 `status === 429` 的无条件判定**之前**调用：14003 恰好是 429，
+ * 先判状态码就永远走不到这里。
+ */
+export function isModelSaturationError(status: number | undefined, body: string): boolean {
+  if (typeof status === 'number' && status < 400) return false
+  if (body.length === 0) return false
+  try {
+    const code = (JSON.parse(body) as Record<string, unknown>).code
+    if (code === MODEL_SATURATION_BUSINESS_CODE
+      || code === String(MODEL_SATURATION_BUSINESS_CODE)) return true
+  } catch {
+    // 非 JSON：交给文案兜底。
+  }
+  return MODEL_SATURATION_PATTERN.test(body)
+}
+
 export const RATE_LIMIT_FALLBACK_MS = 3_600_000
 
 export function parseRateLimitError(

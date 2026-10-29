@@ -278,8 +278,13 @@ export class GeminiAdapter extends LlmAdapter {
    * 记录的同类缺陷：写成 async 会让 `channel-pack-rpc.ts:2041 [...all]` 与
    * `:2125 all.map` 抛 `TypeError: all is not iterable`）。
    */
-  listAllModels(): readonly { id: string; name: string }[] {
-    return this.loadModels().map((model) => ({ id: model.id, name: model.name }))
+  listAllModels(): readonly { id: string; name: string; supportsImage: boolean }[] {
+    // 静态表逐条声明 `supportsImage`（vendor 文档），故这里恒有值。
+    return this.loadModels().map((model) => ({
+      id: model.id,
+      name: model.name,
+      supportsImage: model.supportsImage,
+    }))
   }
 
   private inputModalitiesFor(

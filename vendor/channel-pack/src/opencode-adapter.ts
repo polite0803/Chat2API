@@ -259,8 +259,18 @@ export class OpencodeAdapter extends LlmAdapter {
    * 返回 Promise 会抛 `TypeError: all is not iterable`
    * （minimax 的同款真实缺陷，见 `minimax-adapter.ts` 的注释）。
    */
-  listAllModels(): readonly { id: string; name: string; isFree?: boolean }[] {
-    return OPENCODE_FALLBACK_MODELS.map((m) => ({ id: m.id, name: m.name, isFree: m.isFree }))
+  listAllModels(): readonly { id: string; name: string; isFree?: boolean; supportsImage?: boolean }[] {
+    const capabilities = getOpencodeCapabilitiesSync()
+    return OPENCODE_FALLBACK_MODELS.map((m) => {
+      const capability = capabilities.find((c) => c.id === m.id)
+      return {
+        id: m.id,
+        name: m.name,
+        isFree: m.isFree,
+        // 只有远端能力表（models.dev）给出模态才算数；拿不到即未知，不猜。
+        ...capability === undefined ? {} : { supportsImage: supportsOpencodeImage(capability) },
+      }
+    })
   }
 
   async listModels(_provider: string): Promise<readonly LlmModelInfo[]> {

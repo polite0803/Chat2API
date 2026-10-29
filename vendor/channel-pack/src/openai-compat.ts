@@ -29,6 +29,7 @@ import {
 } from './sse.js'
 import { normalizeHarnessMessages } from './message-shape.js'
 import { isBillingBusinessCode, looksLikeBillingError, parseQueueError, queueDelayMs, ModelQueuedError, throwIfModelQueued } from './model-queue.js'
+import { isPlanGateBusinessCode, looksLikePlanGate, planGateMessage } from './qoder-plan-gate.js'
 
 /** 将消息内容载荷展平为纯文本字符串。 */
 export function contentToText(content: unknown): string {
@@ -616,6 +617,24 @@ export async function* consumeOpenAiSse(
               },
             )
           }
+          // ⚠️ **套餐档位闸门（112）**：与额度（110）语义不同 —— 额度会按自然日
+          // 重置，档位不会；重试一万次都是同一份 `isHighestTier:false`。
+          //
+          // 实测帧（用户报障 2026-10-29，`qodercn/dfmodel`）：
+          // ```json
+          // { "code": 112,
+          //   "message": "{\"isHighestTier\":false,\"pricingUrl\":\"https://qoder.com.cn/pricing?client=qoder\"}" }
+          // ```
+          // 旧实现落到下面的 `SERVER` → 客户端只看到一坨裸 JSON + `(112/model_error)`，
+          // 且被 harness 白重试 5 次。这里改抛 `PERMISSION_DENIED`
+          // （与 `QUOTA_EXCEEDED` 同属**不可重试**集合），文案见 `qoder-plan-gate.ts`。
+          if (isPlanGateBusinessCode(data.code) || looksLikePlanGate(data.message)) {
+            throw new LlmError(
+              `${label}: ${planGateMessage(data.message)}`,
+              'PERMISSION_DENIED',
+              { status: 403 },
+            )
+          }
           // ⚠️ **额度用尽必须归为不可重试**（真实缺陷，用户报障 2026-09-27）：
           // 帧形如 `{code:110, message:"Billing daily count exceeded",
           // type:"model_error"}`，原先落到下面的 `SERVER` —— 而 `SERVER` **在**
@@ -668,6 +687,16 @@ export async function* consumeOpenAiSse(
                   queueInfo: { ...queueInfo },
                   ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
                 },
+              )
+            }
+            // 套餐档位闸门同样走**两条通道**：与上面那条分支同源判据，
+            // 否则「只修了一条路」的缺陷会重演（112 实测可能被信封剥掉 `code`，
+            // 只剩 `{message, type:'model_error'}`）。
+            if (looksLikePlanGate(data.message)) {
+              throw new LlmError(
+                `${label}: ${planGateMessage(data.message)}`,
+                'PERMISSION_DENIED',
+                { status: 403 },
               )
             }
             // ⚠️ 额度用尽同样要归为**不可重试**（与上面那条分支一致 ——
@@ -1050,7 +1079,19 @@ export async function* consumeOpenAiSse(
       && config.isQuotaError?.(data as Record<string, unknown>)) {
       throw new LlmError(`${label}: ${errorDetail(rawJson)}`, 'QUOTA_EXCEEDED')
     }
+    // ⚠️ 用 `rawSnippet` 而不是 `rawJson`：后者只在调用方传了 `isQuotaError`
+    // 时才累积（qoder 不传），拿它判断会让这条通道**永不命中**。
     const snippet = rawSnippet.trim()
+    const bodyText = snippet.length > 0 ? snippet : rawJson
+    // 网关/错误页直接回判断载荷（而非 SSE）时也要给出**可读**文案：
+    // 否则用户看到的是一段「响应不是 SSE，原文片段：{"isHighestTier":…}」。
+    if (looksLikePlanGate(bodyText)) {
+      throw new LlmError(
+        `${label}: ${planGateMessage(bodyText)}`,
+        'PERMISSION_DENIED',
+        { status: 403 },
+      )
+    }
     if (snippet.length > 0) {
       throw new LlmError(
         `${label}: 响应不是 SSE（没有任何 data: 帧），原文片段：${snippet}`,

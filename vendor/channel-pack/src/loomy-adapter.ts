@@ -256,9 +256,16 @@ export class LoomyAdapter extends LlmAdapter {
   }
 
   /** 完整目录（**不套黑名单**），带最终展示名。设置页需要它渲染被关闭的模型。 */
-  listAllModels(): readonly { id: string; name: string }[] {
+  listAllModels(): readonly { id: string; name: string; supportsImage?: boolean }[] {
     const source = this.remoteModels ?? this.product.fallbackModels.map(fallbackToRemote)
-    return source.map((model) => ({ id: model.id, name: model.name }))
+    // ⚠️ 兜底表的 `supportsImage` 是**占位 false**（那边本来没有这份信息，见
+    // `fallbackToRemote`），不能拿它当「确认纯文本」—— 只有真实远端目录才算数。
+    const known = this.remoteModels !== undefined
+    return source.map((model) => ({
+      id: model.id,
+      name: model.name,
+      ...known ? { supportsImage: model.supportsImage } : {},
+    }))
   }
 
   /**

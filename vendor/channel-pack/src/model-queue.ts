@@ -147,8 +147,22 @@ export function looksLikeBillingError(text: string): boolean {
 /**
  * 单次排队等待的**封顶**（毫秒）。
  *
- * 用户要求：服务端给的排队时间 **< 10 秒按它的值**，**≥ 10 秒按 10 秒** ——
- * 避免一次阻塞 30 秒让 UI 长期停在「运行中」且无法区分「排队」与「卡死」。
+ * ⚠️ **这个常量只约束"一次 sleep"的长度，不约束"一次请求等多久"。**
+ *
+ * 历史实现两者混为一谈：把服务端声明的 `retryAfterSeconds: 30` 截到 10 秒，
+ * 然后**重发整笔请求**。每一发都是一次完整的加密请求 + 全量 prefill，
+ * 于是三发才过一次、其中两发的 prefill 白烧 —— 任务越长越明显
+ * （用户报障「经本应用走 Qoder 比 IDE 慢明显」）。
+ *
+ * 现由 `src/queue-wait.ts` 的 `planQueueWait()` 把服务端声明的延迟**切成若干
+ * ≤ 本值的小片连续睡完**，再只重发一次：
+ *
+ * - 单次 sleep 仍 ≤ 本值 → UI 的"可中止 / 卡死判定"不受影响；
+ * - 请求只重发一次 → 不再白烧 prefill。
+ *
+ * {@link queueDelayMs} 保留旧语义（截到本值），供**只需要一个等待提示**的
+ * 调用方使用（如 `throwIfModelQueued` 里的 `retryAfterMs`）；适配器改用
+ * {@link rawQueueDelayMs} 拿未截断值，再自行切分。
  */
 export const QUEUE_MAX_DELAY_MS = 10_000
 
@@ -322,19 +336,36 @@ export async function checkQueuedResponse(response: Response): Promise<Response>
 }
 
 /**
- * 算出本次排队该等多久（毫秒）；无法判定时返回 undefined（交调用方退避）。
+ * 算出服务端声明的排队延迟（毫秒，**不封顶**）；无法判定时返回 undefined。
  *
- * 取值优先序：`retry_after_ms` → `retryAfterMs` → `retryAfterSeconds × 1000`，
- * 命中即用并**封顶** {@link QUEUE_MAX_DELAY_MS}。
+ * 取值优先序：`retry_after_ms` → `retryAfterMs` → `retryAfterSeconds × 1000`。
  *
  * ⚠️ **非法值一律忽略而不是当 0**：客户端 `W7c()` 对非有限/负值直接判 fail。
  * 当 0 会变成「立即重试」的忙循环，把机会瞬间烧掉。
+ *
+ * ⚠️ 与 {@link queueDelayMs} 的区别**只有封顶**：本函数把"服务端要等多久"如实
+ * 交回，切分与单次上限由调用方（`src/queue-wait.ts`）决定。适配器必须用本函数
+ * —— 用封顶版会让 `retryAfterSeconds: 30` 退化成"每 10 秒重打一次"。
  */
-export function queueDelayMs(info: QueueInfo | undefined): number | undefined {
+export function rawQueueDelayMs(info: QueueInfo | undefined): number | undefined {
   if (info === undefined) return undefined
   const ms = readFiniteNumber(info.retry_after_ms) ?? readFiniteNumber(info.retryAfterMs)
   const fromSeconds = readFiniteNumber(info.retryAfterSeconds)
   const raw = ms ?? (fromSeconds === undefined ? undefined : fromSeconds * 1000)
   if (raw === undefined || raw < 0) return undefined
-  return Math.min(Math.trunc(raw), QUEUE_MAX_DELAY_MS)
+  return Math.trunc(raw)
+}
+
+/**
+ * 算出本次排队该等多久（毫秒，**截到 {@link QUEUE_MAX_DELAY_MS}**）；无法判定时
+ * 返回 undefined（交调用方退避）。
+ *
+ * ⚠️ 本函数**不再用于适配器的实际等待**（那会用未封顶的
+ * {@link rawQueueDelayMs} 再切分）—— 它只服务于"给调用方一个等待提示"的场景，
+ * 如 `throwIfModelQueued` 的 `retryAfterMs`。
+ */
+export function queueDelayMs(info: QueueInfo | undefined): number | undefined {
+  const raw = rawQueueDelayMs(info)
+  if (raw === undefined) return undefined
+  return Math.min(raw, QUEUE_MAX_DELAY_MS)
 }

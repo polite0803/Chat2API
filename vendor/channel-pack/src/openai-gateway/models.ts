@@ -167,7 +167,7 @@ export function toGatewayModelIds(
 }
 
 /**
- * 逐个模型解析**档位视图**（key = `provider/model`）。
+ * 逐个模型解析**档位视图与上下文窗口**（key = `provider/model`）。
  *
  * ## 为什么要单独解析
  *
@@ -176,47 +176,89 @@ export function toGatewayModelIds(
  * 最需要公开的东西 —— 各 provider 的档位 id 私有（`light` / `extra_high` /
  * `xhigh` / `on`），客户端不查就只能猜，猜错就是 400。
  *
+ * ## 上下文窗口为什么在这里一起取（2026-10-29 修）
+ *
+ * `contextWindow` **也只在 `resolveModelInfo` 的 `context.windowTokens` 里**，
+ * `listModels` 不带。此前本函数只读 `reasoning`，于是 `toOpenAiModels` 拿到的
+ * `model.contextWindow` 永远是 `undefined`，`/v1/models` 里的 `context_window`
+ * 一次都没发出去 —— 实测宿主侧查表结果是 **12 个渠道全部 0/N**。后果不是"少一个
+ * 展示字段"：Codex / DSH 这类客户端拿不到窗口就退回**自己的默认值**决定何时压缩，
+ * 我们既解释不了它的行为，也改不了它。既然本来就要逐模型 resolve（读的是适配器已
+ * 缓存的目录，**无额外网络**），顺路取窗口不增加任何成本。
+ *
  * ## 成本与容错
  *
  * 每个模型一次 `resolveModelInfo`：它读的是适配器**已缓存**的远端目录
  * （`listModels` 刚拉过），故不产生额外网络请求；DSH 自己的 `buildModelCatalog`
  * 也是「每个 provider listModels 后逐个 resolveModelInfo」的同一形状。
- * 逐模型 catch：单个模型解析失败只是**它**没有档位字段，不影响整个目录。
+ * 逐模型 catch：单个模型解析失败只是**它**没有这两个字段，不影响整个目录。
+ * 窗口读不到就**整个键缺省**，绝不补默认值 —— 虚报上界会让客户端把超长上下文发
+ * 出去、被上游硬拒。
  */
+export interface GatewayModelDetail {
+  reasoning?: GatewayEffortView
+  contextWindow?: number
+}
+
+export async function collectGatewayModelDetails(
+  llm: GatewayModelSource,
+  groups: readonly GatewayProviderModels[],
+  onError?: (provider: string, error: unknown) => void,
+): Promise<Map<string, GatewayModelDetail>> {
+  const details = new Map<string, GatewayModelDetail>()
+  const resolve = llm?.resolveModelInfo
+  // 宿主不提供该能力时**静默返回空表**：档位与窗口都是附加信息，拿不到就不发字段，
+  // 不能让整份目录跟着失败。
+  if (typeof resolve !== 'function') return details
+  await Promise.all(groups.flatMap(({ provider, models }) => models.map(async (model) => {
+    try {
+      const info = await resolve.call(llm, provider, model.id) as {
+        reasoning?: { efforts?: readonly { id?: unknown; name?: unknown }[]; defaultEffort?: unknown }
+        context?: { contextWindow?: unknown; windowTokens?: unknown }
+      } | undefined
+      const view = effortView(info?.reasoning?.efforts, info?.reasoning?.defaultEffort)
+      // 两种拼写都认：DSH 的 `LlmResolvedModelInfo.context` 与个别适配器直接写的
+      // `contextWindow`。非正数一律当没说。
+      const rawWindow = info?.context?.contextWindow ?? info?.context?.windowTokens
+      const contextWindow = typeof rawWindow === 'number' && Number.isFinite(rawWindow) && rawWindow > 0
+        ? Math.trunc(rawWindow)
+        : undefined
+      if (view === undefined && contextWindow === undefined) return
+      details.set(toOpenAiModelId(provider, model.id), {
+        ...view === undefined ? {} : { reasoning: view },
+        ...contextWindow === undefined ? {} : { contextWindow },
+      })
+    } catch (error) {
+      onError?.(provider, new Error(
+        `${model.id} 的档位/窗口解析失败（该模型不带这两个字段，目录本身照常返回）：`
+        + `${error instanceof Error ? error.message : String(error)}`,
+      ))
+    }
+  })))
+  return details
+}
+
+/** 兼容旧调用方：只取档位视图。 */
 export async function collectGatewayEffortViews(
   llm: GatewayModelSource,
   groups: readonly GatewayProviderModels[],
   onError?: (provider: string, error: unknown) => void,
 ): Promise<Map<string, GatewayEffortView>> {
+  const details = await collectGatewayModelDetails(llm, groups, onError)
   const views = new Map<string, GatewayEffortView>()
-  const resolve = llm?.resolveModelInfo
-  // 宿主不提供该能力时**静默返回空表**：档位是附加信息，拿不到就不发字段，
-  // 不能让整份目录跟着失败。
-  if (typeof resolve !== 'function') return views
-  await Promise.all(groups.flatMap(({ provider, models }) => models.map(async (model) => {
-    try {
-      const info = await resolve.call(llm, provider, model.id) as {
-        reasoning?: { efforts?: readonly { id?: unknown; name?: unknown }[]; defaultEffort?: unknown }
-      } | undefined
-      const view = effortView(info?.reasoning?.efforts, info?.reasoning?.defaultEffort)
-      if (view !== undefined) views.set(toOpenAiModelId(provider, model.id), view)
-    } catch (error) {
-      onError?.(provider, new Error(
-        `${model.id} 的档位解析失败（该模型不带档位字段，目录本身照常返回）：`
-        + `${error instanceof Error ? error.message : String(error)}`,
-      ))
-    }
-  })))
+  for (const [id, detail] of details) {
+    if (detail.reasoning !== undefined) views.set(id, detail.reasoning)
+  }
   return views
 }
 
 /** 将 DSH 的 provider 分组目录转换为 OpenAI models 响应中的 data 项。 */
 export function toOpenAiModels(
   groups: readonly GatewayProviderModels[],
-  effortViews?: ReadonlyMap<string, GatewayEffortView>,
+  details?: ReadonlyMap<string, GatewayModelDetail>,
 ): OpenAiModel[] {
   return groups.flatMap(({ provider, models }) => models.map((model) => {
-    const reasoning = effortViews?.get(toOpenAiModelId(provider, model.id))
+    const detail = details?.get(toOpenAiModelId(provider, model.id))
     return {
       id: toOpenAiModelId(provider, model.id),
       object: 'model' as const,
@@ -224,10 +266,14 @@ export function toOpenAiModels(
       owned_by: provider,
       name: model.name,
       ...model.description === undefined ? {} : { description: model.description },
-      ...model.contextWindow === undefined ? {} : { context_window: model.contextWindow },
+      // 窗口优先取 `resolveModelInfo` 解析出来的（`listModels` 从不带它），
+      // 再退回目录自带的值；两者都没有就**省略这个键**。
+      ...(detail?.contextWindow ?? model.contextWindow) === undefined
+        ? {}
+        : { context_window: detail?.contextWindow ?? model.contextWindow },
       ...model.maxTokens === undefined ? {} : { max_tokens: model.maxTokens },
       ...model.inputModalities === undefined ? {} : { input: model.inputModalities },
-      ...reasoning === undefined ? {} : { reasoning },
+      ...detail?.reasoning === undefined ? {} : { reasoning: detail.reasoning },
     }
   }))
 }
