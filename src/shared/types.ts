@@ -1,4 +1,5 @@
 import type { AggregateWire } from './aggregate'
+import type { ChannelLoginKind } from './channels'
 
 export type { AggregateWire }
 
@@ -49,7 +50,48 @@ export interface CredentialField {
   helpText?: string
 }
 
-export type LoadBalanceStrategy = 'round-robin' | 'fill-first' | 'failover'
+/**
+ * 选号策略。
+ * - `round-robin` / `fill-first` / `failover`：只看账号池顺序与失败历史；
+ * - `smart`：在可用候选里挑**最早解封**的那个，把快重置的额度先用掉；
+ * - `pace`：挑"每小时剩余额度最多"的那个，把额度平摊到重置前。
+ *
+ * 后两者依赖额度账本（`shared/quotaPacing.ts` 推算重置时刻）。推不出来时它们
+ * **不改可用性**，只是退回原有顺序 —— 没有上限的家不该因为"算不出来"被踢出候选。
+ */
+export type LoadBalanceStrategy = 'round-robin' | 'fill-first' | 'failover' | 'smart' | 'pace'
+
+/** 三态能力：`unknown` 是真实状态，既不等于能用也不等于不能用 */
+export type CapabilityState = 'yes' | 'no' | 'unknown'
+
+export type AutoModelTier = 'fast' | 'balanced' | 'strong'
+
+/**
+ * One model's routing annotation, keyed by display name inside
+ * `Provider.modelCapabilities`.
+ *
+ * Every field is optional and *absent means unknown* - never a default value.
+ * `weight` / `free` come from the account-channel catalogue (the multiplier
+ * that upstream prints in the display name); builtin and aggregate providers
+ * leave them unset because neither publishes a per-model cost.
+ */
+export interface ModelCapabilityHint {
+  tier?: AutoModelTier
+  vision?: Exclude<CapabilityState, 'unknown'>
+  tools?: Exclude<CapabilityState, 'unknown'>
+  contextTokens?: number
+  /** Credit multiplier reported by the channel pack; absent means unreported */
+  weight?: number
+  free?: boolean
+}
+
+/**
+ * What the caller wants `auto` to optimise for. Overrides the target tier and
+ * the weight the cost factor carries in scoring.
+ */
+export type AutoPreference = 'balanced' | 'fast' | 'strong' | 'cheap'
+
+export const AUTO_PREFERENCES: readonly AutoPreference[] = ['balanced', 'fast', 'strong', 'cheap']
 
 export interface AutoRoutingConfig {
   /** Enables the virtual `auto` model. When off, `auto` is hidden from /v1/models and rejected. */
@@ -58,12 +100,15 @@ export interface AutoRoutingConfig {
   maxAttempts: number
   /** How long a conversation stays pinned to the model it first succeeded on. 0 disables stickiness. */
   stickyMinutes: number
+  /** Default optimisation target; `X-Auto-Prefer` overrides it per request. */
+  prefer: AutoPreference
 }
 
 export const DEFAULT_AUTO_ROUTING_CONFIG: AutoRoutingConfig = {
   enabled: true,
   maxAttempts: 3,
   stickyMinutes: 30,
+  prefer: 'balanced',
 }
 
 export type Theme = 'light' | 'dark' | 'system'
@@ -121,6 +166,18 @@ export interface Provider {
   authPrefix?: string
   /** Set at startup from the shipped provider config: this provider has an online model list source */
   supportsModelFetch?: boolean
+  /**
+   * How the user proves ownership of this provider's accounts, for
+   * `type: 'account'` records only.
+   *
+   * `authType` cannot express this: the enum has no browser/device-code member,
+   * so a channel record stored `authType: 'token'` and the card rendered
+   * "API Key" for a channel whose accounts are obtained by browser login. The
+   * authoritative value lives in the channel catalogue (`loginKind`); this field
+   * carries it across the IPC boundary because the renderer cannot import
+   * `src/main/**` without dragging electron into the bundle.
+   */
+  loginKind?: ChannelLoginKind
   status?: ProviderStatus
   lastStatusCheck?: number
 }
@@ -166,7 +223,62 @@ export interface AppConfig {
   managementApi: ManagementApiConfig
   contextManagement?: unknown
   autoRouting: AutoRoutingConfig
+  compression: CompressionConfig
+  outputSteering: OutputSteeringConfig
   language: 'zh-CN' | 'en-US'
+}
+
+/** Compression strength; multiplies the adaptive retention budget. */
+export type CompressionAggressiveness = 'conservative' | 'moderate' | 'aggressive'
+
+/**
+ * Live-zone context compression: the only two knobs the UI exposes.
+ *
+ * Off by default. A rewrite is only free when it cannot disturb the provider's
+ * prompt cache, so this ships gated and is enabled deliberately.
+ */
+export interface CompressionConfig {
+  enabled: boolean
+  aggressiveness: CompressionAggressiveness
+}
+
+export const COMPRESSION_AGGRESSIVENESS: CompressionAggressiveness[] = [
+  'conservative',
+  'moderate',
+  'aggressive',
+]
+
+/**
+ * Ships disabled: the feature rewrites request bytes, so it is opt-in and
+ * enabled deliberately rather than inherited from an upgrade.
+ */
+export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
+  enabled: false,
+  aggressiveness: 'moderate',
+}
+
+/**
+ * Output-side verbosity steering.
+ *
+ * Deliberately a SEPARATE switch from `compression`: that one rewrites request
+ * bytes (and is therefore bounded by prompt-cache economics), while this one
+ * changes what the model writes back. A user may reasonably want one and not the
+ * other, and bundling them would make each one's risk inherit the other's.
+ *
+ * `level` is 1..3; 0 means "do not steer". It only takes effect when `enabled`
+ * is true, so a stored non-zero level cannot steer after the switch is turned
+ * off.
+ */
+export interface OutputSteeringConfig {
+  enabled: boolean
+  level: number
+}
+
+export const OUTPUT_STEERING_LEVELS = [1, 2, 3]
+
+export const DEFAULT_OUTPUT_STEERING_CONFIG: OutputSteeringConfig = {
+  enabled: false,
+  level: 2,
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
@@ -283,12 +395,22 @@ export interface RequestLogEntry {
   /** Reasoning effort level */
   reasoningEffort?: 'low' | 'medium' | 'high'
 
+  /**
+   * Output cap the client asked for (`max_completion_tokens` first, then `max_tokens`).
+   * Absent when the client sent neither - never defaulted here, since the upstream default is unknown.
+   */
+  maxTokens?: number
+
   /** Response status code */
   responseStatus: number
   /** Response preview (truncated) */
   responsePreview?: string
   /** Response body JSON string */
   responseBody?: string
+  /** Finish reason the client actually received; absent when the upstream never announced an ending */
+  finishReason?: string
+  /** Streaming only: the upstream ended without a finish reason, so the turn the client got is incomplete */
+  streamTruncated?: boolean
 
   /** Request latency in milliseconds */
   latency: number
@@ -299,6 +421,68 @@ export interface RequestLogEntry {
   errorMessage?: string
   /** Error stack trace */
   errorStack?: string
+
+  /**
+   * Decision record for a request that asked for the virtual `auto` model.
+   * Absent for every other request; candidates are ranked display names, capped.
+   */
+  auto?: {
+    prefer: AutoPreference
+    reason: 'only' | 'sticky' | 'score'
+    attempts: number
+    candidates: string[]
+    /** Contracts that could not be met but the request was routed anyway */
+    degraded?: string[]
+  }
+
+  /**
+   * Context-compression record. Absent when the feature is disabled, so a log
+   * row only carries this field when a decision was actually made.
+   * Token figures are ESTIMATES and never the upstream-reported usage.
+   */
+  compression?: {
+    /** Compressors that rewrote something, e.g. ['json']. */
+    applied: string[]
+    tokensBefore: number
+    tokensAfter: number
+    saved: number
+    ratio: number
+    /** CCR ids the model could retrieve through the management API. */
+    ccrHashes?: string[]
+    /** Why the request was forwarded unchanged. */
+    skipped?: string
+  }
+  /**
+   * Cross-turn duplication measurement. OBSERVATION ONLY — nothing was rewritten.
+   *
+   * Recorded even when compression is disabled, because its whole purpose is to
+   * decide whether folding repeated content is worth building at all. All
+   * character counts are raw bytes of message text, not tokens.
+   */
+  duplication?: {
+    /** Message blocks large enough to compare. */
+    blocks: number
+    /** Characters examined, after the per-request caps. */
+    scannedChars: number
+    /** Characters that could be folded if every verbatim repeat collapsed. */
+    duplicatedChars: number
+    /** Number of qualifying contiguous runs. */
+    runs: number
+    /** Longest contiguous duplicated run, in lines. */
+    longestRunLines: number
+    /** True when a cap stopped the scan before the whole prompt. */
+    truncated: boolean
+  }
+  /**
+   * Which turn of its conversation this request was, as attributed by the
+   * survivorship tracker (1 = the first turn we observed).
+   *
+   * OBSERVATION ONLY. Kept on the log so `expected_reads` — the number a
+   * cross-turn deduplication budget needs and cannot know at request time — can
+   * be estimated afterwards. Absent when the conversation key could not be
+   * derived (no system prompt and no user message, or malformed content).
+   */
+  conversationTurn?: number
 }
 
 export interface RequestLogConfig {
@@ -307,6 +491,27 @@ export interface RequestLogConfig {
   includeBodies: boolean
   maxBodyChars: number
   redactSensitiveData: boolean
+}
+
+/**
+ * One day of a per-day aggregate. Counts are `null` when the retained logs
+ * cannot speak for that day: a `0` there would read as "that day had no
+ * traffic" while the real answer is "those rows are no longer stored".
+ */
+export interface RequestLogTrendPoint {
+  date: string
+  total: number | null
+  success: number | null
+  error: number | null
+  avgLatency: number | null
+}
+
+export interface AppLogTrendPoint {
+  date: string
+  total: number | null
+  info: number | null
+  warn: number | null
+  error: number | null
 }
 
 export interface ManagementApiConfig {
@@ -476,6 +681,15 @@ export interface EffectiveModel {
   source: 'builtin' | 'fetched' | 'custom'
 }
 
+/**
+ * One catalogue row, served or not. The model management page lists the whole
+ * catalogue so a stopped model can be started again from the same place.
+ */
+export interface CatalogueModel extends EffectiveModel {
+  /** false = stopped: neither advertised on `/v1/models` nor routable, but still listed */
+  served: boolean
+}
+
 /** How an upstream payload is read into display-name / actual-id pairs */
 export type ModelsFetchReader =
   | 'openai-list'
@@ -529,6 +743,8 @@ export type ModelsFetchFailure =
   | 'empty'
   | 'unrecognized_shape'
   | 'network_error'
+  /** Aggregate sync: every stored key was rejected by the list endpoint. */
+  | 'invalid_api_key'
 
 export type ModelsFetchResult =
   | { ok: true; models: FetchedModel[]; detail?: string }

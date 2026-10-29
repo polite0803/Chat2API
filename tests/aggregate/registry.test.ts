@@ -10,7 +10,12 @@ import {
 } from '../../src/main/providers/aggregate/registry.ts'
 
 test('the catalogue carries the entries that can actually be wired', () => {
-  assert.equal(AGGREGATE_REGISTRY.length, 73)
+  assert.equal(AGGREGATE_REGISTRY.length, 74)
+  // 473 transcribed, minus 7 retired upstream on 2026-10-29 (3 anthropic + 4 xai),
+  // minus the withdrawn mistral_codestral entry (its single model went with it),
+  // plus the Agnes CN switch (agnes-2.0-flash -> agnes-3.0-flash + agnes-2.5-flash),
+  // plus the Qiniu Conatus campaign entry (qiniu/conatus-free),
+  // plus the SenseNova Token Plan entry (6 models).
   assert.equal(AGGREGATE_REGISTRY.reduce((sum, entry) => sum + entry.models.length, 0), 473)
 
   // Browser-login account channels are retired; the responses-only relay is not wired.
@@ -98,4 +103,44 @@ test('entries without a usable default endpoint stay visible with a null baseUrl
   for (const id of ['vertex', 'vertex-partner']) {
     assert.equal(getAggregateEntry(id)!.authKind, 'unsupported')
   }
+})
+
+/**
+ * 上游已退役的模型不许被"重新转录"回来。它们仍会解析成 200（有的直接重定向到另一个模型），
+ * 所以只有这份名单能挡住"看着能用、其实拿不到你要的模型"。
+ */
+test('models retired upstream stay out of the catalogue', () => {
+  const retired: Array<[string, string]> = [
+    ['anthropic', 'claude-sonnet-4-20250514'],
+    ['anthropic', 'claude-opus-4-20250514'],
+    ['anthropic', 'claude-3-5-sonnet-20241022'],
+    ['xai', 'grok-4-fast-reasoning'],
+    ['xai', 'grok-code-fast-1'],
+    ['xai', 'grok-3'],
+    ['xai', 'grok-4'],
+  ]
+
+  for (const [entryId, modelId] of retired) {
+    const entry = getAggregateEntry(entryId)
+    assert.ok(entry, `${entryId} must still be listed; only its dead models are removed`)
+    assert.ok(
+      !entry!.models.some(model => model.id === modelId),
+      `${entryId}/${modelId} is retired upstream and must not be re-added`
+    )
+  }
+
+  // 反向对照：删过头会把整家的活模型一起带走，这里钉住两家仍在服务的 id。
+  for (const modelId of ['grok-4.6', 'grok-4.5']) {
+    assert.ok(getAggregateEntry('xai')!.models.some(model => model.id === modelId), `xai/${modelId} still serves`)
+  }
+  assert.equal(getAggregateEntry('anthropic')!.models.length, 0, 'the anthropic entry is intentionally model-less')
+})
+
+test('the withdrawn codestral entry is gone, but its model stays reachable via mistral', () => {
+  assert.equal(getAggregateEntry('mistral_codestral'), undefined,
+    'codestral.mistral.ai is not in Mistral’s published docs; the entry was withdrawn on 2026-10-29')
+  assert.ok(
+    getAggregateEntry('mistral')!.models.some(model => model.id === 'codestral-latest'),
+    'withdrawing the duplicate entry must not take codestral-latest away from the mistral entry'
+  )
 })

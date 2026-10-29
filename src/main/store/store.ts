@@ -28,6 +28,7 @@ import {
   DailyStatistics,
   DEFAULT_STATISTICS,
   EffectiveModel,
+  CatalogueModel,
   ProviderModelOverrides,
   DEFAULT_USER_MODEL_OVERRIDES,
   UserModelOverrides,
@@ -36,6 +37,16 @@ import {
   DEFAULT_REQUEST_LOG_CONFIG,
   normalizeModelMappingsWithDefaults,
 } from './types'
+import { localDayKey, recentLocalDays } from '../../shared/localDay'
+import {
+  accumulateDayBucket,
+  normalizeDayBucket,
+  summarizeDay,
+  tokenDayKey,
+  trimDays,
+  type DayTokenSummary,
+} from '../../shared/tokenAccounting.ts'
+import { sendRequestLog } from '../ipc/logBroadcast'
 import { RequestLogManager } from '../requestLogs/manager'
 import { normalizeRequestLogConfig } from '../requestLogs/types'
 import { setContentLoggingEnabled } from '../proxy/utils/debugContent'
@@ -46,10 +57,16 @@ import {
   planKeySetup,
 } from './keyMigration'
 import { normalizeToolCallingConfig } from '../../shared/toolCalling'
+import { applyServed, buildModelCatalogue, namespaceModelOverrides } from './modelServing'
 import { DEFAULT_AUTO_ROUTING_CONFIG, RETIRED_PROVIDER_IDS } from '../../shared/types'
-import type { AutoRoutingConfig } from '../../shared/types'
+import { normalizeAutoRoutingConfig } from './autoRoutingConfig'
+import { normalizeCompressionConfig } from './compressionConfig'
+import { normalizeOutputSteeringConfig } from './outputSteeringConfig'
+import type { AppLogTrendPoint, AutoRoutingConfig, RequestLogTrendPoint } from '../../shared/types'
 import { AppLogManager } from '../appLogs/manager'
+import { QuotaLedger } from '../proxy/quota/ledger'
 import { syncBuiltinProvider } from './providerSync'
+import { syncAutoStart } from '../autostartHost'
 import type { AppLogFilter } from '../appLogs/types'
 
 // Dynamically import electron-store (ESM module)
@@ -60,24 +77,6 @@ let Store: any = null
  */
 type StoreType = any
 
-/**
- * Normalize the virtual `auto` model routing configuration, clamping numeric fields
- * so a hand-edited data.json cannot push the router into absurd values.
- */
-function normalizeAutoRoutingConfig(input?: Partial<AutoRoutingConfig>): AutoRoutingConfig {
-  const merged = { ...DEFAULT_AUTO_ROUTING_CONFIG, ...(input || {}) }
-  const attempts = Number(merged.maxAttempts)
-  const sticky = Number(merged.stickyMinutes)
-  return {
-    enabled: merged.enabled !== false,
-    maxAttempts: Number.isFinite(attempts)
-      ? Math.min(5, Math.max(1, Math.round(attempts)))
-      : DEFAULT_AUTO_ROUTING_CONFIG.maxAttempts,
-    stickyMinutes: Number.isFinite(sticky)
-      ? Math.min(1440, Math.max(0, Math.round(sticky)))
-      : DEFAULT_AUTO_ROUTING_CONFIG.stickyMinutes,
-  }
-}
 
 /**
  * Storage Manager Class
@@ -90,6 +89,7 @@ class StoreManager {
   private initializationError: Error | null = null
   private requestLogManager: RequestLogManager | null = null
   private appLogManager: AppLogManager | null = null
+  private quotaLedger: QuotaLedger | null = null
   private encryptionKey: string | undefined = undefined
   private keyFilePath: string | null = null
   private dataFileExistedBeforeInit = false
@@ -141,6 +141,7 @@ class StoreManager {
 
       await this.initializeAppLogManager(storagePath)
       await this.initializeRequestLogManager(storagePath)
+      this.initializeQuotaLedger(storagePath)
       this.initializeDefaultModelMappings()
       await this.initializeDefaultProviders()
       this.isInitialized = true
@@ -169,6 +170,7 @@ class StoreManager {
         })
         await this.initializeAppLogManager(storagePath)
         await this.initializeRequestLogManager(storagePath)
+        this.initializeQuotaLedger(storagePath)
         this.initializeDefaultModelMappings()
         this.isInitialized = true
         this.initializationError = null
@@ -417,6 +419,8 @@ class StoreManager {
       requestLogs: [],
       sessions: [],
       statistics: DEFAULT_STATISTICS,
+      // Per-day token counters start empty; an upgrade simply has no history.
+      tokenUsage: {},
       userModelOverrides: DEFAULT_USER_MODEL_OVERRIDES,
     }
   }
@@ -435,6 +439,11 @@ class StoreManager {
       await this.requestLogManager.migrateLegacyLogs(legacyRequestLogs)
       this.store?.set('requestLogs', [])
     }
+  }
+
+  private initializeQuotaLedger(storagePath: string): void {
+    this.quotaLedger = new QuotaLedger(storagePath)
+    this.quotaLedger.initialize()
   }
 
   private async initializeAppLogManager(storagePath: string): Promise<void> {
@@ -473,6 +482,8 @@ class StoreManager {
       toolCallingConfig: normalizeToolCallingConfig(rawToolCallingConfig),
       toolPromptConfig: undefined,
       autoRouting: normalizeAutoRoutingConfig(rawConfig.autoRouting),
+      compression: normalizeCompressionConfig(rawConfig.compression),
+      outputSteering: normalizeOutputSteeringConfig(rawConfig.outputSteering),
     }
   }
 
@@ -512,6 +523,19 @@ class StoreManager {
     for (const id of RETIRED_PROVIDER_IDS) {
       if (id in userModelOverrides) {
         delete userModelOverrides[id]
+        userModelOverridesChanged = true
+      }
+    }
+
+    // OpenCode 的模型名此前是裸 id，现在与其它供应商一样带 `opencode/` 前缀。
+    // 供应商记录本身由上面的启动同步按随包配置重写，但用户侧的目录残留
+    // （上次同步的清单、停用名单）也要搬进新命名空间，否则同一个上游模型
+    // 会在目录里出现新旧两行。
+    const opencodeOverrides = userModelOverrides['opencode']
+    if (opencodeOverrides) {
+      const migrated = namespaceModelOverrides(opencodeOverrides, 'opencode')
+      if (migrated.changed) {
+        userModelOverrides['opencode'] = migrated.next
         userModelOverridesChanged = true
       }
     }
@@ -646,6 +670,7 @@ class StoreManager {
   flushPendingWrites(): void {
     this.appLogManager?.flushSync()
     this.requestLogManager?.flushSync()
+    this.quotaLedger?.flushSync()
   }
 
   /**
@@ -996,13 +1021,47 @@ class StoreManager {
   }
 
   /**
+   * Mirrors `autoStart` into the OS login item / XDG autostart entry.
+   *
+   * Runs on every config write that lands here rather than only on
+   * `config:update`, because `resetConfig` also changes `autoStart` (default
+   * `false`) and would otherwise leave a stale login item behind.
+   *
+   * Costs nothing when the value did not move: the OS-side write is skipped
+   * entirely, so the many unrelated config writes (API keys, mappings, model
+   * sync) never touch the registry or the home directory.
+   *
+   * Failure only warns: a locked-down registry or a read-only home must not
+   * turn an unrelated settings save into an error. It does log, because the
+   * symptom it prevents ("I enabled it and it never starts") is unobservable
+   * otherwise.
+   */
+  private applyAutoStart(previous: AppConfig | undefined, next: AppConfig): void {
+    if (previous !== undefined && previous.autoStart === next.autoStart) return
+    void syncAutoStart(next.autoStart).then(result => {
+      // `skipped` 的两条都已在 `autostartHost` 里记了日志（开发态 / 无机制平台），
+      // 这里不再重复告警；只有真写入时才确认一次，便于用户核对。
+      if (result.applied) {
+        console.log(`[AutoStart] 开机自启已${next.autoStart ? '开启' : '关闭'}`)
+      }
+    }).catch((error: unknown) => {
+      console.warn(
+        '[AutoStart] 写入开机自启失败（不影响使用）：'
+        + `${error instanceof Error ? error.message : String(error)}`,
+      )
+    })
+  }
+
+  /**
    * Set Application Configuration
    */
   setConfig(config: AppConfig): void {
     this.ensureInitialized()
+    const previous = this.getConfig()
     const normalized = this.normalizeConfig(config)
     this.store!.set('config', normalized)
     this.applyRequestLogConfig(normalized.requestLogConfig)
+    this.applyAutoStart(previous, normalized)
   }
 
   /**
@@ -1060,6 +1119,7 @@ class StoreManager {
     this.store!.set('config', normalized)
     this.appLogManager?.setMaxEntries(this.getMaxLogEntries(normalized))
     this.applyRequestLogConfig(normalized.requestLogConfig)
+    this.applyAutoStart(currentConfig, normalized)
     return normalized
   }
 
@@ -1068,9 +1128,11 @@ class StoreManager {
    */
   resetConfig(): AppConfig {
     this.ensureInitialized()
+    const previous = this.getConfig()
     this.store!.set('config', DEFAULT_CONFIG)
     this.appLogManager?.setMaxEntries(this.getMaxLogEntries(DEFAULT_CONFIG))
     this.applyRequestLogConfig(DEFAULT_CONFIG.requestLogConfig)
+    this.applyAutoStart(previous, DEFAULT_CONFIG)
     return DEFAULT_CONFIG
   }
 
@@ -1149,7 +1211,7 @@ class StoreManager {
   /**
    * Get Log Trend
    */
-  getLogTrend(days: number = 7): { date: string; total: number; info: number; warn: number; error: number }[] {
+  getLogTrend(days: number = 7): AppLogTrendPoint[] {
     this.ensureInitialized()
     return this.getAppLogManager().getTrend(days)
   }
@@ -1158,7 +1220,7 @@ class StoreManager {
    * Get Log Trend for specific account
    * Only counts successful API requests (logs with requestId) to match requestCount
    */
-  getAccountLogTrend(accountId: string, days: number = 7): { date: string; total: number; info: number; warn: number; error: number }[] {
+  getAccountLogTrend(accountId: string, days: number = 7): AppLogTrendPoint[] {
     this.ensureInitialized()
     return this.getAppLogManager().getAccountTrend(accountId, days)
   }
@@ -1229,6 +1291,12 @@ class StoreManager {
   addRequestLog(entry: Omit<RequestLogEntry, 'id'>): RequestLogEntry {
     this.ensureInitialized()
     const newEntry = this.getRequestLogManager().addRequestLog(entry)
+    // A disabled log or a zero cap stores nothing, and a row the disk does not
+    // have must not reach the list either.
+    const logConfig = this.getConfig().requestLogConfig
+    if (logConfig.enabled && logConfig.maxEntries > 0) {
+      sendRequestLog(this.mainWindow, newEntry)
+    }
     return newEntry
   }
 
@@ -1276,7 +1344,7 @@ class StoreManager {
   /**
    * Get Request Log Trend
    */
-  getRequestLogTrend(days: number = 7): { date: string; total: number; success: number; error: number; avgLatency: number }[] {
+  getRequestLogTrend(days: number = 7): RequestLogTrendPoint[] {
     this.ensureInitialized()
     return this.getRequestLogManager().getRequestLogTrend(days)
   }
@@ -1318,7 +1386,7 @@ class StoreManager {
   ): PersistentStatistics {
     this.ensureInitialized()
     const stats = this.store!.get('statistics') || DEFAULT_STATISTICS
-    const today = new Date().toISOString().split('T')[0]
+    const today = localDayKey(Date.now())
     
     const newStats: PersistentStatistics = {
       ...stats,
@@ -1383,7 +1451,7 @@ class StoreManager {
   getTodayStatistics(): DailyStatistics {
     this.ensureInitialized()
     const stats = this.store!.get('statistics') || DEFAULT_STATISTICS
-    const today = new Date().toISOString().split('T')[0]
+    const today = localDayKey(Date.now())
     return stats.dailyStats[today] || {
       date: today,
       totalRequests: 0,
@@ -1396,13 +1464,54 @@ class StoreManager {
   }
 
   /**
+   * Record one request's token usage into today's bucket.
+   *
+   * Kept apart from `recordRequestInStats` on purpose: that one is a per-request
+   * counter, this one must preserve the upstream/estimate split and is bounded
+   * per day. Sharing one write would couple two unrelated retention rules.
+   */
+  recordTokenUsage(input: {
+    promptTokens: number
+    completionTokens: number
+    source: 'upstream' | 'estimated'
+    savedTokens?: number
+    /** 上游报的缓存命中输入 token；只在 `source === 'upstream'` 时入池。 */
+    cacheReadTokens?: number
+    nowMs?: number
+  }): void {
+    this.ensureInitialized()
+    const day = tokenDayKey(input.nowMs ?? Date.now())
+    const stored = this.store!.get('tokenUsage') ?? {}
+    const next = accumulateDayBucket(stored[day], input)
+    // Trim by day count so a long install cannot grow this key forever.
+    this.store!.set('tokenUsage', trimDays({ ...stored, [day]: next }))
+  }
+
+  /** Today's token summary, or an all-zero bucket when nothing was recorded. */
+  getTodayTokenUsage(nowMs: number = Date.now()): DayTokenSummary {
+    this.ensureInitialized()
+    const day = tokenDayKey(nowMs)
+    const stored = this.store!.get('tokenUsage') ?? {}
+    return summarizeDay(day, normalizeDayBucket(stored[day]))
+  }
+
+  /** Token summaries for the newest `days` local days, oldest first. */
+  getTokenUsageHistory(days: number = 7, nowMs: number = Date.now()): DayTokenSummary[] {
+    this.ensureInitialized()
+    const stored = this.store!.get('tokenUsage') ?? {}
+    return recentLocalDays(days, nowMs).map(window =>
+      summarizeDay(window.key, normalizeDayBucket(stored[window.key]))
+    )
+  }
+
+  /**
    * Clean Old Daily Statistics (older than 30 days)
    */
   cleanOldDailyStats(): void {
     this.ensureInitialized()
     const stats = this.store!.get('statistics') || DEFAULT_STATISTICS
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
-    const cutoffDate = new Date(cutoff).toISOString().split('T')[0]
+    const cutoffDate = localDayKey(cutoff)
     
     const filteredDailyStats: Record<string, DailyStatistics> = {}
     for (const [date, dayStats] of Object.entries(stats.dailyStats)) {
@@ -1673,56 +1782,69 @@ class StoreManager {
    * Get Effective Models for a Provider
    * Merges default models with user overrides
    */
-  getEffectiveModels(providerId: string): EffectiveModel[] {
+  /**
+   * The whole catalogue with each row's served flag, so the management page can
+   * list a stopped model instead of losing it.
+   */
+  getModelCatalogue(providerId: string): CatalogueModel[] {
     this.ensureInitialized()
-    
+
     const provider = this.getProviderById(providerId)
     if (!provider) {
       return []
     }
 
-    const defaultModels = provider.supportedModels || []
-    const modelMappings = provider.modelMappings || {}
-    const overrides = this.getProviderModelOverrides(providerId)
+    return buildModelCatalogue(
+      provider.supportedModels || [],
+      provider.modelMappings || {},
+      this.getProviderModelOverrides(providerId)
+    )
+  }
 
-    const effectiveModels: EffectiveModel[] = []
+  /**
+   * Get Effective Models for a Provider
+   * The served slice of the catalogue: what `/v1/models` advertises and what the
+   * load balancer routes, so advertising and routing cannot disagree.
+   */
+  getEffectiveModels(providerId: string): EffectiveModel[] {
+    return this.getModelCatalogue(providerId)
+      .filter(model => model.served)
+      .map(model => ({
+        displayName: model.displayName,
+        actualModelId: model.actualModelId,
+        isCustom: model.isCustom,
+        source: model.source,
+      }))
+  }
 
-    defaultModels.forEach(displayName => {
-      if (!overrides.excludedModels.includes(displayName)) {
-        const actualModelId = modelMappings[displayName] || displayName
-        effectiveModels.push({
-          displayName,
-          actualModelId,
-          isCustom: false,
-          source: 'builtin',
-        })
-      }
+  /**
+   * Start or stop a batch of catalogue models for one provider.
+   */
+  setModelsServed(providerId: string, names: string[], served: boolean): CatalogueModel[] {
+    this.ensureInitialized()
+
+    if (!this.getProviderById(providerId)) {
+      throw new Error('Provider not found')
+    }
+
+    if (names.length === 0) {
+      return this.getModelCatalogue(providerId)
+    }
+
+    const overrides = this.getUserModelOverrides()
+    const current: ProviderModelOverrides = overrides[providerId] || {
+      addedModels: [],
+      excludedModels: [],
+    }
+    this.setUserModelOverrides({
+      ...overrides,
+      [providerId]: {
+        ...current,
+        excludedModels: applyServed(current.excludedModels || [], names, served),
+      },
     })
 
-    overrides.addedModels.forEach(customModel => {
-      effectiveModels.push({
-        displayName: customModel.displayName,
-        actualModelId: customModel.actualModelId,
-        isCustom: true,
-        source: 'custom',
-      })
-    })
-
-    // Last online sync fills in models the shipped list does not carry; a name the user
-    // already sees from the built-in list or added by hand is never duplicated here.
-    const knownNames = new Set(effectiveModels.map(model => model.displayName))
-    ;(overrides.fetchedModels || []).forEach(fetchedModel => {
-      if (knownNames.has(fetchedModel.displayName)) return
-      if (overrides.excludedModels.includes(fetchedModel.displayName)) return
-      effectiveModels.push({
-        displayName: fetchedModel.displayName,
-        actualModelId: fetchedModel.actualModelId,
-        isCustom: false,
-        source: 'fetched',
-      })
-    })
-
-    return effectiveModels
+    return this.getModelCatalogue(providerId)
   }
 
   /**
@@ -1903,6 +2025,13 @@ class StoreManager {
    */
   getStorePath(): string {
     return this.getStoragePath()
+  }
+
+  getQuotaLedger(): QuotaLedger {
+    if (!this.quotaLedger) {
+      throw new Error('Quota ledger is not initialized')
+    }
+    return this.quotaLedger
   }
 
   private getRequestLogManager(): RequestLogManager {

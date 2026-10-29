@@ -16,6 +16,7 @@ export function syncBuiltinProvider(provider: Provider, config: BuiltinProviderC
     chatPath: config.chatPath,
     supportedModels: config.supportedModels,
     modelMappings: config.modelMappings,
+    modelCapabilities: config.modelCapabilities,
     headers: config.headers,
     credentialFields: config.credentialFields,
     description: config.description,

@@ -1,0 +1,22 @@
+[
+  {
+    "entryId": "sensenova",
+    "providerName": "SenseNova Token Plan",
+    "source": "undocumented",
+    "docUrl": "https://platform.sensenova.cn/token-plan",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "主体确认：baseUrl https://token.sensenova.cn/v1 与 models.dev 的 sensenova 条目一致（该目录把它标为 SenseNova (China)），OpenAI 兼容路径为 /chat/completions。官方 token-plan 页为登录态前端应用，未读到可逐字引用的正文，因此不录入任何 RPM/RPD/TPM/TPD/月度 token/上下文数字，全部 null。公开清单（smzdm 2026-10-29 汇总）转述的免费档是**积分**而非 token：公测积分池 12 万积分/5 小时、120 万/周，7 款免费模型；按本仓库规则「不是 token 的单位不折算」，这些数字不能写进 quota，故 source=undocumented。registry 的 6 个模型 id 取自 models.dev 的 sensenova 目录（baseUrl 相同），不是官方模型表；同步失败时 models.dev 本身也是回退源，故不把它们当作官方名单。dropParams 的依据是社区接入文档（mimo2codex 的 sensenova 预置：response_format / tools[].function.strict / tool_choice:auto / enable_thinking 会被网关拒绝，多条 system 与 assistant content:null 未明示），未在官方正文中逐条核验，属于防御性剥离而非官方要求。"
+  }
+]

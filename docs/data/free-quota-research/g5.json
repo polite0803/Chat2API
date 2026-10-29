@@ -1,0 +1,317 @@
+[
+  {
+    "entryId": "open_router",
+    "providerName": "OpenRouter",
+    "source": "documented",
+    "docUrl": "https://openrouter.ai/docs/api-reference/limits",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": 20,
+      "rpd": 50,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "openrouter/free",
+        "rpm": 20,
+        "rpd": 50,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Limits page: \"Free model variants (ID ending in :free) have limits: <10 credits allow 20 requests/min and 50/day\"; FAQ: \"These models have low rate limits (50 requests per day total)\"."
+      }
+    ],
+    "freeModelIds": [
+      "openrouter/free"
+    ],
+    "evidence": [
+      "https://openrouter.ai/docs/api-reference/limits - \"Free usage limits apply to free model variants ending in :free.\"",
+      "https://openrouter.ai/docs/api-reference/limits - \"Less than 10 credits purchased allows 20 requests per minute and 50 per day.\"",
+      "https://openrouter.ai/docs/api-reference/limits - \"At least 10 credits purchased allows 20 requests per minute and 1000 per day.\"",
+      "https://openrouter.ai/docs/api-reference/limits - \"The tier depends on all-time credits purchased, starting one credit below the threshold.\"",
+      "https://openrouter.ai/docs/faq - \"1. :free - A free version of the model with its own rate limits.\"",
+      "https://openrouter.ai/docs/faq - \"If you have purchased at least 10 credits, your free model rate limit will be 1000 requests per day.\"",
+      "https://openrouter.ai/docs/faq - \"Otherwise, you will be rate limited to 50 free model API requests per day.\"",
+      "https://openrouter.ai/docs/faq - \"These models have low rate limits (50 requests per day total) and are usually not suitable for production use.\""
+    ],
+    "notes": "CONDITION on the recorded numbers: rpm=20 and rpd=50 hold only for an account whose ALL-TIME purchased credits are below the 10-credit threshold (the higher ceiling is granted starting one credit below it, per the docs). Once >=10 credits are purchased, rpm stays 20 but the daily cap becomes 1000/day; the tier is chosen by all-time credits purchased, independently of current balance, so it never falls back. Pages actually read for OpenRouter: /docs/api-reference/limits (title 'Limits'; it also states OpenRouter enforces Credit limits, Budget limits and Rate limits) and /docs/faq (:free variant definition + both daily caps). NO official figure was found for TPM, TPD, a monthly token pool, or a context window - the docs give no token-per-minute number for :free models and the context length of the openrouter/free router is only published on the JS-rendered model page (https://openrouter.ai/openrouter/free), which returned no readable numbers; the 200K/1M figures circulating in third-party posts were NOT used. The catalogue carries only the router slug openrouter/free, but the :free rate limits apply to every model variant whose ID ends in :free, so the numbers above are pool-wide, not per-slug. Per the FAQ the free endpoints additionally require the privacy settings that allow free endpoints which train on request data / publish prompts. ToS note: https://openrouter.ai/terms section 7.4 forbids accessing the Service \"for purposes of reselling API access to Models or otherwise developing a competing service\" - relevant because this app ships OpenRouter as a routed aggregate entry."
+  },
+  {
+    "entryId": "xkiro",
+    "providerName": "xKiro",
+    "source": "documented",
+    "docUrl": "https://xkiro.com/",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": 500000,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "qwen/qwen3.7-flash:free",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": 500000,
+        "contextWindow": null,
+        "evidence": "\"45 models are free to call on every account, within a daily allowance of 500K tokens - 1M after you verify on Telegram.\""
+      }
+    ],
+    "freeModelIds": [
+      "qwen/qwen3.7-flash:free"
+    ],
+    "evidence": [
+      "https://xkiro.com/ - \"45 models are free to call on every account, within a daily allowance of 500K tokens.\"",
+      "https://xkiro.com/ - \"... - 1M after you verify on Telegram.\""
+    ],
+    "notes": "tpd=500000 is a per-ACCOUNT daily token allowance shared by all free models, not a per-model cap; it rises to 1,000,000/day only after the user verifies on Telegram, so that higher number is conditional and was not recorded. No official RPM/RPD/TPM/monthly/context-window figure is published on xkiro.com - the site's marketing page only gives the free token allowance; https://xkiro.com/pricing returned 404, so the paid-tier figures seen on other paths were not used. The catalogue lists one :free slug, but the official page says 45 models are free, so freeModelIds is deliberately limited to what this repo actually ships. ToS note: https://xkiro.com/terms prohibits you to \"Resell or redistribute the service without written permission.\""
+  },
+  {
+    "entryId": "nararoute",
+    "providerName": "NaraRouter",
+    "source": "documented",
+    "docUrl": "https://router.bynara.id/",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": 15,
+      "rpd": null,
+      "tpm": null,
+      "tpd": 7000000,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "kimi-k3-free",
+        "rpm": 15,
+        "rpd": null,
+        "tpm": null,
+        "tpd": 7000000,
+        "contextWindow": null,
+        "evidence": "Free plan (Rp 0): \"Rate Limit 15 req / min\", \"Token Cap 7M / day\"."
+      }
+    ],
+    "freeModelIds": [
+      "kimi-k3-free"
+    ],
+    "evidence": [
+      "https://router.bynara.id/ - \"Free (Rp 0): Token Cap 7M/day, Rate Limit 15 req/min.\" (identified as the free plan)",
+      "https://router.bynara.id/ - \"Token Cap 7M / day\"",
+      "https://router.bynara.id/ - \"Rate Limit 15 req / min\""
+    ],
+    "notes": "Numbers come from the Free plan row (Rp 0) of the plan table on https://router.bynara.id/. Paid plans shown for context, NOT recorded: Freemium (Rp 5K/day) 25M/day + 50 req/min; FreeMium Max (Rp 10K/day) 60M/day + 60 req/min; GPT Fams (Rp 20K/day) 25M/day + 50 req/min; FreeMium Ultra (Rp 30K/day) 200M/day + 60 req/min. The published caps are daily TOKEN caps (tpd) and per-minute REQUEST rates (rpm); the site publishes no requests-per-day, TPM or context-window figure, so those stay null. The registry entry id is nararoute / website router.bynara.id while the page brands itself \"NaraRouter\" - same host, name variant. ToS note: https://router.bynara.id/terms section 7 states \"You may not ... resell raw access to NaraRouter without authorization.\""
+  },
+  {
+    "entryId": "bazaarlink",
+    "providerName": "BazaarLink",
+    "source": "documented",
+    "docUrl": "https://bazaarlink.ai/pricing",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": 10,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "auto:free",
+        "rpm": 10,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Free plan row (入門版): \"免費, 10 req/min\"."
+      }
+    ],
+    "freeModelIds": [
+      "auto:free"
+    ],
+    "evidence": [
+      "https://bazaarlink.ai/pricing - \"入門版: 免費, 10 req/min\" (free plan)",
+      "https://bazaarlink.ai/pricing - \"商業版: NT$1,500/月起, 100 req/min\"",
+      "https://bazaarlink.ai/pricing - \"企業版: 客製化, 無限速率\""
+    ],
+    "notes": "Only the per-minute request rate is published: the free plan (入門版, 免費) is 10 req/min, the paid 商業版 is 100 req/min and 企業版 is unlimited. No RPD, TPM, TPD, monthly token pool or context window appears anywhere on bazaarlink.ai or bazaarlink.ai/api/v1/docs (the docs page exposes only the OpenAI-compatible model catalogue, where auto:free is listed at 0/0 pricing with no limits), so those fields stay null. The rpm=10 is an account-wide plan rate, not specific to the auto:free slug. ToS note: https://bazaarlink.ai/terms - \"未經 BazaarLink 事先書面同意，您不得將本服務之全部或一部轉售、經銷、轉租或以其他商業方式再散布予第三方。\" (no reselling/distribution to third parties without prior written consent)."
+  },
+  {
+    "entryId": "tokenrouter",
+    "providerName": "TokenRouter",
+    "source": "undocumented",
+    "docUrl": null,
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [
+      "moonshotai/kimi-k3-free",
+      "z-ai/glm-5.3-free"
+    ],
+    "evidence": [],
+    "notes": "No official rate-limit or quota numbers found. URLs tried but body not readable: https://www.tokenrouter.com/ (fetch failed), https://www.tokenrouter.com/pricing (timeout), https://docs.tokenrouter.ai/ (fetch failed), https://docs.tokenrouter.com/ (fetch failed). https://www.tokenrouter.com/terms loaded but contains no resale / competing-service clause and no quota numbers. The catalogue marks moonshotai/kimi-k3-free and z-ai/glm-5.3-free as free slugs, but the site publishes no RPM/RPD/TPM/TPD/monthly/context numbers, so nothing was recorded. Do NOT substitute OpenRouter's or ZenMux's numbers - unverified upstream."
+  },
+  {
+    "entryId": "orcarouter",
+    "providerName": "OrcaRouter",
+    "source": "undocumented",
+    "docUrl": null,
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [
+      "deepseek/deepseek-v4-flash-free"
+    ],
+    "evidence": [],
+    "notes": "Site https://www.orcarouter.ai/ loaded and states only \"Zero markup on all tokens.\" for the free tier - NO rate-limit numbers on the page (explicitly reported as \"NO RATE LIMIT NUMBERS ON THIS PAGE\"). Terms pages tried but unreadable: https://www.orcarouter.ai/terms (404), https://www.orcarouter.ai/terms-of-service (404), https://www.orcarouter.ai/legal/terms (fetch failed), so the resale / competing-service position could not be established. No /pricing or docs page with RPM/RPD/TPM/TPD figures was found. The -free slug implies a free pool but no official figure exists; nothing recorded."
+  },
+  {
+    "entryId": "kimchi",
+    "providerName": "Kimchi",
+    "source": "undocumented",
+    "docUrl": null,
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "Official pages https://kimchi.dev and https://kimchi.dev/pricing loaded but contain no rate-limit numbers (explicitly reported as \"NO RATE LIMIT NUMBERS ON THIS PAGE\"). Docs path guesses that failed: https://docs.kimchi.dev/ (fetch failed), https://kimchi.dev/docs/ (404). https://app.kimchi.dev/terms loaded and contains NO resale / competing-service clause. The catalogue classifies kimchi as free-tier with 8 models but the site publishes no RPM/RPD/TPM/TPD/monthly/context figures, so nothing was recorded; freeModelIds is empty because no model is officially labelled free."
+  },
+  {
+    "entryId": "zenmux",
+    "providerName": "ZenMux",
+    "source": "undocumented",
+    "docUrl": null,
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [
+      "deepseek/deepseek-v4-flash-free"
+    ],
+    "evidence": [],
+    "notes": "Site https://zenmux.ai/ is unreachable from this environment - every attempt returned a network-level \"fetch failed\" (never an error page): https://zenmux.ai/, https://zenmux.ai/docs, https://zenmux.ai/terms, https://zenmux.ai/legal, https://zenmux.ai/docs/platform/rate-limits.html. Only indexed official page reachable indirectly is https://zenmux.ai/docs/zh/best-practices/hermes-agent.html, which discusses 429 handling qualitatively (\"检查套餐配额：订阅套餐有请求频率限制\") but publishes NO number. Since no numeric limit could be read from the body, all quota fields are null. The registry's pay-as-you-go authUrl (https://zenmux.ai/platform/pay-as-you-go) could not be read. Do not borrow DeepSeek's official concurrency limits (api-docs.deepseek.com: deepseek-flash 2500 / deepseek-v4-pro 500 concurrent) - that is a different vendor."
+  },
+  {
+    "entryId": "opper",
+    "providerName": "Opper",
+    "source": "undocumented",
+    "docUrl": null,
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "https://opper.ai/ loaded and shows no rate-limit numbers; https://platform.opper.ai/docs/api-reference and https://docs.opper.ai/ both 404; https://platform.opper.ai (the authUrl in the catalogue) did not yield a rate-limit page. https://platform.opper.ai/terms loaded and contains NO resale / competing-service clause. The single shipped model (claude-sonnet-4-6) is a paid model with no published RPM/RPD/TPM/TPD/context figures, so nothing was recorded."
+  },
+  {
+    "entryId": "agnes",
+    "providerName": "Agnes CN",
+    "source": "undocumented",
+    "docUrl": null,
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "The catalogue was switched to the vendor's China host (https://api.agnes-ai.cn/v1, declared in the CN wiki wiki.agnes-ai.cn). https://api.agnes-ai.cn/v1/models answers 401 without a key, so reachability is confirmed but no quota headers were read. The CN wiki documents model capabilities, pricing (agnes-3.0-flash: ¥0.35 / million input tokens, ¥1.00 / million output tokens, currently ¥0) and a 512K context window, but publishes NO RPM/RPD/TPM/TPD/monthly token caps. The older international notes still apply to the brand: https://agnes-ai.com/ loaded, its terms/pricing pages 404, and a 7M tokens/day cap and 15 req/min rate exist on the public web only via NaraRouter (router.bynara.id), not Agnes - so nothing is recorded. Do not assume a free quota from the \"free to get started\" wording."
+  },
+  {
+    "entryId": "cheaperinference",
+    "providerName": "Cheaper Inference",
+    "source": "undocumented",
+    "docUrl": null,
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "Homepage https://cheaperinference.com/ contains no rate-limit numbers. Paths tried but unreadable: https://cheaperinference.com/pricing (404), https://cheaperinference.com/docs (404), https://docs.cheaperinference.com/ (fetch failed), https://cheaperinference.com/terms (404), https://cheaperinference.com/legal (404), https://cheaperinference.com/about (404). No ToS page could be read, so the resale / competing-service position is unknown rather than absent. Single shipped model gpt-5.4-mini has no published RPM/RPD/TPM/TPD/context figures; nothing recorded."
+  },
+  {
+    "entryId": "lightning",
+    "providerName": "Lightning AI",
+    "source": "undocumented",
+    "docUrl": null,
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "Lightning AI is a real vendor (https://lightning.ai/), and its Model APIs gateway is the baseUrl here (https://lightning.ai/api/v1), but no official rate-limit page could be read. Paths tried: the catalogue's own authUrl https://lightning.ai/lightning-ai/model-apis/models (404), https://lightning.ai/docs/community-cloud/pages/get-started/model-apis (404), https://www.lightning.ai/docs/open-source/model-apis (404), https://lightning.ai/pricing (404), https://lightning.ai/legal (404), https://lightning.ai/legal/terms-of-use (404), https://lightning.ai/privacy (404), https://lightning.ai/security (404), https://lightning.ai/changelog (404), https://lightning.ai/docs (fetch failed), https://lightning.ai/api-inference (fetch failed), https://lightning.ai (fetch failed). Because no body with numbers was obtained, all fields are null and the entry is undocumented - NOT because Lightning publishes nothing, but because it could not be read from this environment. Terms of use not located, so the resale position is unknown."
+  }
+]

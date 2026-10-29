@@ -136,8 +136,24 @@ export interface ChannelModelInfo {
   weight?: number
   /** 原价倍率（有促销窗口时才有）。 */
   baseWeight?: number
-  /** 积分权重为 0，或上游直接标了免费。 */
+  /** 是否免费：唯一判据是消耗权重为 0（`isFree` 只在没有倍率标注时等义于权重 0）。 */
   free: boolean
+  /**
+   * 上游/适配器目录是否声明该模型接受图片输入（多模态）。
+   *
+   * ⚠️ 缺失 = 渠道包没有这份信息（不是「确认纯文本」）—— 界面据此显示「未知」。
+   */
+  supportsImage?: boolean
+  /**
+   * 上游声明的上下文窗口（token 数），来自渠道包 `/v1/models` 视图的
+   * `context_window`，**不是** `model.list`（那份目录没有这个字段）。
+   *
+   * ⚠️ 缺失 = 渠道包没说，`auto` 路由会退到 `UNANNOTATED_CONTEXT_FLOOR`（64K）。
+   * 绝不能因为「64K 总比没有强」就填一个猜测值：TRAE / loomy / Qoder 实测都在服务
+   * 300K–500K+，一旦这里写死小值，`auto` 会把整条渠道在长上下文请求上判为
+   * 「装不下」而全部排除（`autoRouting.ts` 的 `capability.contextTokens ?? FLOOR`）。
+   */
+  contextWindow?: number
   /** 用户在渠道包内关掉了这个模型。 */
   disabled: boolean
   /** 渠道包判定该模型已失效。 */
@@ -148,6 +164,23 @@ export interface ChannelModelsResult {
   success: boolean
   models: ChannelModelInfo[]
   reason?: string
+}
+
+/**
+ * 消耗倍率分档。基准取 1 倍——上游倍率的单位就是「相对基准消耗」，
+ * 所以档位边界只有 0 与 1 两个是有来历的，不是挑的数。
+ *
+ * `unknown` 单独成档：没有倍率标注不等于便宜，也不等于付费确定，
+ * 折进任何一档都会让人按错的预期去选模型。
+ */
+export type CostBucket = 'free' | 'below-base' | 'base' | 'above-base' | 'unknown'
+
+export function costBucketOf(weight: number | undefined, free: boolean): CostBucket {
+  if (weight === undefined) return free ? 'free' : 'unknown'
+  if (weight <= 0) return 'free'
+  if (weight < 1) return 'below-base'
+  if (weight === 1) return 'base'
+  return 'above-base'
 }
 
 export interface ChannelRefreshResult {

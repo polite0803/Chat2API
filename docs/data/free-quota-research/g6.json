@@ -1,0 +1,511 @@
+[
+  {
+    "entryId": "llm7",
+    "providerName": "LLM7.io",
+    "local": false,
+    "source": "undocumented",
+    "docUrl": "https://llm7.io/",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "registry: category apikey / authKind apiKey / baseUrl https://api.llm7.io/v1 / website https://llm7.io/ / authUrl https://dash.llm7.io/ / 8 models (gpt-5.5, claude-opus-5, deepseek-v4-flash, grok-4.5, kimi-k3, default, fast, pro)，无 freeModelsHint。官方取证结果：https://llm7.io/ 抓到正文但没有任何限速/额度数字；https://llm7.io/docs 返回 404；docs.llm7.io 可读但不含任何限速、RPM/RPD、TPM/TPD、月度 token 或上下文数字。搜索引擎给出的 '30 RPM (120 with token)' 全部来自第三方清单（awesome-free-llm-apis、OmniRoute、cnblogs 转载），按裁定不采信、不录入。全部字段留 null。"
+  },
+  {
+    "entryId": "morph",
+    "providerName": "Morph LLM",
+    "local": false,
+    "source": "undocumented",
+    "docUrl": "https://docs.morphllm.com/",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "registry: category apikey / authKind apiKey / baseUrl https://api.morphllm.com/v1 / website https://morphllm.com / 6 models（morph-v3-large, morph-v3-fast, morph-qwen35-397b, morph-minimax27-230b, morph-qwen36-27b, morph-dsv4flash），无 freeModelsHint。官方 https://docs.morphllm.com/ 读到了正文与全部导航（含 quickstart、endpoints.md、dedicated-endpoints.md、pricing 链接），但没有任何 rate limit / RPM / RPD / TPM / 并发数字；https://docs.morphllm.com/api-reference/rate-limits 返回 404；https://docs.morphllm.com/endpoints.md 有端点格式但没有模型规格或限速表。https://www.morphllm.com/pricing 两次抓取都返回 HTTP 429 Too Many Requests，URL 试了但读不到正文。docs 索引里出现的 \"1M\" 上下文只挂在 docs 列出的模型名上（与我们的 6 个 id 无法逐一精确对应），按\"不用别家/不确定值补\"的规则不录入 contextWindow。"
+  },
+  {
+    "entryId": "wafer",
+    "providerName": "Wafer",
+    "local": false,
+    "source": "undocumented",
+    "docUrl": "https://www.wafer.ai/",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "registry: category apikey / authKind apiKey / baseUrl https://pass.wafer.ai/v1 / website https://www.wafer.ai/ / authUrl https://www.wafer.ai/pass / 1 model（DeepSeek-V4-Pro），无 freeModelsHint。官方取证结果：https://www.wafer.ai/pass 返回 404（registry 里的 authUrl 已经失效）；https://www.wafer.ai/ 抓到正文但没有任何 Pass 价格、限速、额度、token 或上下文数字，也没有指向 docs / pricing / FAQ 的链接；站内搜索 wafer.ai 的 pass 限速文档无官方结果。找不到官方限速页，按裁定不猜，全部 null + undocumented。"
+  },
+  {
+    "entryId": "wandb",
+    "providerName": "W&B Inference",
+    "local": false,
+    "source": "undocumented",
+    "docUrl": "https://docs.wandb.ai/weave/guides/integrations/inference",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "Usage information and limits: \"Default spending caps - Free $100/month, Pro $6,000/month, Enterprise $700,000/year\" (spend cap in USD, not a request or token cap)",
+      "\"To ensure fair usage and stable performance, the W&B Inference API enforces rate limits at the user and project level.\" + error text \"429 Concurrency limit reached for requests\" - the numeric concurrency value is not published",
+      "\"Rate limits apply per W&B project\"",
+      "\"The Inference service is only accessible from supported geographic locations. For more information, see the Terms of Service.\""
+    ],
+    "notes": "registry: category apikey / authKind apiKey / baseUrl https://api.inference.wandb.ai/v1 / website https://wandb.ai/site/inference/ / 1 model（openai/gpt-oss-20b）。docs.wandb.ai/inference 301 跳到 docs.coreweave.com/inference（CoreWeave 接管 W&B Inference，仍是官方文档站），该页没有任何限速数字。官方 'Usage information and limits' 页只给两种东西：(1) 并发限速存在但未公布数值（只有 429 文案），(2) 默认消费上限是按美元计的 $100/month（Free）/ $6,000/month（Pro）/ $700,000/year（Enterprise）—— 单位是美元消费额，不是 rpm/rpd/tpm/tpd/月度 token，也不是我们的 quota 能表达的字段，所以全部填 null；上面两条原句留在 evidence 里供 UI 显示出处。因为六个数字字段一个都填不出来，按裁定记 undocumented。另记一条 ToS：Inference 服务只在支持的地域可访问。"
+  },
+  {
+    "entryId": "experiential",
+    "providerName": "Experiential Labs",
+    "local": false,
+    "source": "documented",
+    "docUrl": "https://www.experientiallabs.ai/pricing",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": 10,
+      "rpd": null,
+      "tpm": 250000,
+      "tpd": 1000000,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "Free limits 10 shared requests/min, 250K shared tokens/min and 1M tokens/day across DeepSeek, Luna and Clef. No general credits.",
+      "Free: \"$0/mo\""
+    ],
+    "notes": "registry: id experiential / name 'Experiential Labs' / category apikey / authKind apiKey / baseUrl https://api.experientiallabs.ai/v1 / website https://www.experientiallabs.ai/ / authUrl https://platform.experientiallabs.ai/settings/api-keys / models 只有 [union-alpha] / 无 freeModelsHint。官方 https://platform.experientiallabs.ai/docs 标题 'Overview · Experiential'，无限速数字；数字只出现在官方 pricing 页。录入的三个值（rpm 10 / tpm 250000 / tpd 1000000）全部来自上面那句原话，单位就是 requests/min 与 tokens/min、tokens/day。**重要口径警告**：官方原句把这套免费帽点名给 \"DeepSeek, Luna and Clef\" 三个模型族，并没有点名我们目录里唯一的 union-alpha，所以这三值只能按\"账号级免费层共享帽\"理解，UI 若把它直接标成 union-alpha 的上限就是在猜；perModel 因此留空。同一页正文还出现过 \"Up to 240 requests/min\" 与表格 10/min 并存的自相矛盾表述，未采用的 240 不予录入。contextWindow 官方 pricing 页只写 'Context windows up to 1M tokens'（泛指上限、未分模型），不录入。免费层声明 'No general credits'。"
+  },
+  {
+    "entryId": "featherless",
+    "providerName": "Featherless AI",
+    "local": false,
+    "source": "documented",
+    "docUrl": "https://featherless.ai/blog/llm-api-pricing-comparison-2026-complete-guide-inference-costs",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "\"Basic (hobby projects, 2 concurrent requests, models up to 15B parameters) at $10/month.\"",
+      "\"Premium (dev/testing, 4 concurrent requests, any model size) at $25/month.\"",
+      "\"Scale (production, 8+ concurrent requests with private infrastructure) at $75+/month.\"",
+      "\"it supports unlimited tokens and model experimentation without tracking costs per request\""
+    ],
+    "notes": "registry: category apikey / authKind apiKey / baseUrl https://api.featherless.ai/v1 / authUrl https://featherless.ai/account/api-keys / modelsUrl https://api.featherless.ai/v1/models / 8 models（deepseek-ai/DeepSeek-V4-Pro、deepseek-ai/DeepSeek-V4-Flash、zai-org/GLM-5.2、zai-org/GLM-5.1、moonshotai/Kimi-K2.7-Code、moonshotai/Kimi-K2.6、moonshotai/Kimi-K2.5、Qwen/Qwen3-32B）/ 无 freeModelsHint。官方限速的**单位是并发请求数（concurrent requests），不是每分钟/每天请求，也不是 token**：Basic 2 并发（限 15B 以内模型）/ Premium 4 并发 / Scale 8+ 并发，token 口径官方写 'unlimited tokens'。因为这些数字无法填进 rpm/rpd/tpm/tpd/monthlyTokens/contextWindow 任何一个字段，六个字段全部 null，原单位与数字只写进本 notes 与 evidence。取数出处限定在 featherless.ai 自己域名下的官方页面；https://featherless.ai/pricing 与 https://featherless.ai/docs 只返回脚本与样式、读不到正文（URL 试了但读不到），docs.featherless.ai 抓取直接 fetch failed。**该数字出自官方站点的定价对比博客（标注 Last Updated: March 4, 2026），不是独立 rate-limit 文档页，时效性弱于专页，使用前应复核。** 没有面向匿名免费池的官方限速。"
+  },
+  {
+    "entryId": "kilo",
+    "providerName": "Kilo.ai",
+    "local": false,
+    "source": "documented",
+    "docUrl": "https://kilo.ai/docs/getting-started/rate-limits-and-costs",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [
+      "kilo-auto/free",
+      "nvidia/nemotron-3-super-120b-a12b:free",
+      "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "kwaipilot/kat-coder-pro-v2.5:free"
+    ],
+    "evidence": [
+      "\"Free models (kilo-auto/free): 200 requests per hour per IP.\"",
+      "\"Some free models may be rate limited by the upstream provider. If you hit a rate limit, try switching...\"",
+      "\"Auto Free may route your requests to providers that log prompts and outputs... do not submit personal or confidential data.\"",
+      "\"Trial use only - do not submit personal or confidential data.\""
+    ],
+    "notes": "registry: category free-tier / authKind none（匿名可用）/ baseUrl https://api.kilo.ai/api/gateway / modelsUrl .../gateway/models / 4 models 全部即 freeModelsHint：kilo-auto/free、nvidia/nemotron-3-super-120b-a12b:free、nvidia/nemotron-3-ultra-550b-a55b:free、kwaipilot/kat-coder-pro-v2.5:free。官方 rate-limits 页给出的唯一数字限速是 **\"200 requests per hour per IP\"（窗口是每小时、按 IP 计，既不是 RPM 也不是 RPD）**，所以 rpm/rpd 一律留 null，原句与原单位写在 evidence/notes；不做 200/60≈3.3 RPM 的换算，因为小时窗换算成分钟窗会谎报突发能力。付费模型官方写 'No gateway limits; upstream provider limits apply'，即没有 Kilo 自己的帽。Auto Free / BYOK 在 Kilo 侧 $0。**ToS 取证结果：Kilo 官方两页（rate-limits-and-costs、getting-started/using-kilo-for-free、docs/gateway）都没有\"免费模型只能从 Kilo 自家客户端内使用\"这类条款**；相反的两条约束是 (1) Auto Free 可能路由到会记录 prompt/output 的上游，勿提交个人或机密数据；(2) NVIDIA 免费端点属试用口径（'Trial use only - do not submit personal or confidential data'，并同意 NVIDIA API Trial Terms of Service），对应我们目录里那两个 nvidia/...:free。免费池存在，除 200 req/hr/IP 之外官方不公布其它数字（其它 :free 模型只说\"受上游限速\"）。"
+  },
+  {
+    "entryId": "opencode_zen",
+    "providerName": "OpenCode Zen",
+    "local": false,
+    "source": "undocumented",
+    "docUrl": "https://opencode.ai/docs/zen",
+    "asOf": "2026-10-29",
+    "scope": "mixed",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [
+      "big-pickle",
+      "jev-1.13-free",
+      "mimo-v2.6-flash-free",
+      "nemotron-3-ultra-free",
+      "nemotron-3.5-lightning-free"
+    ],
+    "evidence": [
+      "\"Free-tier chat models require OpenCode; use paid models or Go from other clients.\"",
+      "\"GLM-5.3-Flash Free is free on OpenCode for a limited time.\"",
+      "\"Big Pickle is a stealth model that's free on OpenCode for a limited time.\"",
+      "\"Nemotron 3 Ultra Free (NVIDIA free endpoints): Trial use only - do not submit personal or confidential data. Your use is logged for security purposes...\"",
+      "\"A processing fee of 4.6% + $0.31 is added to each credit purchase\""
+    ],
+    "notes": "registry: category free-tier / authKind apiKey / baseUrl https://opencode.ai/zen/v1 / website https://opencode.ai/zen / 75 models，freeModelsHint 9 条。官方 Zen（Console）页把免费模型的价格全表写成 \"Free / Free / Free\"，并按条注明 'free on OpenCode for a limited time'，**没有任何 RPM/RPD/TPM/TPD/月度 token 或上下文数字**，所以六个字段全 null、记 undocumented（免费池存在但官方不公布数字）。**必须原句记录的 ToS（OpenCode 系关键条款）**：\"Free-tier chat models require OpenCode; use paid models or Go from other clients.\" —— 即免费档聊天模型只能在 OpenCode 客户端内使用，从 ModelPort 这类第三方代理调用违反该条款；ModelPort 走 https://opencode.ai/zen/v1 属于\"other client\"。另记：NVIDIA 免费端点（nemotron-*-free）是试用口径、会被记录用于安全与产品改进、需同意 NVIDIA API Trial Terms of Service；Big Pickle / Flint 40B Free / MiMo-V2.6-Flash Free 在免费期内收集的数据可能被用于改进模型；Beam Free 不用于训练但保留 30 天，并且**在地区列表中排除中国大陆**（Angola/Belarus/Cambodia/China/Cuba/… 不可用）。freeModelIds 只列\"官方点名 free 且我们目录里确实存在该 id\"的 5 条：big-pickle、jev-1.13-free、mimo-v2.6-flash-free、nemotron-3-ultra-free、nemotron-3.5-lightning-free；官方当前页面上的 glm-5.3-flash-free、deepseek-v4.1-flash-free、beam-free、flint-40b-free、nemotron-3.5-super-vl-free 不在我们的模型列表里，而 registry freeModelsHint 中的 deepseek-v4-flash-free、mimo-v2.5-free、ling-3.0-flash-fin-free、muse-spark-1.2/1.3-contributor-free 在今天的官方 Zen 页已不再以该 id 出现（官方另有 DeepSeek V4 Flash 于 October 26, 2026 弃用的 Deprecated models 表），故不录入。可在 OpenCode 中用 OPENCODE_DISABLE_FREE_MODELS=1 隐藏免费模型。"
+  },
+  {
+    "entryId": "opencode_go",
+    "providerName": "OpenCode Go",
+    "local": false,
+    "source": "documented",
+    "docUrl": "https://opencode.ai/docs/go/",
+    "asOf": "2026-10-29",
+    "scope": "mixed",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "glm-5.3-flash",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"GLM-5.3-Flash | 6,320 | 15,790 | 31,580\" (Requests per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "glm-5.3",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"GLM-5.3 | 220 | 540 | 1,080\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "glm-5.2",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"GLM-5.2 | 880 | 2,150 | 4,300\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "kimi-k3",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"Kimi K3 | 110 | 250 | 490\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "kimi-k2.7-code",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"Kimi K2.7 Code | 1,350 | 3,380 | 6,750\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "longcat-2.0",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"LongCat-2.0 | 11,400 | 28,600 | 57,200\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "mimo-v2.5",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"MiMo-V2.5 | 30,100 | 75,200 | 150,400\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "mimo-v2.5-pro",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"MiMo-V2.5-Pro | 3,250 | 8,150 | 16,300\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "minimax-m3",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"MiniMax M3 | 3,200 | 8,000 | 16,000\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "qwen3.8-max",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"Qwen3.8 Max | 160 | 400 | 810\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "qwen3.8-flash",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"Qwen3.8 Flash | 5,400 | 13,500 | 27,000\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "qwen3.7-plus",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"Qwen3.7 Plus | 4,300 | 10,800 | 21,600\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "deepseek-v4-pro",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"DeepSeek V4 Pro | 1,050 | 2,600 | 5,200\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "hy4-preview",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"Hy4 preview | 1,350 | 3,380 | 6,770\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "hy3",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"Hy3 | 4,300 | 10,750 | 21,500\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "gpt-5.6-luna",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"GPT 5.6 Luna | 2,050 | 5,100 | 10,250\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "muse-spark-1.3-contributor",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"Muse Spark 1.3 Contributor | 45,300 | 113,300 | 226,600\" (per 5 hours / per week / per month)"
+      },
+      {
+        "modelId": "muse-spark-1.2-contributor",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "Go plan table: \"Muse Spark 1.2 Contributor | 45,300 | 113,300 | 226,600\" (per 5 hours / per week / per month)"
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "\"Each model has the following usage limits: 5-hour — 20% of the monthly limit; weekly — 50%; and monthly — 100%.\"",
+      "\"| Model | Requests per 5 hours | Requests per week | Requests per month |\"",
+      "\"Beam Free | Unlimited | Unlimited | Unlimited\" / \"Iceman Contributor Free | Unlimited | Unlimited | Unlimited\"",
+      "\"OpenCode Go is designed for OpenCode and other coding agents that produce similar types of requests.\"",
+      "\"Go Plus estimates scale with each model's higher usage limit.\""
+    ],
+    "notes": "registry: category apikey / authKind apiKey / baseUrl https://opencode.ai/zen/go/v1 / website https://opencode.ai/go / notes 'OpenCode Go subscription ($5/mo per the 9router notice)' / 28 models / 无 freeModelsHint。**官方限速单位是 requests per 5 hours / per week / per month，三个都不是 rpm 也不是 rpd**（5 小时窗≠分钟窗、周窗≠日窗，且官方自己给的换算口径是 5-hour=月帽的 20%、weekly=50%），所以六个 quota 字段全部 null，每家模型的原表数字逐条写进 perModel[].evidence，只登记模型名能与 registry id **逐字对应**的 18 条。其余 10 个 registry id 不在官方表上，宁缺毋录：deepseek-flash、kimi-k2.6、deepseek-v4-flash（官方表只有 DeepSeek V4.1 Flash，不是同一 id）、deepseek-v4-flash-vision-exp、minimax-m2.7、minimax-m2.5（官方 Deprecated 表列 MiniMax M2.5 August 5, 2026）、qwen3.7-max、qwen3.6-plus、grok-4.6（官方表是 Grok 4.7/4.6 之分类另议，未逐字命中即不录）。官方另有一张 Go Plus 表（数字更高，如 GLM-5.3-Flash 18,960/47,370/94,740），本次只录 Go 基础档；scope 记 mixed：Go 是订阅制，但官方把 Beam Free 与 Iceman Contributor Free 标为 Unlimited。**ToS（OpenCode 系关键条款，来自 Zen 页）**：\"Free-tier chat models require OpenCode; use paid models or Go from other clients.\" —— Go 明确允许其它客户端（\"designed for OpenCode and other coding agents\"），受影响的只是 Zen 的免费档；Go 的限速声明按模型发布，未见\"仅限 OpenCode 客户端\"字样。免费模型 id 官方名（Beam Free / Iceman Contributor Free）在 registry 中不存在对应 id，故 freeModelIds 为空。"
+  },
+  {
+    "entryId": "cline_pass",
+    "providerName": "ClinePass",
+    "local": false,
+    "source": "undocumented",
+    "docUrl": "https://docs.cline.bot/getting-started/clinepass",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "\"ClinePass measures usage against three limits: 5-hour rolling window — your usage within rolling 5-hour period; Weekly — your usage over the calendar week; Monthly — your usage over the calendar month\"",
+      "\"$9.99/month — that gives you reliable access to popular open coding models with 2-5x the API rate limits of standard access.\"",
+      "\"These reference prices show the underlying per-1M-token rates for each model and can help you understand how usage is measured against your ClinePass quota (2-5x quota compares to paying standard api rate).\""
+    ],
+    "notes": "registry: category apikey / authKind apiKey / baseUrl https://api.cline.bot/api/v1 / authUrl https://app.cline.bot / modelsUrl https://api.cline.bot/api/v1/ai/cline/recommended-models / 11 models 全部带 cline-pass/ 前缀 / 无 freeModelsHint。官方 ClinePass 页**只声明有三个限额窗口（5 小时滚动 / 自然周 / 自然月），没有公布任何一个具体数字**，也没有 per-model 上限表或上下文数字，所以六个字段全 null、记 undocumented。$9.99/月与 '2-5x the API rate limits' 只是倍率描述，不是可录入的绝对帽；倍率的分母（standard api rate）官方也未给数字。ClinePass 是订阅制（不是免费池），且页面把它描述为 \"completely optional\"。另记：页面还写明该订阅衡量的是 usage（按 underlying per-1M-token 价格折算），即限额单位实际是折算金额/token，不是请求数。**未发现\"只能从 Cline 客户端使用\"类条款**，但目录里这些 id（cline-pass/...）本身来自推荐模型接口，需密钥与订阅。"
+  },
+  {
+    "entryId": "ollama",
+    "providerName": "Ollama",
+    "local": true,
+    "source": "undocumented",
+    "docUrl": "https://ollama.com/",
+    "asOf": "2026-10-29",
+    "scope": "local",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "本机运行时，无上游额度。registry: category local / authKind none / baseUrl http://localhost:11434/v1（baseUrlOverrideEnv OLLAMA_BASE_URL）/ models 为空（模型表由本机已 pull 的模型决定）。没有云端账号，官方不存在任何限速数字可登记，六个字段 null、source undocumented、local true。UI 不得为它显示任何额度上限，也不该发额度预检请求。"
+  },
+  {
+    "entryId": "ollama_cloud",
+    "providerName": "Ollama Cloud",
+    "local": false,
+    "source": "documented",
+    "docUrl": "https://ollama.com/pricing",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "\"Pay as you go: 3 concurrent requests, no subscription.\"",
+      "\"Requests beyond your plan's concurrency limit are queued and processed as soon as a slot is available.\"",
+      "\"Pay as you go and Pro include 3 concurrent requests, and Max and Team 10.\"",
+      "\"Pro: $60 of usage credits per month\" / \"Max: $300 of usage credits per month\" / \"Team: $1,000 of usage credits shared\"",
+      "\"No unused included usage rolls over to next month.\"",
+      "\"Cloud models have concurrency limits by plan to ensure dedicated capacity\""
+    ],
+    "notes": "registry: category free-tier / authKind apiKey / baseUrl https://ollama.com/v1 / authUrl https://ollama.com/settings/keys / modelsUrl https://ollama.com/api/tags / 9 models（gpt-oss:120b、kimi-k2.5、glm-5、minimax-m2.5、glm-4.7-flash、qwen3.5、minimax-m3、deepseek-v4.1-flash:cloud、qwen3-coder:480b）/ 无 freeModelsHint。**官方限速单位有两种，都不是 token：(1) 并发请求数 concurrent requests（Pay as you go 3、Pro 3、Max 10、Team 10，超出后排队而非报错）；(2) 每月\"usage credits\"美元额度（Pro $60、Max $300、Team $1,000 共享，不结转）**，官方页面把云用量描述为按 plan 的并发与额度限制。因为这两种单位都填不进 rpm/rpd/tpm/tpd/monthlyTokens/contextWindow，六个字段全部 null，原单位数字只写在 evidence/notes；source 记 documented（官方确有数字，只是单位不同）。会话时长方面：registry notes 里的 \"light usage, one cloud model at a time\" 与第三方流传的\"每 5 小时会话限额 + 每 7 天周限额\"来自 9router / 第三方清单，**官方 https://ollama.com/pricing 与 https://docs.ollama.com/cloud 今天的正文里都没有 5 小时/7 天字样**，docs.ollama.com 的文档索引里也只有 cloud、cloud-usage、pricing 相关页、没有独立 limits 页，故会话时长上限不录入。另记一条容易误读的：官方 docs 的 cloud-usage 接口页写 \"Rate limits allow 10 requests per minute\"，那是**查询用量统计这个接口自身**的限速，不是推理端点的帽，不能当 ollama_cloud 的 rpm 用。ollama.com/turbo 抓取返回 303 无法读正文（URL 试了但读不到）。"
+  },
+  {
+    "entryId": "lmstudio",
+    "providerName": "LM Studio",
+    "local": true,
+    "source": "undocumented",
+    "docUrl": "https://lmstudio.ai/",
+    "asOf": "2026-10-29",
+    "scope": "local",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "本机运行时，无上游额度。registry: category local / authKind none / baseUrl http://localhost:1234/v1（baseUrlOverrideEnv LM_STUDIO_BASE_URL）/ models 为空（模型表由本机已加载的模型决定）。没有云端账号，官方不存在限速数字可登记，六个字段 null、source undocumented、local true。UI 不得为它显示额度上限或做额度预检。"
+  },
+  {
+    "entryId": "llamacpp",
+    "providerName": "LLaMA.cpp",
+    "local": true,
+    "source": "undocumented",
+    "docUrl": "https://github.com/ggml-org/llama.cpp",
+    "asOf": "2026-10-29",
+    "scope": "local",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "本机运行时，无上游额度。registry: category local / authKind none / baseUrl http://localhost:8080/v1（baseUrlOverrideEnv LLAMACPP_BASE_URL）/ models 为空。llama.cpp server 是用户自己起的进程，只有并发/上下文这类本地参数，没有账号额度，官方不存在限速数字可登记，六个字段 null、source undocumented、local true。UI 不得为它显示额度上限或做额度预检。"
+  }
+]

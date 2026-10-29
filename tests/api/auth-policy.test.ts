@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import {
   checkStartupSecurity,
   evaluateApiKeyAuth,
+  extractApiKey,
   isLoopbackOrigin,
   requiresApiKey,
   resolveCorsOrigin,
@@ -35,6 +36,19 @@ test('key comparison is constant-time and length independent', () => {
   assert.equal(safeKeyEquals('abc', 'abc'), true)
   assert.equal(safeKeyEquals('abc', 'abd'), false)
   assert.equal(safeKeyEquals('abc', 'abcdefghijklmnop'), false)
+})
+
+test('provided key parsing accepts any auth scheme casing and wraps', () => {
+  assert.equal(extractApiKey({ authorization: 'Bearer sk-1' }), 'sk-1')
+  assert.equal(extractApiKey({ authorization: 'bearer sk-1' }), 'sk-1')
+  assert.equal(extractApiKey({ authorization: 'BEARER  sk-1 ' }), 'sk-1')
+  assert.equal(extractApiKey({ authorization: 'Bearer "sk-1"' }), 'sk-1')
+  assert.equal(extractApiKey({ authorization: "Bearer 'sk-1'" }), 'sk-1')
+  assert.equal(extractApiKey({ authorization: 'Bearer ' }), null)
+  assert.equal(extractApiKey({ authorization: 'Basic abc' }), null)
+  assert.equal(extractApiKey({ xApiKey: ' sk-1 ' }), 'sk-1')
+  assert.equal(extractApiKey({ xApiKey: '"sk-1"' }), 'sk-1')
+  assert.equal(extractApiKey({}), null)
 })
 
 test('non-loopback listen without keys is refused at startup', () => {

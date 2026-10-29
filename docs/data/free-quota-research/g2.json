@@ -1,0 +1,577 @@
+[
+  {
+    "entryId": "zai",
+    "providerName": "Z.ai Coding Plan",
+    "source": "documented",
+    "docUrl": "https://docs.z.ai/guides/llm/glm-5.3.md",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "glm-5.3",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 1000000,
+        "evidence": "The GLM-5.3 model supports a \"1M-token context window and a maximum output length of 128K tokens.\""
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "The GLM-5.3 model supports a \"1M-token context window and a maximum output length of 128K tokens.\""
+    ],
+    "notes": "主体确认：baseUrl https://api.z.ai/api/coding/paas/v4 = Z.ai 国际站（Singapore 主体，website z.ai，docs.z.ai）。官方限速页 https://docs.z.ai/api-reference/rate-limit.md 以 307 重定向到 https://z.ai/manage-apikey/rate-limits，该页抓到的是「CSS-heavy JavaScript app shell，未登录不显示任何数字」，因此 rpm/rpd/tpm/tpd/monthlyTokens 全部 null（有页面、无数值可读）。Coding Plan 官方订阅页 https://docs.z.ai/devpack/teamplan.md 只给积分制额度：Standard 15,000/66,000（每 5 小时/每周）、Premium 35,000/155,000，并发 Standard 1-2、Premium 2+；单位是 credits（积分），不是请求/token 帽，故不登记进 quota，只在此记录。contextWindow 取自 docs.z.ai 模型页（该页无任何限速句子）。警示：docs.z.ai 与 docs.bigmodel.cn 的 Coding Plan 条款均把套餐限定在官方支持的编程工具内使用（见 glm-cn 条目的原句），把 Coding Plan Key 当通用 API 中转并不在文档许可范围内。"
+  },
+  {
+    "entryId": "zai_api",
+    "providerName": "Z.ai API",
+    "source": "documented",
+    "docUrl": "https://docs.z.ai/guides/llm/glm-5.3.md",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "glm-5.3",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 1000000,
+        "evidence": "The GLM-5.3 model supports a \"1M-token context window and a maximum output length of 128K tokens.\""
+      },
+      {
+        "modelId": "glm-4.7-flash",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "\"GLM-4.7-Flash Free\"（docs.z.ai/guides/overview/pricing 价格表行标签；该页未给上下文长度与限速数字）"
+      }
+    ],
+    "freeModelIds": [
+      "glm-4.7-flash"
+    ],
+    "evidence": [
+      "The GLM-5.3 model supports a \"1M-token context window and a maximum output length of 128K tokens.\"",
+      "\"GLM-4.7-Flash Free\" / \"GLM-4.5-Flash Free\"（docs.z.ai/guides/overview/pricing 价格表行标签）"
+    ],
+    "notes": "主体确认：baseUrl https://api.z.ai/api/paas/v4（按量付费通用端点，同属 Z.ai 国际站）。用的是国际站 docs.z.ai 那份：https://docs.z.ai/guides/overview/pricing 只公布单价与免费 Flash SKU（GLM-4.7-Flash Free、GLM-4.5-Flash Free），无 RPM/TPM/上下文数字；本条目 models[] 里只有 glm-4.7-flash 落在免费 SKU，故 freeModelIds 只登记它（glm-4.5-flash 不在本目录）。限速页 docs.z.ai/api-reference/rate-limit.md → 307 跳转 z.ai/manage-apikey/rate-limits（登录态 JS 壳，读不到正文数字），所以 rpm/rpd/tpm/tpd/monthlyTokens 全 null；唯一可登记的是 GLM-5.3 的 1M 上下文。"
+  },
+  {
+    "entryId": "glm",
+    "providerName": "Z.ai (Anthropic wire)",
+    "source": "documented",
+    "docUrl": "https://docs.z.ai/guides/llm/glm-5.3.md",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "glm-5.3",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 1000000,
+        "evidence": "The GLM-5.3 model supports a \"1M-token context window and a maximum output length of 128K tokens.\""
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "The GLM-5.3 model supports a \"1M-token context window and a maximum output length of 128K tokens.\""
+    ],
+    "notes": "主体确认：baseUrl https://api.z.ai/api/anthropic/v1 仍是 Z.ai 国际站端点（authUrl 写的是 open.bigmodel.cn，但端点主体是 z.ai），因此用 docs.z.ai 那份文档，不用中文站。Anthropic-wire 路由没有任何独立限速文档：docs.z.ai/api-reference/rate-limit.md 重定向到登录控制台（z.ai/manage-apikey/rate-limits，JS 壳无正文），未读到数字 → rpm/rpd/tpm/tpd/monthlyTokens 全 null。唯一登记值是同主体模型页的 GLM-5.3 上下文 1M。"
+  },
+  {
+    "entryId": "glm-cn",
+    "providerName": "Zhipu GLM (CN)",
+    "source": "documented",
+    "docUrl": "https://docs.bigmodel.cn/cn/guide/start/model-overview.md",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "glm-5.3",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 1000000,
+        "evidence": "GLM-5.3: 1M（旗舰）"
+      },
+      {
+        "modelId": "glm-5.2",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 1000000,
+        "evidence": "GLM-5.2: 1M"
+      },
+      {
+        "modelId": "glm-5.1",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 200000,
+        "evidence": "GLM-5.1: 200K"
+      },
+      {
+        "modelId": "glm-5",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 200000,
+        "evidence": "GLM-5: 200K"
+      },
+      {
+        "modelId": "glm-4.7",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 200000,
+        "evidence": "GLM-4.7: 200K"
+      },
+      {
+        "modelId": "glm-4.6",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 200000,
+        "evidence": "GLM-4.6: 200K"
+      },
+      {
+        "modelId": "glm-4.5-air",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 128000,
+        "evidence": "GLM-4.5-Air: 128K"
+      }
+    ],
+    "freeModelIds": [
+      "glm-4.7-flash",
+      "glm-4.5-flash",
+      "glm-4.7-flashx"
+    ],
+    "evidence": [
+      "GLM-5.3: 1M（旗舰）; GLM-5.2: 1M; GLM-5.1: 200K; GLM-5: 200K; GLM-4.7: 200K; GLM-4.6: 200K; GLM-4.5-Air: 128K（docs.bigmodel.cn/cn/guide/start/model-overview.md）",
+      "GLM-4.7-FlashX: 200K, 输入免费; GLM-4.7-Flash: 200K, 输出免费（docs.bigmodel.cn/cn/guide/start/pricing.md）",
+      "可通过 速率限制 查看您的账户目前各模型可调用的速率（docs.bigmodel.cn/cn/api/rate-limit.md）"
+    ],
+    "notes": "主体确认：baseUrl https://open.bigmodel.cn/api/coding/paas/v4 = 智谱中文站（website open.bigmodel.cn），全部取 docs.bigmodel.cn 那份文档，不用 docs.z.ai。限速官方页 https://docs.bigmodel.cn/cn/api/rate-limit.md 正文只有机制描述，明确把数值推到控制台页：「可通过 [速率限制](https://bigmodel.cn/usercenter/proj-mgmt/rate-limits) 查看您的账户目前各模型可调用的速率」「不同套餐用户，默认可用的模型并发上限不同」——该控制台页需登录，抓不到正文，且平台按「并发数」而非 RPM/TPM 管控，故 rpm/rpd/tpm/tpd/monthlyTokens 全 null（有页面但无公开数字）。Coding Plan 页 https://docs.bigmodel.cn/cn/coding-plan/overview 公布的是积分：「套餐同时设有每 5 小时和每周额度上限」Lite 2,000/10,000、Pro 12,000/60,000、Max 28,000/140,000，单位「积分」，非请求/token 帽 → 不登记进 quota。freeModelIds 是官方定价页标注「免费」的 Flash SKU，其中 glm-4.7-flash / glm-4.5-flash / glm-4.7-flashx 不在本条目 models[] 内（本条目没有任何 Flash 行），仅作主体事实记录。ToS 警示（逐字）：「套餐仅限在官方支持的指定工具与产品环境中使用。在除规定工具外调用 API，不可享用 Coding 套餐的额度。」——本条目端点正是 coding 端点，用它做通用代理不符合该条。"
+  },
+  {
+    "entryId": "kimi",
+    "providerName": "Kimi (Moonshot)",
+    "source": "documented",
+    "docUrl": "https://platform.kimi.com/docs/pricing/chat",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "kimi-k2.5",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 262144,
+        "evidence": "K2 系列模型均支持 262,144 tokens 上下文窗口。"
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "K2 系列模型均支持 262,144 tokens 上下文窗口。（platform.kimi.com/docs/pricing/chat）",
+      "Rate limits are applied based on each account's cumulative recharge amount（platform.kimi.ai/docs/pricing/limits）"
+    ],
+    "notes": "主体确认：baseUrl https://api.moonshot.ai/v1 = Moonshot 国际站；其官方限速页 https://platform.moonshot.ai/docs/pricing/limits 301 跳到 https://platform.kimi.ai/docs/pricing/limits，该页正文只写「Rate limits are applied based on each account's cumulative recharge amount」「Vouchers do not count towards the cumulative recharge total」，Tier 表格在抓到的源码里是空表（前端渲染），/docs/pricing/limits.md 变体同样是空表结构 → 国际站本体的 rpm/tpm/tpd/并发数字读不到，全部 null。中文站 platform.moonshot.cn/docs/pricing/limits 301 → platform.kimi.com/docs/pricing/limits，抓取结果亦为「The table body is empty in the provided page source」。搜索索引里流传的 Tier0 ¥0/并发1/RPM 3/TPM 500,000/TPD 1,500,000 属第三方转述且彼此矛盾（并发一处写 15、一处写 50），按要求不采信、不凭记忆填。唯一登记到的数字是同主体 pricing/chat 页的 K2 系列上下文 262,144 tokens（本条目模型 kimi-k2.5 属 K2 系列；该句是系列级表述，非单模型行）。注意：Moonshot 的限速在用户/账户级而非 Key 级，且「目前我们在所有模型中共享速率限制」（platform.kimi.com/docs/introduction，该页只有机制定义、无数字），单 Key 多用户共用会互相挤占。"
+  },
+  {
+    "entryId": "kimi_code",
+    "providerName": "Kimi Code",
+    "source": "documented",
+    "docUrl": "https://platform.kimi.com/docs/pricing/chat",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "kimi-k3",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 1048576,
+        "evidence": "K3 系列模型均支持 1,048,576 tokens 上下文窗口。"
+      },
+      {
+        "modelId": "k3",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 1048576,
+        "evidence": "K3 系列模型均支持 1,048,576 tokens 上下文窗口。"
+      },
+      {
+        "modelId": "kimi-k2.7-code",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 262144,
+        "evidence": "K2 系列模型均支持 262,144 tokens 上下文窗口。"
+      },
+      {
+        "modelId": "kimi-k2.7-code-highspeed",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 262144,
+        "evidence": "K2 系列模型均支持 262,144 tokens 上下文窗口。"
+      },
+      {
+        "modelId": "kimi-k2.6",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 262144,
+        "evidence": "K2 系列模型均支持 262,144 tokens 上下文窗口。"
+      },
+      {
+        "modelId": "kimi-k2.5",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 262144,
+        "evidence": "K2 系列模型均支持 262,144 tokens 上下文窗口。"
+      },
+      {
+        "modelId": "kimi-k2.5-thinking",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 262144,
+        "evidence": "K2 系列模型均支持 262,144 tokens 上下文窗口。"
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "K3 系列模型均支持 1,048,576 tokens 上下文窗口。（platform.kimi.com/docs/pricing/chat）",
+      "K2 系列模型均支持 262,144 tokens 上下文窗口。（platform.kimi.com/docs/pricing/chat）",
+      "Kimi Code 的额度以订阅日为起点 每 7 天自动刷新，未用完不累积。除周额度外，还有 每 5 小时的滚动频率窗口（www.kimi.com/code/docs/kimi-code/membership）"
+    ],
+    "notes": "主体确认：baseUrl https://api.kimi.com/coding/v1 = Kimi Code 订阅（www.kimi.com/code），与 platform.kimi.com 同主体，用 kimi.com 那份文档。官方订阅文档 https://www.kimi.com/code/docs/kimi-code/membership 与 https://www.kimi.com/help/kimi-code/benefits 只描述窗口机制：「每 5 小时的滚动频率窗口」「每 7 天自动刷新，未用完不累积」「所有登录设备和 API Key 共享同一套配额」，并明确要求到 Kimi Code 控制台看剩余额度与频限——正文没有任何 RPM/TPM/TPD/并发数字 → quota 全 null。另抓 https://www.kimi.ai/zh-hans/help/kimi-code/membership-guide，抓到的是「仅提及 frequency limits，未给数值」。搜索索引里那份「每 5 小时约 300–1,200 次请求、最高 30 路并发」在我直接抓取的同页读不到，故不登记。上下文数字来自同主体 pricing/chat 页，且是「系列级」表述（K3 系列 / K2 系列），kimi-for-coding、kimi-for-coding-highspeed、kimi-latest 无法从官方正文判定属哪个系列 → 其 contextWindow 留 null。"
+  },
+  {
+    "entryId": "minimax",
+    "providerName": "MiniMax",
+    "source": "documented",
+    "docUrl": "https://platform.minimax.io/docs/guides/rate-limits",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": 200,
+      "rpd": null,
+      "tpm": 10000000,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "MiniMax-M3",
+        "rpm": 200,
+        "rpd": null,
+        "tpm": 10000000,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "MiniMax-M3.1-Flash MiniMax-M3 | 200 | 10,000,000"
+      },
+      {
+        "modelId": "MiniMax-M2.7",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "官方限速表内无该模型行（多次抓取均只返回 MiniMax-M3.1-Flash / MiniMax-M3 一行）"
+      },
+      {
+        "modelId": "MiniMax-M2.5",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "官方限速表内无该模型行"
+      },
+      {
+        "modelId": "MiniMax-M2.1",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "官方限速表内无该模型行"
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "MiniMax-M3.1-Flash MiniMax-M3 | 200 | 10,000,000（platform.minimax.io/docs/guides/rate-limits 语言/LLM 表）",
+      "The rate limits for MiniMax's API are divided into two types: RPM and TPM.（同页）"
+    ],
+    "notes": "主体确认：baseUrl https://api.minimax.io/v1 = MiniMax 国际站（website www.minimax.io，authUrl platform.minimax.io），用 platform.minimax.io 那份英文文档。该页 LLM 表在三次独立抓取中都只给出一行数值：MiniMax-M3.1-Flash / MiniMax-M3 = 200 RPM / 10,000,000 TPM，且英文页没有免费/充值分档标签（同页仅语音转写标注 'available to paid accounts only and is not accessible on the free tier'），故 scope 记 keyed-account、不臆断它是免费档还是充值档；对照中文主体页（见 minimax-cn 条目）同样数值出现在「充值用户」行。RPM/TPM 之外该页未公布任何每日(RPD/TPD)、月度 token 或上下文数字 → 相应字段 null；本目录其余 3 个模型（M2.7/M2.5/M2.1）官方表内没有行，也不借用 M3 的值。"
+  },
+  {
+    "entryId": "minimax-cn",
+    "providerName": "MiniMax (CN)",
+    "source": "documented",
+    "docUrl": "https://platform.minimax.cn/docs/guides/rate-limits",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": 20,
+      "rpd": null,
+      "tpm": 1000000,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "MiniMax-M3",
+        "rpm": 20,
+        "rpd": null,
+        "tpm": 1000000,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "免费用户 | 20 | 1,000,000；充值用户 | 200 | 10,000,000"
+      },
+      {
+        "modelId": "MiniMax-M2.7",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "官方 语言 表内只有 MiniMax-M3.1-Flash / MiniMax-M3 一列，无该模型"
+      },
+      {
+        "modelId": "MiniMax-M2.5",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "官方 语言 表内无该模型"
+      },
+      {
+        "modelId": "MiniMax-M2.1",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "官方 语言 表内无该模型"
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "| 免费用户 | 20 | 1,000,000 | / | 充值用户 | 200 | 10,000,000 |（platform.minimax.cn/docs/guides/rate-limits 语言表，模型列 MiniMax-M3.1-Flash / MiniMax-M3）",
+      "我们会根据您使用的模型、接口以及您拥有的账户类型，对您的账号（包括主账号+子账号）实施相应的速率限制策略。即您的主账号和子账号共同享有以下所有速率限制。",
+      "速率限制（Rate Limits）是 API 对用户在指定时间段内可以访问服务器的次数/消耗的 token 数，所作出的限制。其中 MiniMax 的 API 的速率限制分为：RPM 以及 TPM 两种。"
+    ],
+    "notes": "主体确认：baseUrl https://api.minimaxi.com/anthropic/v1 = MiniMax  mainland（website www.minimaxi.com，authUrl platform.minimaxi.com）。platform.minimaxi.com/docs/guides/rate-limits 302 → https://platform.minimax.cn/docs/guides/rate-limits，抓到的就是这份中文站正文（数字在该页真实读到，非记忆值）。两档都公布，按要求取免费档：免费用户 20 RPM / 1,000,000 TPM，充值用户 200 RPM / 10,000,000 TPM（后者记在此 notes）。该页只有 RPM/TPM 两个维度，没有 RPD/TPD/月度 token/上下文数字 → 相应字段 null。限速按主账号+子账号合并计算，代理层把多用户共享一个 Key 时实际是把大家的用量并进同一个 20 RPM 桶。M2.7/M2.5/M2.1 官方表无行，不套用 M3 值。"
+  },
+  {
+    "entryId": "alibaba_cloud",
+    "providerName": "Alibaba Cloud (Model Studio, DashScope international)",
+    "source": "documented",
+    "docUrl": "https://www.alibabacloud.com/help/en/model-studio/rate-limit",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "qwen3.5-plus",
+        "rpm": 15000,
+        "rpd": null,
+        "tpm": 5000000,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "qwen3.5-plus | International | 15,000 | 5,000,000（Singapore 表）"
+      },
+      {
+        "modelId": "MiniMax-M2.5",
+        "rpm": 500,
+        "rpd": null,
+        "tpm": 1000000,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "MiniMax-M2.5 | 500 | 1,000,000（Singapore 表）"
+      },
+      {
+        "modelId": "kimi-k2.5",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "新加坡/国际表中无 kimi-k2.5 行（多次抓取明确返回「kimi-k2.5: No row」）"
+      },
+      {
+        "modelId": "glm-5",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "限流表中无 glm-5 行（抓取明确返回「glm-5: No row」；表内只有 glm-5.3 / glm-5.2 / glm-5.1）"
+      },
+      {
+        "modelId": "glm-4.7",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "限流表中无 glm-4.7 行"
+      },
+      {
+        "modelId": "qwen3-coder-next",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "限流表中无 qwen3-coder-next 行"
+      },
+      {
+        "modelId": "qwen3-coder-plus",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "限流表中无 qwen3-coder-plus 行"
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "Alibaba Cloud Model Studio applies rate limiting to model calls at the Alibaba Cloud account level.（www.alibabacloud.com/help/en/model-studio/rate-limit）",
+      "百炼按主账号维度对模型调用设置限流，账号下所有 RAM 子账号、业务空间和 API Key 的调用量合并计算。",
+      "glm-5.3 | International | 10,000 | 5,000,000；glm-5.2 | International | 500 | 1,000,000；glm-5.1 | International | 500 | 1,000,000；qwen3.7-plus | 15,000 | 5,000,000（同页 Singapore/International 表；这三个模型不在本条目 models[] 内，只作主体证据）",
+      "The free quota is valid for 90 days ... Each model ... has its own independent free quota (typically 1,000,000 tokens)（www.alibabacloud.com/help/en/model-studio/new-free-quota）"
+    ],
+    "notes": "主体确认：baseUrl https://dashscope-intl.aliyuncs.com/compatible-mode/v1 = Model Studio 新加坡（国际）地域，故取 www.alibabacloud.com/help/en/model-studio/* 那份（国际站英文文档），不取 help.aliyun.com 的北京地域表。限流是「按主账号维度、模型独立」的 RPM/TPM 帽，属付费 Key 的默认限额（同页说明：充值不改变默认 RPM/TPM，免费额度与付费调用使用同一套基础设施、生成速度相同；可申请 30 天临时提额）。本条目 models[] 中只有 qwen3.5-plus 与 MiniMax-M2.5 在 Singapore/International 表里读到明确行，其余 5 个无行 → null，不套用相邻模型值。免费池：new-free-quota 页给的是「每模型独立、典型 1,000,000 tokens、有效期 90 天、仅新加坡地域、按账号共享」，还有一条「2,000 calls per day」属于另一类接口口径；由于它是 90 天一次性额度而非「月度」帽，且原句用 typically（非精确值），monthlyTokens 保持 null 不折算。页面另说明部分模型（如 qwen3.8-max、qwen3.8-flash）改为按百炼月消费档位的「动态限流（新）」，无固定数字可登记。"
+  },
+  {
+    "entryId": "qwencloud",
+    "providerName": "QwenCloud Token Plan",
+    "source": "undocumented",
+    "docUrl": "https://www.alibabacloud.com/help/en/model-studio/token-plan-overview",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "主体确认：baseUrl https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1 = Model Studio Token Plan 的新加坡订阅端点（website qwencloud.com / home.qwencloud.com）。官方页 Token Plan 概述存在（alibabacloud.com/help/en/model-studio/token-plan-overview 与 help.aliyun.com/zh/model-studio/token-plan-overview；直连 www.alibabacloud.com/help/en/model-studio/token-plan 返回 404 页，正文无数字）。该页公布的额度全部是 Credits 订阅口径（抓到「个人版 Lite/Essential/Standard/Pro 按月 Credits 限额」与「并发 Agent 1-2 … 6-8」这类档位表述），而且中英文两版数值口径不一致（一版 11,500/25,500/45,000/180,000 Credits 每月，另一版 2,500/5,625/10,000/40,000 Credits 每 7 天）——我无法确认哪一份对应新加坡端点，且 Credits 不等于 token/RPM/TPM，因此不登记任何数字，quota 全 null、source 记 undocumented。官方同时说明套餐 Key 只认套餐端点（用错 Base URL 会 401），限速由平台按并发/请求率动态分配。qwencloud.com / home.qwencloud.com 自身只有产品页与控制台（登录墙），没有可读的限速正文。"
+  },
+  {
+    "entryId": "qwencloud_coding",
+    "providerName": "QwenCloud Coding Plan",
+    "source": "undocumented",
+    "docUrl": "https://www.alibabacloud.com/help/en/model-studio/coding-plan",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "Up to 6,000 requests per 5 hours; Up to 45,000 requests per week; Up to 90,000 requests per month.（www.alibabacloud.com/help/en/model-studio/coding-plan）",
+      "Enforces technical limits on the number of concurrent requests and the request rate per account.（同页）",
+      "The number of concurrent requests has exceeded the dynamically allocated limit. / Requests were sent too frequently within a short period, triggering the model call rate limit.（coding-plan-faq 页）"
+    ],
+    "notes": "主体确认：baseUrl https://coding-intl.dashscope.aliyuncs.com/v1 = Model Studio Coding Plan 国际端点。官方页存在且读到数字，但那些数字是「每 5 小时 / 每周 / 每月请求上限」（6,000 / 45,000 / 90,000 requests），既不是 RPM、也不是 RPD/TPM/TPD/月度 token，无法在不折算的前提下填进 quota 字段 → 按规则 quota 全 null，source 记 undocumented（有页面、无可登记口径的数字），原句保留在 evidence 里供后续人工裁定。速率维度官方只写「对并发请求数与请求率做动态技术限制」，FAQ 的报错文案也是 'dynamically allocated limit'，没有任何固定 RPM。同页支持的模型列表为 qwen3.7-plus、qwen3.6-plus、kimi-k2.5、glm-5、MiniMax-M2.5、qwen3.5-plus，与本条目 models[] 部分重合（qwen3-coder-next/plus 不在官方列表内）。ToS 警示（逐字，对本仓尤其相关）：\"This plan is for interactive use in programming tools ... Do not use the plan's API key for automated scripts, application backends, or other non-interactive scenarios.\" —— 把该 Key 放进 OpenAI 兼容代理对外服务与该条直接冲突。"
+  }
+]

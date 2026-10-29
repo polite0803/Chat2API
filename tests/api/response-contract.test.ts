@@ -53,7 +53,7 @@ test('no fabricated token usage anywhere in the proxy', () => {
   const offenders: string[] = []
   for (const file of files) {
     const source = readFileSync(`${proxyRoot}/${file}`, 'utf8')
-    if (/prompt_tokens:\s*1\b/.test(source)) offenders.push(file)
+    if (/prompt_tokens:\s*\d/.test(source)) offenders.push(file)
   }
   assert.deepEqual(offenders, [])
 })

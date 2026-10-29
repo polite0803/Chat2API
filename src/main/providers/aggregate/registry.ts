@@ -10,25 +10,50 @@ import type { AggregateEntry } from '../../../shared/aggregate'
  * `kilo` is declared with authKind 'none': its free pool answers anonymously.
  * `vertex` / `vertex-partner` need Google ADC, which this app cannot produce,
  * so they are listed as 'unsupported' rather than pretending a key works.
+ *
+ * Seven model rows were dropped on 2026-10-29 because upstream no longer serves
+ * them (each checked against the vendor's own documentation, not a reseller
+ * listing): `anthropic`'s `claude-sonnet-4-20250514` and `claude-opus-4-20250514`
+ * ("All requests to these models on the Claude API will now return an error"),
+ * its `claude-3-5-sonnet-20241022` (retired 2025-10-28), and `xai`'s
+ * `grok-4-fast-reasoning` / `grok-code-fast-1` / `grok-3` (retired 2026-05-15 -
+ * their slugs still resolve and silently redirect to `grok-4.3`) plus the bare
+ * `grok-4`, which is no longer in the live model list. Do not re-add them when
+ * re-transcribing the source registry.
+ *
+ * One whole entry was withdrawn on 2026-10-29: `mistral_codestral`
+ * (`https://codestral.mistral.ai/v1`). Mistral's own 3.2 MB full-text docs never
+ * mention that host, and its only model (`codestral-latest`) is already covered
+ * by the `mistral` entry. Do not re-add it either.
+ *
+ * `agnes` points at the China host (`https://api.agnes-ai.cn/v1`) rather than
+ * the international `apihub.agnes-ai.com` one: the CN wiki is the vendor's own
+ * documentation and declares that base URL, `agnes-2.0-flash` is marked 已废弃
+ * there, and the served models are `agnes-3.0-flash` / `agnes-2.5-flash`
+ * (`agnes-3.0-pro` is still 即将上线, so it is not listed).
  */
 export const AGGREGATE_REGISTRY: AggregateEntry[] = [
   {
     "id": "agnes",
-    "name": "Agnes AI",
+    "name": "Agnes CN",
     "category": "apikey",
     "authKind": "apiKey",
-    "baseUrl": "https://apihub.agnes-ai.com/v1",
+    "baseUrl": "https://api.agnes-ai.cn/v1",
     "wire": "openai-chat",
     "models": [
       {
-        "id": "agnes-2.0-flash",
-        "name": "Agnes 2.0 Flash"
+        "id": "agnes-3.0-flash",
+        "name": "Agnes 3.0 Flash"
+      },
+      {
+        "id": "agnes-2.5-flash",
+        "name": "Agnes 2.5 Flash"
       }
     ],
-    "authUrl": "https://agnes-ai.com/",
+    "authUrl": "https://platform.agnes-ai.cn/",
     "envVar": "AGNES_API_KEY",
     "notes": "Reasoning arrives as think tags on this route (FCC profile).",
-    "website": "https://agnes-ai.com/"
+    "website": "https://agnes-ai.cn/"
   },
   {
     "id": "alibaba_cloud",
@@ -80,23 +105,10 @@ export const AGGREGATE_REGISTRY: AggregateEntry[] = [
     "authKind": "apiKey",
     "baseUrl": "https://api.anthropic.com/v1",
     "wire": "anthropic-messages",
-    "models": [
-      {
-        "id": "claude-sonnet-4-20250514",
-        "name": "Claude Sonnet 4"
-      },
-      {
-        "id": "claude-opus-4-20250514",
-        "name": "Claude Opus 4"
-      },
-      {
-        "id": "claude-3-5-sonnet-20241022",
-        "name": "Claude 3.5 Sonnet"
-      }
-    ],
+    "models": [],
     "authUrl": "https://platform.claude.com/settings/keys",
     "envVar": "ANTHROPIC_API_KEY",
-    "notes": "Native Anthropic Messages passthrough (FCC marks it native_messages_passthrough).",
+    "notes": "Native Anthropic Messages passthrough (FCC marks it native_messages_passthrough). Its three transcribed models were retired upstream (the API answers them with an error), so the list is empty by design - add the current ids by hand or via discovery.",
     "website": "https://www.anthropic.com/"
   },
   {
@@ -927,24 +939,6 @@ export const AGGREGATE_REGISTRY: AggregateEntry[] = [
     "website": "https://mistral.ai/"
   },
   {
-    "id": "mistral_codestral",
-    "name": "Mistral Codestral",
-    "category": "apikey",
-    "authKind": "apiKey",
-    "baseUrl": "https://codestral.mistral.ai/v1",
-    "wire": "openai-chat",
-    "models": [
-      {
-        "id": "codestral-latest",
-        "name": "Codestral"
-      }
-    ],
-    "authUrl": "https://console.mistral.ai/",
-    "envVar": "CODESTRAL_API_KEY",
-    "notes": "Codestral IDE endpoint, distinct from La Plateforme keys (FCC).",
-    "website": "https://mistral.ai/"
-  },
-  {
     "id": "morph",
     "name": "Morph LLM",
     "category": "apikey",
@@ -1359,6 +1353,25 @@ export const AGGREGATE_REGISTRY: AggregateEntry[] = [
     "website": "https://poolside.ai/"
   },
   {
+    "id": "qiniu",
+    "name": "Qiniu Conatus",
+    "category": "apikey",
+    "authKind": "apiKey",
+    "baseUrl": "https://api.qnaigc.com/v1",
+    "wire": "openai-chat",
+    "models": [
+      {
+        "id": "qiniu/conatus-free",
+        "name": "Conatus Free"
+      }
+    ],
+    "authUrl": "https://developer.qiniu.com/aitokenapi/12884/how-to-get-api-key",
+    "envVar": "QINIU_API_KEY",
+    "modelsUrl": "https://api.qnaigc.com/v1/models",
+    "notes": "Conatus 限时免费融合模型（2026-10-24~11-30）：实名认证用户每日 1 亿 Token，单笔充值>100 元升至 10 亿/日；仅消耗活动免费额度、不支持按量付费，活动结束后停止调用。兼容 OpenAI 与 Anthropic 协议。",
+    "website": "https://www.qiniu.com/ai/free-models/conatus-2026"
+  },
+  {
     "id": "qwencloud",
     "name": "QwenCloud Token Plan",
     "category": "apikey",
@@ -1456,6 +1469,46 @@ export const AGGREGATE_REGISTRY: AggregateEntry[] = [
     "modelsUrl": "https://api.sambanova.ai/v1/models",
     "notes": "FCC README example id; the 9router registry keeps this provider hidden.",
     "website": "https://sambanova.ai/"
+  },
+  {
+    "id": "sensenova",
+    "name": "SenseNova Token Plan",
+    "category": "apikey",
+    "authKind": "apiKey",
+    "baseUrl": "https://token.sensenova.cn/v1",
+    "wire": "openai-chat",
+    "models": [
+      {
+        "id": "deepseek-v4-pro",
+        "name": "DeepSeek V4 Pro"
+      },
+      {
+        "id": "deepseek-v4-flash",
+        "name": "DeepSeek V4 Flash"
+      },
+      {
+        "id": "deepseek-v4.1-flash",
+        "name": "DeepSeek V4.1 Flash"
+      },
+      {
+        "id": "glm-5.2",
+        "name": "GLM 5.2"
+      },
+      {
+        "id": "kimi-k3",
+        "name": "Kimi K3"
+      },
+      {
+        "id": "sensenova-6.8-flash-lite",
+        "name": "SenseNova 6.8 Flash Lite"
+      }
+    ],
+    "authUrl": "https://platform.sensenova.cn/console/keys",
+    "envVar": "SENSENOVA_API_KEY",
+    "modelsUrl": "https://token.sensenova.cn/v1/models",
+    "dropParams": ["response_format", "enable_thinking", "tool_choice=auto", "tools[].function.strict"],
+    "notes": "商汤日日新 Token Plan 公测积分池（12 万积分/5 小时、120 万/周，非 token 额度，故额度旁表按 undocumented 处理）。请求 schema 比 OpenAI 严：官方参数表之外的字段一律拒收（response_format / tools[].function.strict / tool_choice:auto / enable_thinking 已在 dropParams 里剥离），校验失败的 message 常被网关替换成 'Errors in message queue response'。",
+    "website": "https://platform.sensenova.cn/"
   },
   {
     "id": "scaleway",
@@ -1955,28 +2008,12 @@ export const AGGREGATE_REGISTRY: AggregateEntry[] = [
       {
         "id": "grok-4.5",
         "name": "Grok 4.5"
-      },
-      {
-        "id": "grok-4",
-        "name": "Grok 4"
-      },
-      {
-        "id": "grok-4-fast-reasoning",
-        "name": "Grok 4 Fast Reasoning"
-      },
-      {
-        "id": "grok-code-fast-1",
-        "name": "Grok Code Fast"
-      },
-      {
-        "id": "grok-3",
-        "name": "Grok 3"
       }
     ],
     "authUrl": "https://console.x.ai/team/default/api-keys",
     "envVar": "XAI_API_KEY",
     "modelsUrl": "https://api.x.ai/v1/models",
-    "notes": "Image and video ids from the same registry listing are omitted (chat catalog).",
+    "notes": "Image and video ids from the same registry listing are omitted (chat catalog). grok-4-fast-reasoning, grok-code-fast-1 and grok-3 were retired on 2026-05-15 and their slugs now redirect to grok-4.3; the bare grok-4 left the live list. None of the four are exposed.",
     "website": "https://x.ai/"
   },
   {
@@ -3014,5 +3051,7 @@ export function aggregateAuthHeader(entry: AggregateEntry): { header: string; pr
 }
 
 export function aggregateChatPath(entry: AggregateEntry): string {
-  return entry.wire === 'anthropic-messages' ? '/messages' : '/chat/completions'
+  if (entry.wire === 'anthropic-messages') return '/messages'
+  if (entry.wire === 'openai-responses') return '/responses'
+  return '/chat/completions'
 }

@@ -1,0 +1,40 @@
+[
+  {
+    "entryId": "qiniu",
+    "providerName": "Qiniu Conatus",
+    "source": "documented",
+    "docUrl": "https://www.qiniu.com/ai/free-models/conatus-2026",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": 100000000,
+      "monthlyTokens": null,
+      "contextWindow": 1000000
+    },
+    "perModel": [
+      {
+        "modelId": "qiniu/conatus-free",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": 100000000,
+        "contextWindow": 1000000,
+        "evidence": "1M 上下文128K 最大输出；已认证用户每日 1 亿 Token"
+      }
+    ],
+    "freeModelIds": [
+      "qiniu/conatus-free"
+    ],
+    "evidence": [
+      "已认证用户每日 1 亿 Token，任意一笔大于 100 元且已到账的充值（多笔不累计）后提升至每日 10 亿 Token。",
+      "2026 年 10 月 24 日 00:00 至 2026 年 11 月 30 日 23:59",
+      "1M 上下文128K 最大输出",
+      "本期不提供按量付费。额度用尽后会直接拒绝请求，不调用上游模型，也不会扣除账户余额、资源包、订阅额度或积分。",
+      "同一账号下所有 API Key 共享额度，每日 00:00 重置，未使用额度不结转。"
+    ],
+    "notes": "主体确认：baseUrl https://api.qnaigc.com/v1 是七牛云 AI 大模型推理 Token API 的 OpenAI 兼容端点（官方实时推理文档 developer.qiniu.com/aitokenapi/13379 给出同一 BaseURL 与 /v1/chat/completions、/v1/messages）。活动页给出的每日额度按「输入 Token + 输出 Token」计量（命中缓存的输入也计入），故记为 tpd；这是**活动期**额度而非长期免费档：活动 2026-10-24~2026-11-30，结束后停止调用、不转付费模型，故 activity 到期后本条目应撤下。已认证用户默认 1 亿/日，单笔充值>100 元且到账后 10 亿/日（多笔不累计），额度按账号发放、同账号全部 API Key 共享、每日 00:00（北京时间）重置不结转。官方页面同时写明「本模型仅支持消耗活动每日免费 Token 额度」「不自动切换其他收费模型」，因此不能视为可付费续用。contextWindow 与 128K 最大输出取自活动页的能力标签，与模型 ID qiniu/conatus-free 一一对应；该模型是七牛在活动期对外唯一展示的「融合模型」标识。"
+  }
+]

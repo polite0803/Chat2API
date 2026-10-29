@@ -7,6 +7,7 @@ import type {
   ProviderStatus,
   RequestLogEntry,
   EffectiveModel,
+  CatalogueModel,
   ModelsFetchConfig,
   ModelsFetchReader,
   FetchedModel,
@@ -14,11 +15,20 @@ import type {
   ModelsFetchResult,
   AutoRoutingConfig,
   AggregateWire,
+  ModelCapabilityHint,
+  CompressionConfig,
+  OutputSteeringConfig,
 } from '../../shared/types.ts'
-import { DEFAULT_AUTO_ROUTING_CONFIG } from '../../shared/types.ts'
+import type { ChannelLoginKind } from '../../shared/channels.ts'
+import {
+  DEFAULT_AUTO_ROUTING_CONFIG,
+  DEFAULT_COMPRESSION_CONFIG,
+  DEFAULT_OUTPUT_STEERING_CONFIG,
+} from '../../shared/types.ts'
 import type { LegacyToolPromptConfig, ToolCallingConfig } from '../../shared/toolCalling.ts'
 import { DEFAULT_TOOL_CALLING_CONFIG } from '../../shared/toolCalling.ts'
 import { RETIRED_PROVIDER_IDS } from '../../shared/types.ts'
+import type { DayTokenBucket } from '../../shared/tokenAccounting.ts'
 
 /** Request names the retired DeepSeek integration used; stored mappings using them are dropped. */
 const DEEPSEEK_LEGACY_MODEL_MAPPING_NAMES = [
@@ -127,8 +137,11 @@ export type { ModelsFetchReader, ModelsFetchConfig, FetchedModel, ModelsFetchFai
 
 /**
  * Load Balance Strategy Enum
+ *
+ * `smart` / `pace` 由 `shared/quotaPacing.ts` 的重置推算驱动；推算不出重置时刻时
+ * 它们不改可用性，只退回既有顺序。
  */
-export type LoadBalanceStrategy = 'round-robin' | 'fill-first' | 'failover'
+export type LoadBalanceStrategy = 'round-robin' | 'fill-first' | 'failover' | 'smart' | 'pace'
 
 /**
  * Theme Enum
@@ -215,6 +228,25 @@ export interface Provider {
   authPrefix?: string
   /** Set at startup from the shipped provider config: this provider has an online model list source */
   supportsModelFetch?: boolean
+  /**
+   * Per-model request parameter overrides keyed by upstream model id (for
+   * aggregate entries, the id after `<entryId>/`). Values are merged into the
+   * upstream request and win over the client's same-named fields.
+   */
+  modelParameters?: Record<string, Record<string, unknown>>
+  /**
+   * Per-model routing annotations keyed by display name, for `auto`.
+   * Written by the builtin sync and by the account-channel sync; an unlisted
+   * model is unknown, not defaulted.
+   */
+  modelCapabilities?: Record<string, ModelCapabilityHint>
+  /**
+   * How the user proves ownership of this provider's accounts, for
+   * `type: 'account'` records only. See `shared/types.ts` for why `authType`
+   * cannot carry it (the enum has no browser/device-code member, so a channel
+   * record said `token` and the card rendered "API Key").
+   */
+  loginKind?: ChannelLoginKind
   /** Provider status */
   status?: ProviderStatus
   /** Last status check time */
@@ -286,6 +318,10 @@ export interface AppConfig {
   contextManagement: ContextManagementConfig
   /** Virtual `auto` model routing configuration */
   autoRouting: AutoRoutingConfig
+  /** Live-zone context compression (off by default) */
+  compression: CompressionConfig
+  /** Output-side verbosity steering (off by default) */
+  outputSteering: OutputSteeringConfig
 }
 
 /**
@@ -595,7 +631,7 @@ export type UserModelOverrides = Record<string, ProviderModelOverrides>
  * Effective Model Information
  * Defined once in shared/types, shared with preload and the renderer
  */
-export type { EffectiveModel }
+export type { EffectiveModel, CatalogueModel }
 
 /**
  * Storage Data Structure Interface
@@ -615,6 +651,14 @@ export interface StoreSchema {
   sessions: SessionRecord[]
   /** Persistent statistics */
   statistics: PersistentStatistics
+  /**
+   * Per-local-day token counters, keyed `YYYY-MM-DD`.
+   *
+   * Separate from `statistics` because it is bounded by DAYS rather than by a
+   * single running total, and because it must keep the upstream-reported and
+   * `chars/4`-estimated pools apart (see `shared/tokenAccounting.ts`).
+   */
+  tokenUsage: Record<string, DayTokenBucket>
   /** User model overrides for built-in providers */
   userModelOverrides: UserModelOverrides
 }
@@ -729,6 +773,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   managementApi: DEFAULT_MANAGEMENT_API_CONFIG,
   contextManagement: DEFAULT_CONTEXT_MANAGEMENT_CONFIG,
   autoRouting: DEFAULT_AUTO_ROUTING_CONFIG,
+  compression: DEFAULT_COMPRESSION_CONFIG,
+  outputSteering: DEFAULT_OUTPUT_STEERING_CONFIG,
 }
 
 /**

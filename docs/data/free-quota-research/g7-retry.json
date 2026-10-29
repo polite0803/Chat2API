@@ -1,0 +1,240 @@
+[
+  {
+    "entryId": "anthropic",
+    "providerName": "Anthropic",
+    "source": "documented",
+    "docUrl": "https://platform.claude.com/docs/en/api/rate-limits",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": 1000,
+      "rpd": null,
+      "tpm": 2000000,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "The rate limits for the Messages API are measured in requests per minute (RPM), input tokens per minute (ITPM), and output tokens per minute (OTPM) for each model class.",
+      "| Model | Maximum requests per minute (RPM) | Maximum input tokens per minute (ITPM) | Maximum output tokens per minute (OTPM) | ... | Claude Opus 4.x2 | 1,000 | 2,000,000 | 400,000 | ... | Claude Sonnet 4.x3 | 1,000 | 2,000,000 | 400,000 | (Tab \"Start tier\")",
+      "| Claude Fable 5.x1 | 1,000 | 500,000 | 100,000 | (Tab \"Start tier\", 唯一一档 ITPM 低于 2,000,000 的行)",
+      "| Usage tier | Monthly spend cap | ... | Start | $500 USD | | Build | $1,000 USD | | Scale | $200,000 USD |",
+      "Organizations are placed on a tier automatically based on usage history and account standing and can move to a higher tier over time as they use the API.",
+      "New organizations and organizations with limited usage history may start in the Evaluation tier, with limits below the standard limits shown on this page while account history is established.",
+      "Build tier: | Claude Opus 4.x2 | 5,000 | 5,000,000 | 1,000,000 | · Scale tier: | Claude Opus 4.x2 | 10,000 | 10,000,000 | 2,000,000 |"
+    ],
+    "notes": "带代理重试成功，但成功方式特殊：docs.anthropic.com、platform.claude.com、docs.claude.com 的每一个页面（含 /en/api/rate-limits、/en/api/rate-limits.md、站点根）都 307/200 落到 claude.com/app-unavailable-in-region —— 本机代理 http://127.0.0.1:7890 的出口 IP 是 155.117.84.36（ipinfo.io: city=Hong Kong, country=HK），而 HK 正是 Anthropic 不支持的地区，所以「带代理」并没有绕开区域拦截，是代理出口本身落在了被封地区。唯一未被区域网关拦截的官方路由是整站文档导出文件 https://platform.claude.com/llms-full.txt（47,371,269 字节，HTTP 200，正文完整），上面所有数字都逐字读自该文件；其内嵌的页面元数据块写明 `title: Rate limits` / `url: https://platform.claude.com/docs/en/api/rate-limits`，即引用页就是这一页。\n\nquota 取的是 Start tier（新组织默认档）的标准值：rpm=1000、tpm=2000000（官方把输入/输出分成两个指标，这里 tpm 记 ITPM，OTPM=400000 只写进 evidence，不做相加，因为官方从未给过合并 TPM）。rpd/tpd/monthlyTokens 官方完全没有：Anthropic 的月度上限是「花费」而不是 token，即 Start $500 USD / Build $1,000 USD / Scale $200,000 USD 的 monthly spend cap，且 \"Once you reach your tier's spend cap, API usage pauses until 00:00 UTC on the first day of the next month\"。contextWindow 为 null：本次抓到的正文里没有一处把上下文窗口写成数字（官方写的是模型档位名，不是 token 上限）。\n\nperModel 留空、freeModelIds 留空的理由（重要，直接影响本条目可用性）：我们目录里的三个 id 全部已被官方下线，且限速表里根本没有对应行——\n1) `claude-sonnet-4-20250514` 与 `claude-opus-4-20250514`：\"We've retired the Claude Sonnet 4 model (`claude-sonnet-4-20250514`) and the Claude Opus 4 model (`claude-opus-4-20250514`). All requests to these models on the Claude API will now return an error.\"（deprecation 通知 2026-04-14，API 退役 2026-06-15；退役表两行均写 `Retired | April 14, 2026 | June 15, 2026`）。\n2) `claude-3-5-sonnet-20241022`：\"These models were retired October 28, 2025.\"，退役表行 `| October 28, 2025 | claude-3-5-sonnet-20241022 | claude-sonnet-5-5 |`。\n官方现行表里的档位名（我们目录都没有，故不写进 perModel/freeModelIds）：Claude Fable 5.x、Claude Opus 5.5、Claude Opus 5、Claude Opus 4.x（=Opus 4.8/4.7/4.6/4.5 合并桶）、Claude Sonnet 5.5、Claude Sonnet 5、Claude Sonnet 4.x（=Sonnet 4.6/4.5 合并桶）、Claude Haiku 5.5、Claude Haiku 4.5、Claude Haiku 3.5。注意脚注 3：\"Sonnet 4.x rate limit is a total limit that applies to combined traffic across Sonnet 4.6 and Sonnet 4.5\" —— 这个 4.x 桶不含已退役的 Sonnet 4 (20250514)，所以不能把 1000 RPM 直接挂到我们的 id 上，只能作为条目档位默认值。\n\n两个容易踩的口径问题一并记下：(a) 官方把 ITPM 定义为「只有未缓存输入计数」——\"For most Claude models, only uncached input tokens count toward your ITPM rate limits\" / \"`cache_read_input_tokens` ... Do NOT count toward ITPM\"，所以 2,000,000 ITPM 的实际吞吐高于字面；Haiku 3.5 是例外（脚注 4）。(b) RPM 可能被按秒强制——\"a rate of 60 requests per minute (RPM) might be enforced as 1 request per second\"，对本项目做并发代理有直接影响。另：Anthropic 的文档里没有任何免费档/免费模型，API 侧只有付费 tier；转售相关的段落（\"If you operate a platform or gateway, or resell API access, the requests you send for your end customers arrive under your organization\"）是要求平台方传 user profile 以便按终端客户隔离封禁，属于允许转售并给出合规做法，不是禁止条款。真正的使用政策/商业条款页本次没抓到（同一区域网关）。"
+  },
+  {
+    "entryId": "openai_api",
+    "providerName": "OpenAI API",
+    "source": "undocumented",
+    "docUrl": null,
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": { "rpm": null, "rpd": null, "tpm": null, "tpd": null, "monthlyTokens": null, "contextWindow": null },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "带代理仍然取不到，且这次失败原因已定位清楚：不是「页面无数字」，是 OpenAI 全站文档在 CDN 层要 JS 挑战。带 -x http://127.0.0.1:7890 逐个试过并记录状态码：https://platform.openai.com/docs/guides/rate-limits → 301 到 https://developers.openai.com/api/docs/guides/rate-limits → HTTP 403，59 字节正文 `Forbidden Forbidden hkg1::tw4nn-1793215339581-b854a9465017`（hkg1 = 香港 PoP，与本机代理出口 city=Hong Kong 一致）；https://developers.openai.com/api/docs/guides/rate-limits（带 Chrome/131 完整 UA）→ 403，同样 59 字节；https://developers.openai.com/llms.txt → 403；https://platform.openai.com/docs/guides/rate-limits.md → 403；https://platform.openai.com/docs/api-reference/rate-limits → 403，10,067 字节，剥标签后正文只剩 \"Enable JavaScript and cookies to continue\"；https://help.openai.com/en/articles/5955610-rate-limits → 403（同样的 JS 挑战页）；https://help.openai.com/en/articles/8230684-understanding-rate-limits-for-chatgpt-and-api-platform → 403。curl -I 复核响应头确认 301 的 location 就是 developers.openai.com，即官方文档已整站迁到该域名，迁过去的唯一障碍是边缘 JS 挑战，普通 curl 无论走不走代理都过不去（走代理只是把挑战从国内 DNS 失败换成了 HK PoP 的 403）。\n\n因此本次没有任何逐字数字可登记：RPM/RPD/TPM/TPD/月度 token/context window 全部 null，perModel 与 freeModelIds 留空。registry 的 22 个 id（gpt-5.5、gpt-5.4、gpt-5.4-mini、gpt-5.4-nano、gpt-5.2、gpt-5.1、gpt-5、gpt-5-mini、gpt-5-nano、gpt-4o、gpt-4o-mini、gpt-4-turbo、gpt-4.1、gpt-4.1-mini、gpt-4.1-nano、o3、o3-mini、o3-pro、o4-mini、o1、o1-mini、gpt-5.6-sol）没有任何一份官方正文可核对，按铁律不用记忆、不用第三方转载表补。下一步若要取到，只有两条路：用真正会执行 JS 的浏览器（本任务禁用 WebFetch 且它不走代理），或把代理换成 OpenAI 支持地区且能通过挑战的出口。另注：本条目在 registry 里是 authKind apiKey / wire openai-chat，与 Anthropic 一样属付费 keyed 档，官方从未给出免费档数字这一事实本身就是结论。"
+  },
+  {
+    "entryId": "mistral",
+    "providerName": "Mistral",
+    "source": "undocumented",
+    "docUrl": "https://docs.mistral.ai/admin/billing-usage/usage-limits.md",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": { "rpm": null, "rpd": null, "tpm": null, "tpd": null, "monthlyTokens": null, "contextWindow": null },
+    "perModel": [
+      {
+        "modelId": "mistral-large-latest",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 256000,
+        "evidence": "别名映射：| Mistral Large 3 | `mistral-large-latest` | Complex tasks, large context | ；模型表行：| [Mistral Large 3](/models/mistral-large-3-25-12) | `mistral-large-2512` | GA | 256k | A state-of-the-art, open-weight, general-purpose multimodal model. |"
+      },
+      {
+        "modelId": "mistral-medium-latest",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 256000,
+        "evidence": "别名映射：| Mistral Medium 3.5 (recommended) | `mistral-medium-latest` | Flagship reasoning and code | ；模型表行：| [Mistral Medium 3.5](/models/mistral-medium-3-5-26-04) | `mistral-medium-3-5` | GA | 256k | Our frontier-class multimodal model optimized for agentic and coding use cases. |"
+      },
+      {
+        "modelId": "codestral-latest",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 128000,
+        "evidence": "别名映射：| Codestral | `codestral-latest` | Code generation and completion | ；模型表行：| [Codestral](/models/codestral-25-08) | `codestral-2508` | GA | 128k | Our cutting-edge language model for code completion released end of July 2025. |"
+      },
+      {
+        "modelId": "devstral-small-latest",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 256000,
+        "evidence": "别名行：\"- API names: `labs-devstral-small-2512`, `devstral-small-latest`\" ；模型表行：| [Devstral Small 2](/models/devstral-small-2-25-12) | `labs-devstral-small-2512` | Deprecated | 256k | ... | 2026-02-27 | 2026-03-31 | [Mistral Medium 3.5](/models/mistral-medium-3-5-26-04) |"
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "API rate limits define how much traffic your Organization can send. They are shown in [Admin Panel > API > Limits] (https://admin.mistral.ai/plateforme/limits).",
+      "Completion rate limits are listed per model and include: - **Tokens per minute**: the token throughput limit for the model. - **Requests per second**: the request throughput limit for the model.",
+      "Rate limits apply at the Workspace level and are shared across all API keys in that Workspace. ... Rate limits include: - **Requests per second (RPS)**: maximum concurrent API requests. - **Tokens per minute**: throughput limit for token processing. View your current rate limits at [Admin Panel > API > Limits].",
+      "**Free mode**: API access is enabled by default with no credit card required. Usage and rate limits apply.",
+      "You are in Free mode with limited usage and rate limits.",
+      "If you need higher limits, contact [support](https://help.mistral.ai) with: - the models or APIs you plan to use; - the target requests per second; - the expected tokens per minute and tokens per month;",
+      "Model aliases follow three formats: | `model-name-latest` | `mistral-medium-latest` | Latest version, across generations |"
+    ],
+    "notes": "docs.mistral.ai 带代理完全可读（先确认 https://docs.mistral.ai/ 200，再从 https://docs.mistral.ai/llms.txt 找到 .md 原文，并抓了 https://docs.mistral.ai/llms-full.txt 全文 3,239,421 字节做穷举）。结论是「页面无数字」而不是「取不到」：官方把限速的**维度**写得很清楚（Requests per second + Tokens per minute，按模型列、按 Workspace 共享），但**数值一个都没公布**，三处入口全部指向登录后的 Admin Panel（admin.mistral.ai/plateforme/limits）。在 llms-full.txt 全文里 grep rate limit|requests per second|tokens per minute|RPM|TPM 共 30 余处命中，逐条看过，没有任何一处带具体数字；Free mode 只写 \"Usage and rate limits apply\" 而不给额度；mistral.ai/pricing 抓到了 200/411,230 字节但剥标签后正文仅 913 字符（前端渲染，无计划额度表），故没有可用的每月免费额度数字，monthlyTokens 留 null。\n\nquota 六项全 null（没有 RPM/TPM/RPD/TPD/月度 token 数字；context window 各模型不同，不能塞进条目级字段），因此按判据 source=undocumented —— 但这不代表一无所获：perModel 里四个 id 的 contextWindow 都是从官方正文逐字读到的真实数字（256k/256k/128k/256k，写成 token 数）。\n\n两点必须提醒下游：(1) `devstral-small-latest` 在官方表里状态是 **Deprecated**，公告 2026-02-27、退役 2026-03-31，早于本次 asOf 2026-10-29，即这个 id 现在大概率已经打不通，官方给的替代是 Mistral Medium 3.5。(2) 官方 `docs.mistral.ai/models.md` 的现行模型总表里**没有任何 `-latest` 写法**（grep `-latest` 命中 0 次），表里用的是带日期的名字（`mistral-large-2512`、`codestral-2508`、`mistral-medium-3-5`、`labs-devstral-small-2512`）；`-latest` 别名只在 Vibe CLI 的模型清单页和「Model naming convention」一节出现。别名规则本身也带警告：\"Using an alias may expose you to silent updates in model behavior and pricing.\" 我们目录用 `-latest`，意味着模型会随官方换代静默漂移，上下文窗口也不能当常量用。\n\nregistry 里该条目注为「La Plateforme keys; embedding id omitted」。关于禁止转售/仅评估用途：在整份 llms-full.txt 里 grep resell|resale|prohibit|not permitted|competitive benchmark 只命中 FAQ 的错误码文（\"429: Too many requests - You have exceeded the rate limit for your subscription tier\"）和音频参数的 \"Extra inputs are not permitted\"，**没有任何禁止代理/禁止转售/仅限评估的条款**。"
+  },
+  {
+    "entryId": "mistral_codestral",
+    "providerName": "Mistral Codestral",
+    "withdrawn": true,
+    "withdrawnReason": "端点 codestral.mistral.ai 在 mistral 3.2MB 官方全文(llms-full.txt)里 0 次命中,codestral-latest 已由 mistral 条目覆盖;2026-10-29 用户裁定整条撤下",
+    "source": "undocumented",
+    "docUrl": "https://docs.mistral.ai/admin/billing-usage/usage-limits.md",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": { "rpm": null, "rpd": null, "tpm": null, "tpd": null, "monthlyTokens": null, "contextWindow": null },
+    "perModel": [
+      {
+        "modelId": "codestral-latest",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 128000,
+        "evidence": "模型表行：| [Codestral](/models/codestral-25-08) | `codestral-2508` | GA | 128k | Our cutting-edge language model for code completion released end of July 2025. | ；别名行：| Codestral | `codestral-latest` | Code generation and completion | ；模型卡页：\"- Context length: 128k\""
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "Completion rate limits are listed per model and include: - **Tokens per minute**: the token throughput limit for the model. - **Requests per second**: the request throughput limit for the model.",
+      "API rate limits define how much traffic your Organization can send. They are shown in [Admin Panel > API > Limits] (https://admin.mistral.ai/plateforme/limits).",
+      "You can also pin to a specific version by replacing `-latest` with a date suffix (for example, `mistral-medium-3-5` or `codestral-2508`). See the [models overview](/models) for all available versions."
+    ],
+    "notes": "同厂商第二个条目，独立查过 Codestral 专属限速，结论与 mistral 条目一致：官方只写维度不写数字，数值在登录后的 admin.mistral.ai/plateforme/limits，所以 source=undocumented、quota 全 null，唯一从正文读到的数字是该模型的上下文窗口（写进 perModel）。\n\nregistry 把这个条目的 baseUrl 设成 https://codestral.mistral.ai/v1，注释为「Codestral IDE endpoint, distinct from La Plateforme keys (FCC)」。**这条前提在现行官方文档里已经找不到依据**：在 docs.mistral.ai 的 llms.txt 索引和 3.2MB 的 llms-full.txt 全文里 grep `codestral.mistral.ai` 命中 **0 次**；Codestral 现在只以 La Plateforme 的模型 id 出现（`codestral-latest` / 固定版 `codestral-2508`），走通用 /v1 端点，官方对它的描述是 \"Our cutting-edge language model for code completion released end of July 2025\"，能力项 \"Features: structured-outputs, function-calling, predicted-outputs, document-qna, prefix, batching, chat-completions, fim\"，FIM 走同一主机上的 `/v1/fim/completions`。也就是说这个条目和 `mistral` 条目的 `codestral-latest` 极可能是同一条上游路由的重复登记，限速也必然同源（同一 Organization 的 Workspace 额度）。要不要合并/保留请上层裁定；本条没有独立于 La Plateforme 的额度，官方文档也无从给出。\n\n另外 Codestral 的旧版 `codestral-2405` 已 Retired（\"| [Codestral](/models/codestral-24-05) | `codestral-2405` | Retired | 32k | Our first cutting-edge language model for coding and FIM. | 2024-12-02 | 2025-06-16 |\"），当前 GA 的是 128k 的 2508。禁转售/仅评估条款：同样 0 命中。"
+  },
+  {
+    "entryId": "perplexity",
+    "providerName": "Perplexity",
+    "source": "undocumented",
+    "docUrl": "https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers.md",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": { "rpm": null, "rpd": null, "tpm": null, "tpd": null, "monthlyTokens": null, "contextWindow": null },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "Two kinds of limits apply to Agent API requests, and a request must pass both: * **A request limit** (queries per second, QPS) for each API organization, shared across all models. * **Token limits** (tokens per minute, TPM, and tokens per hour, TPH) for each API organization and model.",
+      "| Tier | QPS (Queries per Second) | ... | **Tier 0** | 1 QPS | | **Tier 1** | 3 QPS | | **Tier 2** | 8 QPS | (Agent API 请求上限，Tier 5 为 33 QPS)",
+      "| Tier | TPM (Tokens per Minute) | TPH (Tokens per Hour) | ... | **Tier 0** | 5,000,000 | 300,000,000 | | **Tier 1** | 6,000,000 | 360,000,000 | (Agent API token 上限，Tier 5 为 16,000,000 / 960,000,000)",
+      "The Search API has separate rate limits that apply to all usage tiers: | Endpoint | Rate Limit | Burst Capacity | | POST `/search` | 50 query units per second | 50 query units |",
+      "| Tier | Total Credits Purchased | Status | ... | **Tier 0** | \\$0 | New accounts, limited access | | **Tier 1** | \\$50+ | Light usage, basic limits | ... | **Tier 5** | \\$5,000+ | Enterprise usage |",
+      "Orchestrator API requests are rate limited. When a request is rate limited, or an upstream model is overloaded, the API returns a `429` with a `Retry-After` header — retry after the indicated interval.",
+      "Limits depend on the API and your usage tier. The Agent API applies both a request limit and per-model token limits."
+    ],
+    "notes": "docs.perplexity.ai 带代理完全可读（先 200 拿到 https://docs.perplexity.ai/llms.txt 索引，再抓 rate-limits-usage-tiers.md 13,894 字节、pricing.md、faq.md、router/models.md、migrate-from-sonar/overview.md 全文）。判成 undocumented 的原因是**口径不匹配，不是没数字**：官方那张带完整数字的表全部挂在 **Agent API**（`POST /v1/agent` / `/v1/responses`）、**Search API**（50 query units/s）和 **Embeddings API**（Tier 0 85 QPS）上；而我们 registry 这个条目是 baseUrl https://api.perplexity.ai + wire openai-chat + 模型 `sonar-pro` / `sonar`，即 **Sonar Chat Completions（/v1/chat/completions）** 这条路径。限速页对 Sonar/chat completions 一个数字都没给，整页只写 \"Orchestrator API requests are rate limited\"（无数字）并把数值留给上面三个 API。把 Tier 0 的 1 QPS / 5,000,000 TPM 抄进本条目 quota 会是错标——那些限额明确只作用于 /v1/agent 的调用面，故 quota 六项全部保持 null，逐字数字留在 evidence 里供上层裁量。\n\nSonar 在官方文档里已被降级为 legacy：docs.perplexity.ai 现行 llms.txt 索引里 **没有任何 Sonar 模型页**，只有 \"Migrate from Sonar to the Agent API\"、\"How to migrate from Sonar\"、\"Agent API vs Sonar benchmarks\" 三篇迁移文档；FAQ 写 \"Legacy Sonar models apply SafeSearch to web results by default\"；迁移页给出替代关系 \"Sonar | `fast`\"、\"Sonar Pro | `fast`\"。router/models.md（Orchestrator 模型总表，2,805 字节）里 grep sonar 0 命中。也就是说我们这两个 id 既拿不到限速，也拿不到上下文窗口，因此 perModel 与 freeModelIds 留空、contextWindow null（官方正文里没有任何一处把 token 上限或上下文窗口写成对应 sonar 的数字，绝不臆造）。\n\n可以确定的一点：Perplexity 没有免费档可言，Tier 0 的定义就是 \"$0 | New accounts, limited access\"，且 \"Tiers are based on **cumulative purchases** across your account lifetime, not current balance\"，要超过 Tier 5 得填 typeform 申请。禁代理/禁转售/仅评估条款：在 rate-limits、pricing、faq、migrate-from-sonar 四篇正文里 grep resell|prohibit|not permitted|benchmark|evaluat 无任何禁止性表述（唯一 benchmark 命中是官方自己的评测页标题）。"
+  },
+  {
+    "entryId": "together",
+    "providerName": "Together AI",
+    "source": "undocumented",
+    "docUrl": "https://docs.together.ai/docs/serverless/rate-limits.md",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": { "rpm": null, "rpd": null, "tpm": null, "tpd": null, "monthlyTokens": null, "contextWindow": null },
+    "perModel": [
+      {
+        "modelId": "zai-org/GLM-5.2",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": 1048575,
+        "evidence": "| Z.ai | GLM-5.2 | zai-org/GLM-5.2 | 1048575 | \\$1.40 | \\$0.26 | \\$4.40 | FP4 | Yes | Yes | （表头：| Organization | Model name | API model string | Context length | Input pricing (per 1M tokens) | Cached input pricing (per 1M tokens) | Output pricing (per 1M tokens) | Quantization | Function calling | Structured outputs |）"
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "In most cases, you can use Together AI serverless inference without encountering rate limits. Rate limiting may occasionally occur with high request volumes or large bursts of traffic.",
+      "When demand is high, Together may limit requests to maintain these performance goals. You may receive a `429 Too Many Requests` or `503 Service Unavailable` response.",
+      "Serverless performance is best-effort. For committed throughput and reliability guarantees, see [provisioned throughput].",
+      "**Model-specific limits:** When a model is in especially high demand, Together may apply custom rate limits or access restrictions to that model.",
+      "**Enterprise and Scale contracts:** If you have an active Enterprise or Scale contract, your purchased rate limits stay in place until the contract expires.",
+      "Most users can expect to use serverless inference without encountering rate limits. Rate limiting may occasionally occur with high request volumes or large bursts of traffic."
+    ],
+    "notes": "docs.together.ai 带代理完全可读；上一轮猜的 docs.together.ai/docs/limits 确实不对，正确路径是从 https://docs.together.ai/llms.txt 索引里找到的 https://docs.together.ai/docs/serverless/rate-limits.md（另试 /docs/rate-limits.md 与 /docs/pricing.md 均 200，内容是同一页）。这是「页面无数字」的典型：整篇限速页 **一个 RPM/RPD/TPM/TPD/QPS 数值都没有**，通篇只说 best-effort、429/503 怎么处理、要保障就去买 provisioned throughput；serverless/overview.md 的 \"## Rate limits\" 一节同样只有定性描述。官方还明确说模型特定上限是临时施加的自定义值，不给公开表。因此六项 quota 全 null、source=undocumented。\n\n唯一读到的真实数字是模型目录里的上下文窗口：https://docs.together.ai/docs/serverless/models.md（18,076 字节）的 Chat models 表有 `Context length` 一列，我们五个 id 中只有 `zai-org/GLM-5.2` 命中（1048575），已写进 perModel 并附整行逐字原文；因为它只是 5 个模型里的 1 个，不适合升格为条目级 quota.contextWindow，故该字段留 null。\n\n另外四个 id 在现行官方目录里已经查不到，按规则不写进 perModel/freeModelIds，此处列出核对结果供上层判断：`meta-llama/Llama-3.3-70B-Instruct-Turbo`、`deepseek-ai/DeepSeek-R1`、`Qwen/Qwen3-235B-A22B`、`meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8` 在 models.md 全文 grep 均 0 命中（该表现行条目是 deepseek-ai/DeepSeek-V4-Pro-0813 1048576、deepseek-ai/DeepSeek-V4.1-Flash 1000000、meta-models/Muse-Spark-Open-816B-A42B 1048576、moonshotai/Kimi-K3 1048576 等新代次），即我们目录里这四条是已下架的老模型 id，路由到 Together 很可能直接失败。registry 注释「the FCC profile lists models at /models with context_length」说的正是这一列，但它属于 /models API 响应，按铁律不向 api.together.ai 发请求，数值一律取文档表。\n\n禁代理/禁转售/仅评估条款：在 rate-limits.md、overview.md、pricing.md、models.md、fine-tuning/supported-models.md 里 grep resell|prohibit|not permitted|evaluation only 无禁止性表述（Enterprise/Scale 合同段只谈买断的上限保留）。"
+  },
+  {
+    "entryId": "xai",
+    "providerName": "xAI (Grok)",
+    "source": "documented",
+    "docUrl": "https://docs.x.ai/developers/rate-limits.md",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": 50000000,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "grok-4.6",
+        "rpm": null,
+        "rpd": null,
+        "tpm": 50000000,
+        "tpd": null,
+        "contextWindow": 500000,
+        "evidence": "限速表：| grok-4.6 | T0: 150, T1: 172, T2: 208, T3: 312, T4: 500 | T0: 50M, T1: 53M, T2: 60M, T3: 74M, T4: 100M | ；上下文表：| grok-4.6 (< 200k prompt tokens) | 500k | $2.00 | $0.50 | $6.00 |"
+      },
+      {
+        "modelId": "grok-4.5",
+        "rpm": null,
+        "rpd": null,
+        "tpm": 50000000,
+        "tpd": null,
+        "contextWindow": 500000,
+        "evidence": "限速表：| grok-4.5 | T0: 150, T1: 172, T2: 208, T3: 312, T4: 500 | T0: 50M, T1: 53M, T2: 60M, T3: 74M, T4: 100M | ；上下文表：| grok-4.5 (< 200k prompt tokens) | 500k | $2.00 | $0.30 | $6.00 |"
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "Every xAI API team has per-model rate limits on two dimensions: **requests per second (RPS)** and **tokens per minute (TPM)**. Your per-second limit is derived from your per-minute request budget (RPM / 48, with a minimum of 2): you cannot spend a full minute's requests in a single second, which protects the API from sudden bursts. These limits scale with your team's **tier**, which is determined by cumulative spend on the API.",
+      "| Tier | Spend threshold | | Tier 0 | $0 (default) | | Tier 1 | $50 | | Tier 2 | $250 | | Tier 3 | $1,000 | | Tier 4 | $5,000 | | Enterprise | Available on request |",
+      "Each tier sets hard RPS and TPM caps per model. Limits scale exponentially with tier. Exceeding any limit returns a `429 Too Many Requests` error.",
+      "Your tier is based on cumulative spend on the xAI API since January 1, 2026. Tiers unlock automatically as your spend increases.",
+      "Once you qualify for a tier, you stay there permanently; tiers never downgrade.",
+      "All tokens consumed by a request count toward the TPM limit for that model: * **Prompt tokens** (text, image, and audio) * **Completion tokens** * **Reasoning tokens** (on reasoning models) * **Cached prompt tokens** (still count toward TPM, though they are billed at a reduced rate)"
+    ],
+    "notes": "上一轮只看到搜索摘要、数值表被截断，这次取全了：docs.x.ai 带代理 200，先取 https://docs.x.ai/llms.txt（26,271 字节）定位到官方 markdown 原文 https://docs.x.ai/developers/rate-limits.md（6,153 字节，完整含全部数值表），再取 https://docs.x.ai/developers/models.md（4,843 字节，含 Context 列）。docs.x.ai/docs/overview 那页本身是 507,680 字节的 JS 外壳、剥标签后仅 6,749 字符且只有导航文字，所以数字不在 overview 里，而在 .md 原文里。\n\n单位口径（务必按此解读，别当成 RPM）：官方只给 **RPS 和 TPM** 两个维度，没有 RPM/RPD/TPD/月度 token。rpm 留 null 的原因是我抓到的正文里没有逐字的 RPM 数字，只有一句换算线索 \"Your per-second limit is derived from your per-minute request budget (RPM / 48, with a minimum of 2)\" —— 据此反推 grok-4.6/4.5 的 T0 约为 150×48=7200 RPM，但这是推导值而非原文数字，按铁律不写进 rpm 字段，只在此说明，RPS 原值 150(T0)/172/208/312/500 已附在 perModel.evidence。\ntpm=50000000 取的是 **Tier 0（$0，默认档）** 的 50M，官方原文 \"| Tier 0 | $0 (default) |\" 说明任何未花钱的 key 都在 T0，所以这一档才是本项目关心的「裸 key」上限；T1..T4 的 53M/60M/74M/100M 一并记在 evidence。\n\nperModel 只收了官方限速表中真实存在的两个 id。其余四个我们目录里的 id 都不在现行表里，按规则不写进 perModel/freeModelIds，改为在此列出官方核对结果：\n1) `grok-4-fast-reasoning`、`grok-code-fast-1`、`grok-3` 已于 2026-05-15 退役，但官方说 slug 仍可解析并被重定向：\"After **May 15, 2026 at 12:00 PM PT**, requests to the retired model slugs above will automatically redirect to `grok-4.3`. The slugs themselves continue to resolve, so you do not need to change your code to avoid breakage.\" 重定向表逐行：`grok-4-fast-reasoning` → `grok-4.3` with `low` reasoning effort；`grok-3` → `grok-4.3` with `none` reasoning effort；`grok-code-fast-1` → `grok-build-0.1`。故它们的实际上限是 `grok-4.3` 行（T0: 37 RPS / T0: 10M TPM，上下文 1M）和 `grok-build-0.1` 行（T0: 37 RPS / T0: 10M TPM，上下文 256k）。没有把这些数字直接登记到退役 slug 上，是因为那是经由重定向链路间接生效的第二层推导，请上层裁定是否采用。\n2) 裸 `grok-4` 在本次抓到的三份官方正文（rate-limits.md、models.md、may-15-retirement.md）里 **0 次命中**（grep 命中的 `/grok-4` 都是 `/grok-4.7` 的前缀），即官方从未记载这个 slug。\n3) 计费口径要留意：\"If you continue sending requests to a deprecated slug after May 15, please be aware that you will be billed at `grok-4.3` pricing of **$1.25 per 1M input tokens and $2.50 per 1M output tokens** rather than the rates of the original model.\"\n\n官方现行表里的完整 id 名单（我们目录缺的都在这里）：grok-4.7、grok-4.6、grok-4.5、grok-4.3、grok-4.20-0309-reasoning、grok-4.20-0309-non-reasoning、grok-build-0.1、grok-4.20-multi-agent-0309，以及 Imagine 图像/视频与 Voice & Audio 各组。限速适用范围官方写明：\"Rate limit tiers apply to text, embedding, and voice models. For increases to Imagine API limits, contact sales@x.ai.\"\n\n免费额度：没有任何免费模型或免费 token，T0 只是「$0 累计消费」的默认档，仍需充值才能用；提额途径是 \"Spend more\" / \"Request an increase\"（Console 提交）/ \"Contact sales\"。禁代理/禁转售/仅评估条款：rate-limits.md、models.md、overview 三份正文里 grep resell|prohibit|not permitted|evaluation 0 命中。"
+  },
+  {
+    "entryId": "groq",
+    "providerName": "Groq",
+    "source": "undocumented",
+    "docUrl": null,
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": { "rpm": null, "rpd": null, "tpm": null, "tpd": null, "monthlyTokens": null, "contextWindow": null },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "带代理仍取不到，且这次把拦截性质确认了：不是 Cloudflare 非浏览器拦截，是 Groq 边缘直接对出口 IP 返 403 JSON。用 -x http://127.0.0.1:7890 并另配 Chrome 131 / Safari 17.4 两种 UA、Accept 头逐一试过，记录原始返回：https://console.groq.com/docs/rate-limits → **403**，正文 33 字节 `{\"error\":{\"message\":\"Forbidden\"}}`；https://console.groq.com/docs/rate-limits.md → 403 同 33 字节；https://console.groq.com/docs/models → 403；https://console.groq.com/docs/limits → 403；https://console.groq.com/docs/api-reference/chat → 403；https://console.groq.com/llms.txt → 403（33 字节）；整个 https://groq.com/docs → 403（同一 33 字节 JSON）。可见 console.groq.com 的文档子树对本机代理出口（ipinfo.io: 155.117.84.36, city/country = Hong Kong / HK）是**整片 403**，与路径、UA、是否 .md 无关。\n\n公开营销站这条线也认真走过，结论是「页面无数字」：https://groq.com/docs/rate-limits → 404（31,306 字节的站点 404 外壳）；https://groq.com/pricing → **200，55,004 字节**，但剥标签后正文只有 947 字符，全是公司宣传语（\"Groq is the premier neocloud for fast inference\"…），限速/RPM/TPM/free/tier 关键词 grep 0 命中，说明该页数字由前端渲染、服务端 HTML 里没有；https://groq.com/llms.txt → 404；https://groq.com/sitemap.xml → 200，7,306 字节，逐条筛过全部 URL，**没有任何 docs/limit/rate 类页面**，只有 newsroom 与 blog 的 PR 文；https://support.groq.com/ → 200 但只是 Contact 页，站内无 rate limit 文章链接。\n\n因此按铁律全部留 null、perModel 与 freeModelIds 留空、source=undocumented：官方公开文档既取不到、可达页面也不含数字，Groq 的 per-model RPM/TPM 具体数值只在登录后的 Console（console.groq.com/docs/rate-limits 及账户限速页）里。我们目录的四个 id（`llama-3.3-70b-versatile`、`meta-llama/llama-4-maverick-17b-128e-instruct`、`qwen/qwen3-32b`、`openai/gpt-oss-120b`）没有任何官方正文可核对，连上下文窗口都无法登记。\n\n补充两点供上层：(1) 换到 Groq 支持地区且未被边缘 403 的出口，或用真实浏览器，才可能取到；(2) 顺带取到了 Groq 的服务条款 https://groq.com/terms-of-use（200，105,129 字节，剥标签正文 19,977 字符），里面有一条禁止转售表述，见逐字短句：\"You agree not to copy, modify, or create a derivative work of, sell, resell, sublicense, transfer, or distribute any content on the Websites, in whole or in part.\" —— 注意其约束对象是 \"content on the Websites\"（网站内容），不是 API 调用额度的转售，作为聚合代理项目要不要据此收敛 Groq 渠道请上层裁定；另有一条爬取禁令 \"In connection with your use of the Websites you will not engage in or use any data mining, robots, crawling, scraping, or data gathering or extraction methods\"，与本任务只读文档不请求 API 的做法不冲突。"
+  }
+]

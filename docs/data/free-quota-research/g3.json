@@ -1,0 +1,377 @@
+[
+  {
+    "entryId": "baidu",
+    "providerName": "Baidu Qianfan",
+    "source": "documented",
+    "docUrl": "https://cloud.baidu.com/doc/qianfan/s/rmh4stp0j",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": 60,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "deepseek-v4-pro",
+        "rpm": 60,
+        "rpd": null,
+        "tpm": 1000000,
+        "tpd": null,
+        "contextWindow": 1000000,
+        "evidence": "DeepSeek-V4 | DeepSeek-V4-Pro | deepseek-v4-pro | 1M | 1M | [1,393216] | 32k | RPM = 60 TPM = 1000000"
+      },
+      {
+        "modelId": "glm-5.2",
+        "rpm": 60,
+        "rpd": null,
+        "tpm": 1000000,
+        "tpd": null,
+        "contextWindow": 1000000,
+        "evidence": "GLM-5.2 | GLM-5.2 | glm-5.2 | 1M | 1M | [1，131072] | RPM = 60 TPM = 1000000"
+      },
+      {
+        "modelId": "glm-5.1",
+        "rpm": 60,
+        "rpd": null,
+        "tpm": 250000,
+        "tpd": null,
+        "contextWindow": 198000,
+        "evidence": "GLM-5.1 | GLM-5.1 | glm-5.1 | 198k | 198k | [1，131072] | RPM = 60 TPM = 250000"
+      },
+      {
+        "modelId": "kimi-k2.6",
+        "rpm": 60,
+        "rpd": null,
+        "tpm": 250000,
+        "tpd": null,
+        "contextWindow": 256000,
+        "evidence": "Kimi-K2.6（即将下线） | kimi-k2.6 | 256k | 256k | [1，262144] | RPM = 60 TPM = 250000"
+      },
+      {
+        "modelId": "qwen3.5-397b-a17b",
+        "rpm": 60,
+        "rpd": null,
+        "tpm": 250000,
+        "tpd": null,
+        "contextWindow": 256000,
+        "evidence": "Qwen3.5 | Qwen3.5-397B-A17B | qwen3.5-397b-a17b | 256k | 252k | [1，65536] | 80k | RPM = 60 TPM = 250000"
+      },
+      {
+        "modelId": "qwen3.5-27b",
+        "rpm": 60,
+        "rpd": null,
+        "tpm": 250000,
+        "tpd": null,
+        "contextWindow": 256000,
+        "evidence": "Qwen3.5 | Qwen3.5-27B | qwen3.5-27b | 256k | 252k | [1，65536] | 80k | RPM = 60 TPM = 250000"
+      },
+      {
+        "modelId": "deepseek-v4-flash",
+        "rpm": null,
+        "rpd": null,
+        "tpm": null,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "官方表只有带日期的接入点 deepseek-v4-flash-0731（1M | 1M | [1,393216] | 32k | RPM = 60 TPM = 250000），裸名 deepseek-v4-flash 未出现在 model 参数列"
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "模型列表 更新时间：2026-10-18；表列头为「model参数 接入点ID | 上下文长度 (token) | 最大输入 (token) | 最大输出 (token) | 默认流控」",
+      "首次开通千帆大模型时，平台将自动发放指定模型的免费使用额度，赠送服务范围、Tokens量以及有限期如下表所示",
+      "ERNIE-4.5-Turbo-128K | 100万 | 3个月"
+    ],
+    "notes": "主体确认：baseUrl https://qianfan.baidubce.com/v2 = 百度千帆 v2 OpenAI 兼容端点（website qianfan.baidubce.com，docs cloud.baidu.com/doc/qianfan）。所登记的 RPM/TPM 来自官方「模型列表」表的「默认流控」列，该列是**预置服务按量后付费的默认限流**（不是免费档），故 scope=keyed-account；7 行的 RPM 全为 60，故 provider 级 rpm=60，TPM 逐模型不同（1000000 / 250000），只落在 perModel，provider 级 tpm 留 null。官方**没有**公布 RPD/TPD（每日/每小时请求与 token 帽），一律 null。免费池确实存在但口径不匹配：https://cloud.baidu.com/doc/qianfan/s/Imi2rpirg 写的是自 2025-10-24 起自动开通时**一次性**发放「100万 tokens / 有效期 3 个月」，既不是月度池也不是 RPM，因此 monthlyTokens 留 null；且发放清单（ERNIE-4.5-Turbo 系列 / ERNIE-X1-Turbo / DeepSeek-R1 / DeepSeek-V3-250324 / DeepSeek-V3.1 / Kimi-K2-Instruct / Qwen3-235B-A22B-Instruct-2507 / Qwen3-Coder / bge-*）里**没有**本目录任何一个 model 参数，故 freeModelIds 为空——不要把那 100 万算到这些模型头上。另两处与目录不符：kimi-k2.6 官方标注「即将下线」；deepseek-v4-flash 只有 deepseek-v4-flash-0731 一个接入点。TPM/RPM 配额可通过「配额管理 / QPS叠加包」付费扩容（cloud.baidu.com/doc/qianfan/s/Gmh4su5tz、Gmi5wd4fm）。"
+  },
+  {
+    "entryId": "tencent",
+    "providerName": "Tencent Hunyuan",
+    "source": "undocumented",
+    "docUrl": "https://cloud.tencent.com/document/product/1729/97731",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "默认该接口下单账号限制并发数为 5 路，如您有提高并发限制的需求请 购买",
+      "首次开通腾讯混元大模型服务后，混元生文将发放一定量级的免费调用额度，供您测试体验。免费调用额度将以一次性的免费资源包的形式发放，并在计费结算时优先扣减。",
+      "Hunyuan-a13b | 共100万 tokens，共享消耗。资源包有效期为1年，自开通服务之日起1年内若免费资源包未使用完，则过期作废。"
+    ],
+    "notes": "主体确认：baseUrl https://api.hunyuan.cloud.tencent.com/v1 = 腾讯云混元生文 OpenAI 兼容端点（website cloud.tencent.com/product/hunyuan）。一个数字都进不了 quota：官方唯一可读的请求类限制是**并发数 5 路**（https://cloud.tencent.com/document/product/1729/105701 对话接口正文），既不是 RPM 也不是 RPD，字段表里没有对应列，只在此记录；官方没有任何 RPM/RPD/TPM/TPD 正文数字（限流类页面 https://cloud.tencent.com/document/product/1729/105526 已被重定向到无关的 WeData 文档，读不到混元限速内容）。免费池存在但不覆盖本目录：「混元生文计费概述」的一次性免费资源包清单是 Hunyuan-a13b / Hunyuan-role-latest / Hunyuan-translation / Hunyuan-translation-lite / Tencent HY Vision 1.5 Instruct / Hunyuan-turbos-vision / Hunyuan-t1-vision / Hunyuan-turbos-vision-video / Hunyuan-embedding，**不含 hunyuan-turbos-latest 与 hunyuan-t1-latest**，所以 freeModelIds 空、monthlyTokens 空（且它是 1 年有效期的一次性包，不是月度额）。警示（官方原话）：「为进一步提升大模型服务体验，腾讯混元大模型相关功能将逐步迁移至 TokenHub。迁移后，原平台将不再新增模型能力，并停止支持新购模型服务。」——本目录这两条模型属于正在被迁走的旧平台，新接入应改走 TokenHub（product/1823）。另：免费/付费资源包耗尽后**不会**自动转后付费，未开通后付费会出现计费异常提示。"
+  },
+  {
+    "entryId": "volcengine-ark",
+    "providerName": "Volcengine Ark",
+    "source": "undocumented",
+    "docUrl": "https://www.volcengine.com/docs/82379/1799865",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "主体确认：baseUrl https://ark.cn-beijing.volces.com/api/coding/v3 = 火山方舟（字节跳动，中国站）编程端点，authUrl console.volcengine.com/ark。URL 试了但读不到正文：www.volcengine.com/docs/82379/* 与 docs.volcengine.com（301 目标）都是前端渲染的 SPA 外壳，curl 拿到的 434KB 里只有导航 DOM、没有模型表格正文；官方 markdown 导出（…/1799865.md）与 llms.txt 都在响应里给出登录跳转 redirectURI=%2F%2Fdocs.volcengine.com%2Fdocs%2Fark%2F1799865.md%3Flang%3Dzh，即需登录才能取；文档 OpenAPI 直取（/api/doc/detail、www.volcengine.com/api/docs/detail）返回 404 或「未授权访问 UnauthorizedAccess」。因此 RPM/RPD/TPM/TPD/月度 token/contextWindow 全部 null，不猜。搜索引擎给出的「Doubao-Seed 默认 RPM 500 / TPM 1000000」「Agent Plan 共享池 QPS 20、5 小时 10 万次」等数字全部来自 www.volcengine.com/article/* 这类社区/SEO 文章（正文自称转述官方但页面不是文档本体），按裁定不录入。目录侧另有风险：本 entry 的 9 个 id（Doubao-Seed-2.0-Code/pro/lite、Doubao-Seed-Code、DeepSeek-V4-Flash/Pro、GLM-5.1、MiniMax-M2.7、Kimi-K2.6）与中文站模型名写法（豆包/方舟版本号后缀）不一致，实际 model 参数需以控制台为准。"
+  },
+  {
+    "entryId": "xiaomi-tokenplan",
+    "providerName": "Xiaomi MiMo Token Plan",
+    "source": "undocumented",
+    "docUrl": "https://mimo.mi.com/docs/zh-CN/api/guidance/rate-limit",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "平台对每个账号设有模型并发上限，服务器负载较高时可能出现响应延迟或 429 报错。",
+      "mimo-v2.6-pro | 100 | 10M；mimo-v2.6-flash | 100 | 10M（更新时间 2026 年 10 月 23 日）",
+      "mimo-v2.5-pro、mimo-v2.5 模型已于北京时间 2026.10.21 10:00 正式下线，建议尽快切换至新版模型。",
+      "每月固定额度 | 41 亿 Credits | 110 亿 Credits | 380 亿 Credits | 820 亿 Credits"
+    ],
+    "notes": "主体确认与纠偏：registry 里的 website/authUrl https://mimo.xiaomi.com 只是 MiMo 的宣传/博客站（页面上只有 Web Demo / API Access / Gallery / Paper 入口，没有任何限速正文）；官方开发者文档在**另一个域名** https://mimo.mi.com/docs/…（端点域名 api.xiaomimimo.com / token-plan-{cn,sgp,ams}.xiaomimimo.com）。官方限速页（docUrl，2026-10-23 更新）确实给出了数字：mimo-v2.6-pro 与 mimo-v2.6-flash 最大 RPM 100、最大 TPM 10M，上下文窗口 1M、最大输出 128K；但本目录的 5 个 id（mimo-v2.5-pro、mimo-v2.5-pro-claude、mimo-v2.5、mimo-v2-pro、mimo-v2-omni）**一个都不在表里**，且 mimo-v2.5-pro / mimo-v2.5 官方已于 2026-10-21 10:00 下线，所以这些 RPM/TPM 不能按到他家模型上——rpm/tpm/contextWindow 全 null，perModel 留空。更关键的是这 100 RPM / 10M TPM 是**按量付费开放平台**口径（sk- Key），不是本 entry 的 Token Plan：Token Plan（tp-/ttp- Key）官方只按订阅档位公布「每月固定额度 41 亿 / 110 亿 / 380 亿 / 820 亿 Credits」（Lite/Standard/Pro/Max，年度包 492 亿/1320 亿/4560 亿/9840 亿），单位是 Credits（页面只说「采用 Token 折算机制」，未给折算比例），既不是 token 也不是 RPM → monthlyTokens 留 null，档位取决于用户买哪一档。警示：官方明确 API Key（sk-）与 Token Plan Key（tp-/ttp-）互不通用；Token Plan 是固定订阅套餐额度，把订阅 Key 当通用 API 中转使用不符合其订阅用途（本 entry 的 registry notes 也写了「keys start with tp- and are cluster-specific」）。"
+  },
+  {
+    "entryId": "byteplus",
+    "providerName": "BytePlus Ark",
+    "source": "undocumented",
+    "docUrl": "https://docs.byteplus.com/en/docs/BytePlusModelArk/153863",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "主体确认：baseUrl https://ark.ap-southeast.bytepluses.com/api/coding/v3 = BytePlus ModelArk（火山方舟国际站，新加坡区域）编程端点，registry category=free-tier。URL 试了但读不到正文：docs.byteplus.com 整站是 SPA，返回的 HTML 首行即「You need to enable JavaScript to run this app」，正文不在响应里；llms.txt（/en/docs/BytePlusModelArk/llms.txt 与 /llms.txt）也返回同一个 app shell；/api/docs/detail?docId=153863 与 …/153863.md 同样只是 shell，没有可读文档正文；www.byteplus.com/en/product/modelark 产品页抓到的 33KB 里也没有任何 free/credit/rate-limit 句子。因此 RPM/RPD/TPM/TPD/monthlyTokens/contextWindow 全 null。registry 现有的「Free credits for new accounts (9router notice)」是上游目录的转述，**不是**官方正文，本轮未能证实也无法证伪，故不据此登记任何数字。模型 id 写法（seed-2-0-pro-260328 / seed-2-0-code-preview-260328 / kimi-k2-thinking-251104 / glm-4-7-251222 / gpt-oss-120b-250805）带日期后缀，与官方 ModelArk 控制台命名一致与否需在登录后核对；本应用侧 authKind=apiKey，可保存 Key，但额度只能等实际 429 响应头回传后按 learned 档补齐。"
+  },
+  {
+    "entryId": "azure_openai",
+    "providerName": "Azure OpenAI",
+    "source": "undocumented",
+    "docUrl": "https://learn.microsoft.com/en-us/azure/ai-services/openai/quotas-limits",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "Global Standard: Deployments of the same model and version share one quota pool across all regions in a subscription. Standard and Flex processing requests use this pool.",
+      "For Global Standard deployments, all gpt-chat-latest versions use the same tier-level TPM limit shown in each tier. Versions 2026-05-05, 2026-05-28, and 2026-06-24 use 10 RPM per 1,000 TPM.",
+      "gpt-4.1 | GlobalStandard | 1,000 | 1,000,000（同页另一行 gpt-4.1 | DataZoneStandard | 300 | 300,000）"
+    ],
+    "notes": "主体确认：registry 里 baseUrl=null（必须用户提供 AZURE_OPENAI_BASE_URL + deployment 名），models=[]。官方配额页**正文可读且数字很多**，但口径是「模型版本 × 部署类型 × 配额层级」三维矩阵，不是单个供应商帽：页面上按 Tier 0–6 分标签、每个模型版本在每个部署类型（GlobalStandard / DataZoneStandard / Standard / Flex 等）各一行 RPM+TPM，例如 gpt-4.1 在 GlobalStandard 行是 1,000 RPM / 1,000,000 TPM，同一模型在 DataZoneStandard 行是 300 RPM / 300,000 TPM；另有换算规则句「use 10 RPM per 1,000 TPM」（部分版本 1 RPM per 1,000 TPM）。因为本 entry 既没有模型清单也没有确定的 deployment/SKU，选任何一行当 provider 帽都是猜，所以 quota 全 null、perModel 留空，source 记 undocumented（含义是「本 entry 无可登记口径」，不是「官方没写」）。要落地必须先让用户填 deployment 对应的模型与层级，再按该行写入。RPD/TPD/月度 token：Azure OpenAI 不按日/月计，配额单位只有 RPM 与 TPM，故这三列对 azure 恒为 null。contextWindow：本页不公布上下文长度，需按模型页另取。警示：该页全部数字的前提是**已付费订阅**（Azure OpenAI 无免费档），且默认配额会按订阅与区域被调整，真实值应以「Microsoft.CognitiveServices/quotaTiers」接口或门户查询为准（页内给出 GET …/quotaTiers/default 的调用方式）。"
+  },
+  {
+    "entryId": "bedrock",
+    "providerName": "Amazon Bedrock",
+    "source": "undocumented",
+    "docUrl": "https://docs.aws.amazon.com/bedrock/latest/userguide/quotas-mantle.html",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "The bedrock-mantle endpoint does not enforce requests-per-minute (RPM) quotas. Throttling is governed solely by the input and output token quotas described in this section.",
+      "Quota values vary by model, account, and AWS Region. To view the current default and applied quota values for models available to your account, open the Service Quotas console",
+      "Inference on the bedrock-mantle endpoint is governed by two per-model quotas: Bedrock Mantle input tokens per minute … / output tokens per minute …"
+    ],
+    "notes": "主体确认：baseUrl https://bedrock-mantle.us-east-1.api.aws/v1 = AWS Bedrock 的 bedrock-mantle OpenAI 兼容端点（Key 走 AWS_BEARER_TOKEN_BEDROCK）。官方正文可读且明确了两件事：(1) 该端点**不设 RPM**，只按「每模型每分钟输入 token」与「每模型每分钟输出 token」两条配额限流（原句见 evidence），请求还会按「输入 token + max_tokens」预估预扣（超配额直接 429）；(2) 具体数值**文档里一个都没有**——「Quota values vary by model, account, and AWS Region」，只能在 Service Quotas 控制台按账号查看。所以 tpm 只能留 null（连是输入帽还是输出帽都不确定），rpm 不是「0/无限」而是「官方声明不适用」。免费层：https://aws.amazon.com/free/ 只把 Amazon Bedrock 列进「Available on both plans」的产品清单，https://aws.amazon.com/bedrock/pricing/ 正文抓到的 Free 行是 Sensitive information filters (regular expression) 与 Word filters 两项功能免费，**没有**任何面向模型的免费 token 额度表述；bedrock 定价页的按量单价之外未见免费池数字，故 monthlyTokens 与 freeModelIds 留空——如实标注：官方没有可引用的 Bedrock 免费推理额度数字。文档侧栏另有 quotas-runtime 端点页（同一口径，token 帽、控制台取值），区域端点列表在 inference-responses-api.md#bedrock-mantle-supported。Key/模型可用性按区域隔离（registry notes 已写），跨区换 baseUrl 后配额是另一套。"
+  },
+  {
+    "entryId": "vertex",
+    "providerName": "Google Vertex AI",
+    "source": "undocumented",
+    "docUrl": "https://cloud.google.com/vertex-ai/generative-ai/docs/quotas",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "To view and edit the quotas in the Google Cloud console … In the Filter text box, enter the following queries: Metric: METRIC_NAME, Dimensions (e.g. location): MODEL_NAME",
+      "Generate content requests with image input per minute per base model and resolution 34,000,000 aiplatform.googleapis.com/generate_content_image_input_per_base_model_id_and_resolution",
+      "base_model: gemini-embedding | 100,000 aiplatform.googleapis.com/global_embed_content_requests_per_minute_per_base_model",
+      "There is no separate quota for tuned model inference."
+    ],
+    "notes": "本应用无法认证（authKind='unsupported'，需要 Google ADC / service account，ModelPort 产不出该凭据），数值仅供参考。取证可达性说明：直连 ai.google.dev / cloud.google.com 在本机网络下 curl 返回 000（DNS 能解析、连接被重置），经本地代理 127.0.0.1:7890 才抓到官方正文——记录方式仍是读官方文档，未对任何 provider API 端点发请求。官方配额页正文可读，但**对话类模型没有任何可登记数字**：页面上带数值的只有 Embedding（gemini-embedding 100,000 RPM / 100,000,000 TPM，gemini-embedding-2 60,000 / 200,000,000）与多模态输入聚合帽（image 34,000,000、video 192,000,000、audio 11,000,000、document 1,200,000 per minute per base model and resolution），这些都不是本目录 5 个 Gemini 模型的 RPM/RPD/TPM；generateContent 的请求帽在文档里只出现为**指标名**（global_generate_content_requests_per_minute_per_project_per_base_model），值要按项目在控制台「Quotas and System Limits」查看并可申请上调。因此 quota 全 null、perModel 留空、source=undocumented（含义：官方未公布本 entry 模型的数字）。免费层：Vertex AI 属 Google Cloud 计费体系，本 entry 无免费档口径；目录里也没有免费标记（category=apikey、无 freeModelsHint）。另需注意：本 entry 的 id（gemini-3.1-pro-preview 等）是 OpenAI 兼容端点的写法，与配额维度里的 base_model 名称（剥掉 -preview 的基座名）不完全一致，按 base_model 查帽时要先归一化。"
+  },
+  {
+    "entryId": "vertex-partner",
+    "providerName": "Vertex Partner Models",
+    "source": "undocumented",
+    "docUrl": "https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-partner-models",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "Multi-region quotas: Dedicated multi-region quotas are enforced. You can view and request increases for these default quota values in the Google Cloud console.",
+      "US Quota Examples: UsOnlinePredictionInputTokensPerMinutePerBaseModel / UsOnlinePredictionOutputTokensPerMinutePerBaseModel / UsOnlinePredictionRequestsPerMinPerProjectPerBaseModel",
+      "However, the global endpoint quotas and supported model capabilities can differ from the regional endpoints. For more information, view the related third-party model page."
+    ],
+    "notes": "本应用无法认证（authKind='unsupported'，需 Google ADC / 服务账号），数值仅供参考。主体确认：页面标题即「Gemini Enterprise Agent Platform partner models for MaaS」，与本 entry 的 MaaS 模型 id（deepseek-ai/deepseek-v3.2-maas、qwen/qwen3-next-80b-a3b-{thinking,instruct}-maas、zai-org/glm-5-maas）同源。官方只公布**配额指标名**，一个值都没给：输入/输出 tokens per minute per base model、requests per minute per project per base model，分 US / EU 多区域独立配额，数值只能在 Google Cloud 控制台查看与申请上调（evidence 原句）。所以 quota/perModel 全 null、source=undocumented。另有两条会影响未来取数：(1) global 端点与 regional 端点的配额与能力**可以不同**，本 entry 的 baseUrl 模板用的是 {location}，用户填 global 时帽就不是同一套；(2) 具体帽值按第三方模型页逐模型公布（「view the related third-party model page」），本目录的 -maas 后缀 id 与那些页的模型名不完全一致，需要逐个模型页取证——官方 MaaS 指南（/gemini-enterprise-agent-platform/models/maas/call-open-model-apis、…/models/maas/deepseek）抓到的是流程正文，同样没有数字。免费层：无（partner 模型按 token 计费，且需要 Google Cloud 计费账号）。"
+  },
+  {
+    "entryId": "gemini",
+    "providerName": "Gemini",
+    "source": "undocumented",
+    "docUrl": "https://ai.google.dev/gemini-api/docs/rate-limits",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "Rate limits depend on a variety of factors (such as your usage tier) and can be viewed in Google AI Studio.",
+      "Each model variation has an associated rate limit (requests per minute, RPM). For details on those rate limits, see the AI Studio Rate Limit page.",
+      "Free | N/A | Tier 1 | $10 | Tier 2 | $50 | Tier 3 | $200（Spend rate limit per 10 minutes）",
+      "Rate limits are applied per project, not per API key. Requests per day (RPD) quotas reset at midnight Pacific time.",
+      "Specified rate limits are not guaranteed and actual capacity may vary."
+    ],
+    "notes": "本 entry 是 registry 里 category=free-tier 的 Google AI Studio Key 通道（authUrl aistudio.google.com/apikey，baseUrl generativelanguage.googleapis.com/v1beta/openai）。官方限速页正文完整可读（Last updated 2026-10-26 UTC），但**这一版页面里已经没有免费档的 RPM/TPM/RPD 逐模型表**：该节只写「限额取决于用量层级等因素，请到 AI Studio 查看」「每个模型变体的 RPM 明细见 AI Studio Rate Limit 页」。页面上带数字的只有两类：(a) 消费型限速 Free = N/A，Tier 1/2/3 = $10 / $50 / $200 每 10 分钟滚动窗口（单位是美元，不是请求或 token，不能进 quota）；(b) Batch API 的入队 token 帽（Tier 1 按模型 3,000,000 / 5,000,000 / 10,000,000，Batch 并发作业 100、输入文件 2GB、文件存储 20GB），这属于批处理通道，与本应用的实时 chat 线不同轴，故也不登记。层级门槛本身是可读的（Free=Active project or free trial；Tier 1=绑定有效计费账号，上限 $250；Tier 2=$100+3 天；Tier 3=$1,000+30 天），可用来解释「为什么必须看到 AI Studio 才知道帽值」。模型详情页（/gemini-api/docs/models）也没有逐模型上下文窗口表格，只在两款模型的宣传语里出现「1M context window」，无法可靠映射到本目录 11 个 id，故 contextWindow 留 null。搜索引格里流传的「免费档 15 RPM / 1M TPM / 1,500 RPD」全部来自第三方博客与论坛转述，按裁定不录入。取证说明：ai.google.dev 在本机直连 curl 返回 000（连接被重置），改经本地代理抓官方页面；未向 generativelanguage.googleapis.com 发过任何请求。"
+  },
+  {
+    "entryId": "cerebras",
+    "providerName": "Cerebras",
+    "source": "documented",
+    "docUrl": "https://inference-docs.cerebras.ai/support/rate-limits",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": 5,
+      "rpd": null,
+      "tpm": 30000,
+      "tpd": 1000000,
+      "monthlyTokens": null,
+      "contextWindow": 65000
+    },
+    "perModel": [
+      {
+        "modelId": "gpt-oss-120b",
+        "rpm": 5,
+        "rpd": null,
+        "tpm": 30000,
+        "tpd": 1000000,
+        "contextWindow": 65000,
+        "evidence": "Free Trial | Model | RPM | Uncached TPM | Total TPM | TPH | TPD — gpt-oss-120b | 5 | 30K | 90K | 1M | 1M"
+      }
+    ],
+    "freeModelIds": [
+      "gpt-oss-120b"
+    ],
+    "evidence": [
+      "gpt-oss-120b | 5 | 30K | 90K | 1M | 1M（Free Trial 标签页表格）",
+      "Context window: 65k tokens (free tier), 131k tokens (paid). Max output: 32k tokens (free tier), 40k tokens (paid). Free tier rate limits: 30 requests/min, 60k input tokens/min, 1M tokens/day.",
+      "Is there a permanently free tier? No. The Free Trial is time- and credit-bounded: $5 in credits that expire 30 days after they're granted.",
+      "Rate limits apply at the organization level, not the user level, and vary based on the model."
+    ],
+    "notes": "主体确认：baseUrl https://api.cerebras.ai/v1（website cerebras.ai，docs inference-docs.cerebras.ai，页面 dateModified 2026-10-07）。登记的数字取自官方「Limits by Tier」的 **Free Trial** 标签页：gpt-oss-120b 行 RPM 5 / Uncached TPM 30K / Total TPM 90K / TPH 1M / TPD 1M——tpm 取的是 uncached 30K（主帽），total 90K 与 TPH 1M 只在此记录，字段表里没有对应列。**两家官方页互相矛盾**，必须留着出处：模型页 /models/openai-oss.md 写「Free tier rate limits: 30 requests/min, 60k input tokens/min, 1M tokens/day」，比限速页高 6 倍/2 倍，本轮无法判定哪个是当前生效值（限速页自己也说「overview of general limits…具体以 Cloud Console 的 Limits 页为准」），已按「档位表格优先」登记 5/30K/1M，并把 30/60K 原句保留在 evidence。RPD 官方**未公布**（Free Trial 表只有 RPM/TPM/TPH/TPD 轴，无 RPD 列）→ null。contextWindow 65000 取 free 档（付费档 131072）。最重要的口径警示：所谓 Free Trial **不是永久免费层**——官方 FAQ 原话「Is there a permanently free tier? No.」，它是注册后加验证支付方式送 $5 额度、30 天过期，用尽即停；「If you skip adding a payment method at sign-up, Playground and API access remain inactive until you do」。因此把 cerebras 当「免费池」用是不准确的，它是限时限额试用（scope 记 free-tier 仅因该档位数字是免费档，实际需绑卡）。目录侧风险：Free Trial 表只列 gpt-oss-120b 与 qwen-3.8-27b 两行，本 entry 其余 5 个 id（zai-glm-4.7、llama-3.3-70b、llama-4-scout-17b-16e-instruct、qwen-3-235b-a22b-instruct-2507、qwen-3-32b）已不在当前免费档表格中（部分只存在于 Dedicated Inference），不给它们填任何数字；另有限速页脚注 qwen-3.8-27b 的 total TPM 被临时从 450K 提到 750K，属付费档信息，与本目录无关。"
+  },
+  {
+    "entryId": "sambanova",
+    "providerName": "SambaNova",
+    "source": "documented",
+    "docUrl": "https://docs.sambanova.ai/docs/en/models/rate-limits",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": 20,
+      "rpd": 20,
+      "tpm": null,
+      "tpd": 200000,
+      "monthlyTokens": null,
+      "contextWindow": 128000
+    },
+    "perModel": [
+      {
+        "modelId": "Meta-Llama-3.3-70B-Instruct",
+        "rpm": 20,
+        "rpd": 20,
+        "tpm": null,
+        "tpd": 200000,
+        "contextWindow": 128000,
+        "evidence": "Free Tier | Model ID | RPM | RPD | TPD — Meta-Llama-3.3-70B-Instruct | 20 | 20 | 200000；同模型 Context length 128k tokens"
+      }
+    ],
+    "freeModelIds": [
+      "Meta-Llama-3.3-70B-Instruct"
+    ],
+    "evidence": [
+      "TPD: Tokens per day (Free tier only)",
+      "Free Tier: Applied when there is no payment method linked with your account / Developer Tier: Applied when a payment method is linked with your account",
+      "Developer Tier accounts are limited to 20M tokens per day across all models.",
+      "Production | Meta | Meta-Llama-3.3-70B-Instruct | 240 | 48000（Developer Tier 表）",
+      "Preview models are intended for evaluation purposes and developer experimentation only, and should not be used in production environments. These models have limited capacity and may be removed at short notice."
+    ],
+    "notes": "主体确认：baseUrl https://api.sambanova.ai/v1（website sambanova.ai，authUrl cloud.sambanova.ai/apis）。官方限速页正文完整可读，Free Tier 表逐模型给 RPM/RPD/TPD：Production 组 DeepSeek-V3.1 / Meta-Llama-3.3-70B-Instruct / gpt-oss-120b 均为 20 / 20 / 200000，Preview 组 DeepSeek-V3.2 / gemma-4-31B-it 也是 20 / 20 / 200000——本目录只有 Meta-Llama-3.3-70B-Instruct 命中，故 provider 级取该组的 20/20/200000 并在 perModel 落同值。TPM：官方限速轴只有 RPM、RPD、TPD（Free tier only）三条，**没有每分钟 token 帽** → tpm 留 null（不是猜，是官方未设该轴）。付费档一并记录以便对照：Developer Tier 同模型 240 RPM / 48,000 RPD，账户级 20M tokens/day across all models，层级判定条件是「账号是否绑定支付方式」。contextWindow 128000 取自官方 /models/sambacloud-models 表（128k tokens）。计量口径：限速在每次响应里回传（x-ratelimit-limit-requests / -requests-day / -reset*），属本应用 learned 档能自动校验的家之一。警示：官方把模型分 Production / Preview，Preview「仅供评估与开发者试验、不得用于生产、可能随时下架」——本目录暂无 Preview 模型，若后续补 DeepSeek-V3.2 / gemma-4-31B-it 需带这条限制；另外 SambaStack（私有部署）的限速「可选、由管理员按用户组设置」，与云端数字无关。"
+  }
+]

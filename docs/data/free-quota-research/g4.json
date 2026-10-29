@@ -1,0 +1,283 @@
+[
+  {
+    "entryId": "nvidia_nim",
+    "providerName": "NVIDIA NIM",
+    "source": "undocumented",
+    "docUrl": "https://docs.nvidia.com/nim/cosmos/1.0.0/EULA.html",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [
+      "minimaxai/minimax-m2.7",
+      "minimaxai/minimax-m3",
+      "z-ai/glm-5.2",
+      "deepseek-ai/deepseek-v4-pro",
+      "deepseek-ai/deepseek-v4-flash",
+      "moonshotai/kimi-k2.6",
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b"
+    ],
+    "evidence": [],
+    "notes": "免费层是试用口径（category free-tier，registry notes: 'Free access for NVIDIA Developer Program members (prototyping and testing)'）。官方从未公布具体 RPM/TPM 数字——社区/论坛普遍报告约 40 RPM，但这是论坛与第三方转述、非官方文档正文，故所有 quota 字段填 null。官方 ToS 警示（试用的服务受 NVIDIA API Trial Terms of Service 约束；开发者计划软件的许可）docs.nvidia.com EULA §1.2.6 原句：'have a personal use license to exercise only the grant in Section 1.1.1 above for Software that is part of this program ... solely for internal evaluation, development or test non-production purposes. Software offered as part of the developer program is not for use, distribution or deployment in production.' 即仅限评估/开发/测试、禁止生产部署。另：model card 正文均写 'This trial service is governed by the NVIDIA API Trial Terms of Service.' 与 'Evaluation' 标注，佐证试用/评估口径。试抓 https://www.nvidia.com/en-us/agreements/enterprise-software/(api-trial|nvidia-api-trial)-terms-of-service/ 与 build.nvidia.com 内联条款均 404/JS 未渲染，读不到 Trial ToS 正文，故限速数字维持 null。"
+  },
+  {
+    "entryId": "cloudflare",
+    "providerName": "Cloudflare (Workers AI)",
+    "source": "documented",
+    "docUrl": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [
+      "@cf/meta/llama-3.2-1b-instruct",
+      "@cf/meta/llama-3.2-3b-instruct",
+      "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+      "@cf/meta/llama-3.1-8b-instruct-awq",
+      "@cf/mistralai/mistral-small-3.1-24b-instruct",
+      "@cf/meta/llama-3.1-70b-instruct-fp8-fast",
+      "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
+      "@cf/moonshotai/kimi-k2.5",
+      "@cf/moonshotai/kimi-k2.6",
+      "@cf/zai-org/glm-4.7-flash",
+      "@cf/qwen/qwq-32b",
+      "@cf/qwen/qwen2.5-coder-32b-instruct"
+    ],
+    "evidence": [
+      "Workers AI grants \"10,000 Neurons per day at no charge.\"",
+      "Limits reset \"daily at 00:00 UTC.\""
+    ],
+    "notes": "官方免费额度单位是 Neurons/天（GPU 算力计量单位），不是 token，也不是固定 RPM/RPD。官方 pricing 正文：免费分配 '10,000 Neurons per day'，每日 00:00 UTC 重置；超出部分 $0.011 / 1,000 Neurons（Workers Free 与 Paid 均含此免费额度）。官方 pricing 页未公布 Neuron↔token 的统一换算表（仅个别模型页给出 neurons per 1M input tokens，如 gpt-oss 类），故按要求把原单位记入 notes、quota 各字段填 null，不自行折算。"
+  },
+  {
+    "entryId": "huggingface",
+    "providerName": "Hugging Face (Inference Providers router)",
+    "source": "undocumented",
+    "docUrl": "https://huggingface.co/docs/inference-providers",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "registry 用的是 router.huggingface.co（Inference Providers 聚合路由），其配额按月度推理 credits（付费/PRO）与底层各 provider 限速计，官方并未对免费层公布单一 RPM/TPM/RPD 数字。官方 Hub 限速页 huggingface.co/docs/hub/rate-limits 只覆盖 Hub API / resolvers / pages 三类（按 5 分钟窗口），不覆盖 Inference 推理，且本会话 WebFetch 连续 'fetch failed' 读不到正文。各家第三方整理的 '30 RPM'/'$0.10 monthly credits' 均非官方正文，未采信。故全 null、undocumented。"
+  },
+  {
+    "entryId": "nebius",
+    "providerName": "Nebius Token Factory",
+    "source": "documented",
+    "docUrl": "https://docs.nebius.com/studio/inference/rate-limits",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [
+      {
+        "modelId": "meta-llama/Llama-3.3-70B-Instruct",
+        "rpm": 1200,
+        "rpd": null,
+        "tpm": 3000000,
+        "tpd": null,
+        "contextWindow": null,
+        "evidence": "meta-llama/Llama-3.3-70B-Instruct (base flavor) | 3,000,000 | 1200  — from 'Nebius AI Studio applies per-model rate limits for every user.' table (Tokens per minute / Requests per minute)"
+      }
+    ],
+    "freeModelIds": [],
+    "evidence": [
+      "Nebius AI Studio applies per-model rate limits for every user. You can increase them on the Rate limits page.",
+      "meta-llama/Llama-3.3-70B-Instruct (base flavor) | 3,000,000 | 1200"
+    ],
+    "notes": "category apikey（付费 keyed 账户，无免费额度），故 scope=keyed-account，登记的是官方默认 per-model 上限。官方 rate-limits 表（tokens per minute / requests per minute）：Llama-3.3-70B base 3,000,000 TPM / 1,200 RPM（fast flavor 2,000,000 TPM / 1,200 RPM）。另一模型 Qwen/Qwen3-30B-A3B 未出现在官方表中，故其值 null、不填。取证说明：本会话 WebFetch 抓该页时被 307 重定向到 docs.tokenfactory.nebius.com 根，子路径 404、读不到实时正文；上述数字取自该官方页面在检索索引中返回的正文表格原句，属官方口径而非记忆。若需逐字复核请以实时页面为准。"
+  },
+  {
+    "entryId": "hyperbolic",
+    "providerName": "Hyperbolic AI",
+    "source": "undocumented",
+    "docUrl": "https://hyperbolic.xyz/pricing",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "官方仅有按 token 的价目与注册试用 credits 说明，未公布 RPM/RPD/TPM/TPD 数字。试抓 https://hyperbolic.xyz/pricing（301 跳到 www.hyperbolic.ai/pricing）返回 404，读不到正文；检索到的 '$25 free trial credits'、'200 req/m' 等来自第三方聚合仓库/博客，非官方正文，未采信。全 null、undocumented。"
+  },
+  {
+    "entryId": "scaleway",
+    "providerName": "Scaleway (Generative APIs)",
+    "source": "undocumented",
+    "docUrl": "https://www.scaleway.com/en/docs/generative-apis/",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "category apikey（SCW secret key 付费），无免费额度。官方 Generative APIs 文档与 Organization quotas 页只讲 IAM 权限、max_completion_tokens 上限、按量计费，未公布 RPM/RPD/TPM/TPD 限速数字（troubleshooting 页仅提到 416 max_completion_tokens 等）。故全 null、undocumented。"
+  },
+  {
+    "entryId": "vercel",
+    "providerName": "Vercel AI Gateway",
+    "source": "undocumented",
+    "docUrl": "https://vercel.com/docs/ai-gateway/rate-limits",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "官方明确不公布固定数字：Rate Limits 页正文 'Limits can change, so this page describes behavior rather than fixed numbers.'，且 'AI Gateway does not rate limit paid-tier requests. The free tier applies lower per-model limits'。免费层只有按月 credits（pricing 页 'Every Vercel team account includes $5 of free usage per month'，单位是美元而非 token），故 monthlyTokens 记 null、把 $5/月写入此 notes。无官方 RPM/TPM/token/context 数字 → undocumented。"
+  },
+  {
+    "entryId": "venice",
+    "providerName": "Venice AI",
+    "source": "documented",
+    "docUrl": "https://venice.ai/legal/tos",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": null,
+      "rpd": 25,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [
+      "Free Accounts are limited to a maximum of twenty five (25) text prompts per day and sixteen (16) image prompts per day. These limits are subject to change without notice."
+    ],
+    "notes": "Venice 有 Free Account（免费档）。官方 ToS 正文给出 Free Account 每日 25 条 text prompts（记入 rpd=25，单位是 prompts/day）。另有未登录演示界面 'fifteen (15) text prompts per day'。API 层的 per-minute / per-token 限速页 docs.venice.ai/api-reference/rate-limiting（及 llms-full.txt）在本会话 WebFetch 连续 'fetch failed'，读不到正文，故 rpm/tpm/tpd/monthlyTokens 全 null。ToS 亦写 'Services are subject to the Venice Usage Limits for Free Accounts' 并把细目指向 API 文档；25/day 为平台免费账户口径。"
+  },
+  {
+    "entryId": "siliconflow",
+    "providerName": "SiliconFlow",
+    "source": "undocumented",
+    "docUrl": "https://docs.siliconflow.com/cn/faqs/misc_rate",
+    "asOf": "2026-10-29",
+    "scope": "free-tier",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "官方限速 FAQ 明确存在免费模型且其限速为定值，但正文不列具体数字（逐模型值在'模型广场/模型详情页'动态显示）：'所有免费模型的 Rate Limits 是固定的。'（英文 docs 对应 free-model Rate Limits are fixed）；rate-limit-and-upgradation 页只定义 RPM/RPH/RPD/TPM/TPD/IPM/IPD 七种指标、不公布免费档数值。第三方整理的 'RPM=1000-10000 / TPM=50000-5000000'、'新用户 ¥16/$1 credits' 非官方正文，未采信。故全 null、undocumented。"
+  },
+  {
+    "entryId": "deepinfra",
+    "providerName": "DeepInfra",
+    "source": "undocumented",
+    "docUrl": "https://docs.deepinfra.com/account/rate-limits",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "官方 rate-limits 页给出的唯一数值口径是并发而非 RPM/TPM/token：默认 '200 concurrent requests per model'（本 schema 无并发字段，故 rpm/rpd/tpm/tpd 全 null）。category apikey 付费、按 token 计费；博客提到的 '$5 free credits' 非限速正文。无 RPM/TPM/RPD/TPD/monthlyTokens/contextWindow 官方数字 → 记 undocumented（数字仅并发，单位不符）。"
+  },
+  {
+    "entryId": "chutes",
+    "providerName": "Chutes",
+    "source": "undocumented",
+    "docUrl": "https://chutes.ai/docs",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "官方 docs 只描述按 token 的 pay-as-you-go 定价与 credits（'Chutes is a decentralized, serverless inference platform for open-source AI models.'），未公布任何 RPM/RPD/TPM/TPD 数字。网传 '每天 200 次免费调用/模型' 与 '2000/day' 均来自中文博客/第三方聚合，非官方正文，未采信。故全 null、undocumented。"
+  },
+  {
+    "entryId": "novita",
+    "providerName": "Novita AI",
+    "source": "undocumented",
+    "docUrl": "https://novita.ai/docs",
+    "asOf": "2026-10-29",
+    "scope": "keyed-account",
+    "quota": {
+      "rpm": null,
+      "rpd": null,
+      "tpm": null,
+      "tpd": null,
+      "monthlyTokens": null,
+      "contextWindow": null
+    },
+    "perModel": [],
+    "freeModelIds": [],
+    "evidence": [],
+    "notes": "category apikey（付费按 token 计费）。试抓 https://novita.ai/docs/api-reference/rate-limits 被 307 跳到 docs.novita.ai 后 404，且检索未找到官方公布 RPM/TPM 正文；官方口径是配额需经控制台/工单查询，非文档固定数字。无任何官方限速正文 → 全 null、undocumented。"
+  }
+]
