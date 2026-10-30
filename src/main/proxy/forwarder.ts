@@ -50,6 +50,12 @@ import { applyVerbositySteering } from './compression/outputSteering.ts'
 import { measureCrossTurnDuplication, recordDuplication } from './compression/duplication.ts'
 import { recordConversationTurn, recordConversationTurnForRequest } from './compression/survivorship.ts'
 
+// 换家判据与流首事件等待：本体与测试在 failover.ts（forwarder 背着 electron
+// 依赖，node --test 拉不动，见该模块头注释）。isFailoverEligibleStatus 从这里
+// 再导出，chat 路由的既有 import 路径不变。
+import { firstStreamEvent, isFailoverEligibleStatus, isToolOverflowError } from './failover.ts'
+export { isFailoverEligibleStatus }
+
 function shouldDeleteSession(): boolean {
   return sessionManager.shouldDeleteAfterChat()
 }
@@ -68,12 +74,6 @@ type ProviderForwarder = {
 
 /** 每模型参数不允许覆盖的请求骨架字段（与 shared/aggregate 的保留清单一致）。 */
 const RESERVED_MODEL_PARAM_KEYS: readonly string[] = ['model', 'messages', 'stream']
-
-/** 429 / 5xx / 无状态码（网络错误、超时）才值得换目标；4xx 换目标没有意义。 */
-export function isFailoverEligibleStatus(status?: number): boolean {
-  if (status === undefined) return true
-  return status === 429 || status >= 500
-}
 
 /**
  * Request Forwarder
@@ -471,15 +471,20 @@ export class RequestForwarder {
         return last
       }
 
-      if (!this.isFailoverEligible(result.status)) {
-        return last
-      }
+      // 工具数超限是「渠道装不下」而非账号故障：换下一家继续试，但**不记冷却
+      // 也不计账号失败** —— 账号本身是健康的，小工具请求不该被连坐。
+      const toolOverflow = isToolOverflowError(result.error)
+      if (!toolOverflow) {
+        if (!this.isFailoverEligible(result.status)) {
+          return last
+        }
 
-      // 429 的冷却已由 forwardChatCompletion 记录，这里只补记 5xx / 网络错误
-      if (result.status !== 429) {
-        autoRouter.markAccountCooldown(candidate.account.id, result.status)
+        // 429 的冷却已由 forwardChatCompletion 记录，这里只补记 5xx / 网络错误
+        if (result.status !== 429) {
+          autoRouter.markAccountCooldown(candidate.account.id, result.status)
+        }
+        loadBalancer.markAccountFailed(candidate.account.id)
       }
-      loadBalancer.markAccountFailed(candidate.account.id)
     }
 
     return last
@@ -523,7 +528,68 @@ export class RequestForwarder {
           providerSessionId: requestId,
         }
       }
-      const stream = await accountChannelManager.openStream({ requestId, model: actualModel, openAi })
+      const upstream = await accountChannelManager.openStream({ requestId, model: actualModel, openAi })
+      // 客户端在「等首块」期间断开时中止上游：chat 路由把 request.signal 接在
+      // res close 上，但那套联动要到结果返回后才建立，这个窗口里只有 signal 能
+      // 看到。销毁源流既停掉渠道 Worker 的上游请求，也让下面的首事件等到关闭。
+      const signal = request.signal
+      if (signal !== undefined) {
+        if (signal.aborted) upstream.destroy()
+        else signal.addEventListener('abort', () => upstream.destroy(), { once: true })
+      }
+      // 等「首块 vs 首错」再定成败：渠道包的流是延迟流，建流阶段的失败（上游
+      // 4xx、凭据失效、模型不存在……）以流的 error 事件浮现。原先直接把流交给
+      // 响应层，这些失败只能变成 200 + 流内错误帧 —— auto 的换家机制看不到
+      // 失败，撞上「工具数超限」这类渠道装不下的 400 就整场失败
+      // （用户报障 2026-10-30：auto 命中 cline 的 Vercel 网关 tools ≤ 128）。
+      // 这里等首个事件：有首块才算成功（首块原样补发），首错转成普通
+      // ForwardResult 失败，交给既有的换家 / 错误映射逻辑。
+      const first = await firstStreamEvent(upstream)
+      if (first.kind === 'error') {
+        const failure = first.error as { message?: string; status?: number }
+        return {
+          success: false,
+          status: failure.status ?? 502,
+          error: failure.message ?? '渠道请求失败',
+          latency: Date.now() - startTime,
+        }
+      }
+      if (first.kind === 'closed') {
+        // 客户端已断开的中止也走这里：400 让换家循环立刻停手 —— 请求已死，
+        // 换下一家只是白打上游。
+        return {
+          success: false,
+          status: signal?.aborted ? 400 : 502,
+          error: signal?.aborted
+            ? '客户端已断开，渠道请求已中止'
+            : '渠道在建流阶段提前结束，没有产出任何响应',
+          latency: Date.now() - startTime,
+        }
+      }
+      const stream = new PassThrough()
+      stream.write(first.chunk)
+      upstream.pipe(stream)
+      // 源流错误 → 包装流：chat 路由在包装流上挂了自己的 error 处理（回流内
+      // 错误帧 + [DONE]），转发时绝不能走 destroy(error) —— destroy 会先把
+      // destroyed 置真，路由的「已销毁不再回写」守卫会把错误帧吞掉，客户端只
+      // 看到断流。completions 路由没有挂 error 监听，无监听的 'error' 事件会
+      // 抛未捕获异常 —— 故按有无监听者分派：有则 emit 交给路由，无则销毁响应
+      // 流（no-op 兜底），与原先把桥流直接交给 completions 的行为一致。
+      upstream.on('error', (error: Error) => {
+        if (stream.listenerCount('error') > 1) {
+          stream.emit('error', error)
+        } else {
+          stream.destroy(error)
+        }
+      })
+      // 销毁兜底：无监听者时 destroy(error) 发出的 'error' 会抛未捕获异常。
+      stream.on('error', () => {})
+      // 反向：包装流被销毁（客户端提前断开，路由层会 destroy result.stream）
+      // 时把源流一并销毁 —— 渠道包的 cancel 才能发出去，上游配额不会被白烧
+      // 到自然结束。正常结束（readableEnded）不销毁。
+      stream.once('close', () => {
+        if (!upstream.destroyed && !upstream.readableEnded) upstream.destroy()
+      })
       return {
         success: true,
         status: 200,
