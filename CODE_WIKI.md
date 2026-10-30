@@ -2,11 +2,11 @@
 
 ## 1. 项目概述
 
-ModelPort 是一个多平台 AI 服务统一管理工具，把任意 OpenAI 兼容端点汇总为一份本地 API。它内置 `opencode` 本机运行时、73 条带 Key / 免密的聚合渠道目录（含 Kilo 免费池）以及自定义供应商，并与 openclaw、Cline、Roo-Code 等工具无缝集成，使任何 OpenAI 兼容客户端都能开箱即用。
+ModelPort 是一个多平台 AI 服务统一管理工具，把任意 OpenAI 兼容端点汇总为一份本地 API。它内置 `opencode` 本机运行时、74 条带 Key / 免密的聚合渠道目录（含 Kilo 免费池）、12 个登录账号通道以及自定义供应商，并与 openclaw、Cline、Roo-Code 等工具无缝集成，使任何 OpenAI 兼容客户端都能开箱即用。
 
 ### 核心功能
 - OpenAI 兼容 API：提供标准的 OpenAI 兼容 API 端点，实现无缝集成
-- 多提供商支持：73 条聚合渠道（API Key / 免费额度 / 本机）以及自定义供应商
+- 多提供商支持：74 条聚合渠道（API Key / 免费额度 / 本机）、12 个登录账号通道以及自定义供应商
 - 上下文管理：智能对话上下文管理，支持滑动窗口、令牌限制和摘要策略
 - 函数调用支持：通过提示工程实现所有模型的通用工具调用能力，兼容 Cherry Studio、Kilo Code 等客户端
 - 模型映射：灵活的模型名称映射，支持通配符和首选提供商/账户选择
@@ -31,19 +31,29 @@ ModelPort/
 ├── src/
 │   ├── main/                    # Electron 主进程
 │   │   ├── index.ts            # 应用入口点
-│   │   ├── tray.ts             # 系统托盘集成
+│   │   ├── autostart.ts        # 开机自启动（autostartHost.ts 为宿主侧探测）
+│   │   ├── tray/               # 系统托盘集成（index.ts / TrayManager.ts / TrayWindow.ts）
 │   │   ├── proxy/              # 代理服务器管理
 │   │   ├── ipc/                # IPC 处理器
 │   │   ├── store/              # 数据存储
 │   │   ├── oauth/              # OAuth 认证
 │   │   ├── providers/          # 提供商管理
-│   │   └── utils/              # 工具函数
+│   │   ├── channelPack/        # 账号通道宿主（worker / bridge / compat）
+│   │   ├── opencode/           # opencode 本机运行时桥接
+│   │   ├── requestLogs/        # 请求日志
+│   │   ├── appLogs/            # 应用日志
+│   │   ├── window/             # 窗口管理
+│   │   ├── updater/            # 应用内更新
+│   │   └── types/              # 类型声明（含 channelPack.d.ts）
 │   ├── preload/                # 上下文桥接
 │   └── renderer/               # React 前端
 │       ├── components/         # UI 组件
 │       ├── pages/              # 页面组件
 │       ├── stores/             # Zustand 状态管理
-│       └── hooks/              # 自定义钩子
+│       ├── hooks/              # 自定义钩子
+│       └── i18n/               # 国际化（en-US / zh-CN）
+├── tests/                      # Node 内置测试运行器用例（按子系统分目录）
+├── docs/                       # 计划与执行状态文档
 ├── build/                      # 构建资源
 └── scripts/                    # 构建脚本
 ```
@@ -64,6 +74,9 @@ ModelPort/
 - 实现负载均衡策略
 - 模型映射和转换
 - 会话管理
+- 上下文压缩（`compression/`，见 §4.1.5）
+- 额度计量与预检（`quota/`）
+- 账号通道与聚合目录的转发适配（`adapters/`、`routes/management/`）
 
 #### 3.1.3 数据存储 (src/main/store/)
 - 管理应用配置
@@ -78,6 +91,16 @@ ModelPort/
 - 内置提供商支持
 - 自定义提供商配置
 - 提供商状态检查
+- 聚合目录（`aggregate/`：registry 数据 + manager）与登录账号通道（`accountChannels/`）
+
+#### 3.1.6 账号通道宿主 (src/main/channelPack/)
+- 拉起 `vendor/channel-pack` 的 worker 进程并收发消息（`bridge.ts`）
+- 工具调用历史预校验（`toolCallValidation.ts`）与推理内容回放（`reasoningReplay.ts`）
+- `compat/` 提供上游私有包的兼容垫片，仅通过 esbuild alias 生效
+
+#### 3.1.7 opencode 运行时桥接 (src/main/opencode/)
+- 本机运行时的进程管理、会话与流式读取
+- 工具信封校验（`envelopeSchema.ts`）、并发预算（`concurrency.ts`）、能力探测（`probe.ts`）
 
 ### 3.2 渲染进程 (Renderer Process)
 
@@ -96,12 +119,15 @@ ModelPort/
 - API 密钥页面
 - 日志页面
 - 设置页面
+- 聚合目录页面（`Aggregate.tsx`，五态额度与免费池标记）
+- 登录账号通道页面（`Channels.tsx`）
+- 关于页面（`About.tsx`）
 
 #### 3.2.3 状态管理 (src/renderer/src/stores/)
 - 仪表板状态
 - 提供商状态
 - 代理状态
-- 日志状态
+- 导航状态
 - 设置状态
 
 ## 4. 关键类与函数
@@ -118,12 +144,16 @@ ModelPort/
   - `getStatistics()`：获取服务器统计信息
 
 #### 4.1.2 LoadBalancer (src/main/proxy/loadbalancer.ts)
-- **职责**：实现负载均衡策略
+- **职责**：实现负载均衡策略（`round-robin | fill-first | failover | smart | pace`）
 - **主要方法**：
   - `selectAccount(model, strategy, preferredProviderId, preferredAccountId)`：选择合适的账户
   - `markAccountFailed(accountId)`：标记账户失败
   - `clearAccountFailure(accountId)`：清除账户失败状态
-  - `getAvailableAccounts(model, preferredProviderId, excludeFailed)`：获取可用账户列表
+  - `selectChainCandidates(model, preferredAccountId)`：裸模型名的聚合跨家链候选（按 headroom 排序）
+  - `selectSameProviderCandidates(model, providerId, excludeAccountId)`：同一供应商的其余可用账号
+  - `getAvailableAccountCount(model, providerId)`：可用账户数量
+  - `getAvailableModels()`：全部可路由的模型显示名
+  - `getAvailableAccounts(...)` 为私有方法，不属于对外接口
 
 #### 4.1.3 ModelMapper (src/main/proxy/modelMapper.ts)
 - **职责**：支持请求模型到实际模型的映射
@@ -139,8 +169,38 @@ ModelPort/
   - `getConfig()`：获取应用配置
   - `updateConfig(config)`：更新应用配置
   - `getProviders()`：获取提供商列表
-  - `getAccountsByProviderId(providerId, activeOnly)`：获取指定提供商的账户
+  - `getAccountsByProviderId(providerId, includeCredentials)`：获取指定提供商的账户（第二个参数是"是否解密凭证"，不是"是否只取启用项"）
   - `addLog(level, message, data)`：添加日志
+
+#### 4.1.5 上下文压缩 (src/main/proxy/compression/)
+- **职责**：在路由之后、托管标记注入之前压缩请求内容里的可压片段；全链路 fail-open，任何异常都原样转发
+- **入口**：
+  - `applyCompression(input)`：压缩 live zone 并产出 `CompressionReport`（`index.ts`）
+  - `recordCompressionReport(requestId, report)` / `takeCompressionReport(requestId)`：把报告从转发器交给路由层（路由负责响应头与请求日志行）
+- **模块划分**（共 15 个文件）：
+  - `index.ts`：门面与报告注册表
+  - `detector.ts`：内容类型识别（JSON 数组 / JSON 文档 / 日志 / 搜索 / 源码 / 纯文本等）
+  - `estimator.ts`：内容感知的 token 估算
+  - `policy.ts`：门禁（必须严格变小，且至少省 `MIN_SAVINGS_RATIO`）
+  - `liveZone.ts`：live zone 选取与字节区间替换
+  - `types.ts`：共享类型与阈值常量（配置类型来自 `src/shared/types.ts`）
+  - `compressors/smartCrusher.ts`：JSON 统计选行压缩
+  - `ccr/store.ts`、`ccr/markers.ts`：可逆内容寻址存储与哨兵标记
+  - `signals/adaptiveSizer.ts`、`signals/errorKeywords.ts`：保留行预算与错误关键词分级
+  - `outputSteering.ts`：输出侧 verbosity 注入
+  - `duplication.ts`、`duplicationSummary.ts`、`survivorship.ts`：**只观测不改动请求**的跨轮重复度与会话存活期统计
+- **配套管理接口**：`src/main/proxy/routes/management/compression.ts`（`/v1/management/compression/status|retrieve|duplication`）
+- **注入点**：`src/main/proxy/forwarder.ts`（`applyCompression` / `applyVerbositySteering` / `measureCrossTurnDuplication` / `recordConversationTurn`），报告在 `src/main/proxy/routes/chat.ts` 取回
+- **配置**：`src/shared/types.ts` 的 `CompressionConfig` / `DEFAULT_COMPRESSION_CONFIG`，落地在 `src/main/store/compressionConfig.ts`
+
+#### 4.1.6 额度计量 (src/main/proxy/quota/)
+- **职责**：聚合目录的额度记账、观察学习与预检；`smart` / `pace` 路由策略读同一份账本
+- **主要文件**：
+  - `ledger.ts`：滚动分钟 / 24 小时 + UTC 自然月的用量账本（防抖落盘）
+  - `observations.ts`：从上游响应头与 429 正文学习上限（只降不升）
+  - `limits.ts`：条目帽 / 逐模型帽 / 实测帽合并
+  - `usage.ts`：请求与响应的 token 计量（估算值不写进客户端响应）
+  - `gate.ts`：`autoRouter` 与 `loadbalancer` 共用的预检判据
 
 ### 4.2 渲染进程核心组件
 
@@ -239,15 +299,16 @@ npm run start:sandbox
 ### 7.2 代理配置
 
 - **端口**：默认 8080，可在设置中修改
-- **路由策略**：轮询（Round Robin）、填充优先（Fill First）、故障转移（Failover）
+- **路由策略**：轮询（Round Robin）、填充优先（Fill First）、故障转移（Failover）、智能（Smart）、匀速（Pace）；后两者由额度账本驱动
 - **API 密钥**：可在设置中启用 API 密钥认证
 
 ### 7.3 提供商配置
 
-提供商分为三类：
+提供商分为四类：
 
 - `opencode`：本机运行时，无需凭证，模型列表来自运行时
-- 聚合目录：73 条渠道（API Key / 免费额度 / 本机），每条保存后生成 `provider/model` 命名空间的供应商记录
+- 聚合目录：74 条渠道（API Key / 免费额度 / 本机），每条保存后生成 `provider/model` 命名空间的供应商记录
+- 登录账号通道：12 个浏览器 / 设备码登录通道，账户池与模型目录由 `vendor/channel-pack` 提供
 - 自定义供应商：自行填入任意 OpenAI 兼容端点
 
 API Key 类条目需要填入对应的密钥；Kilo 这类免密条目保存时会创建空凭据的本地账户，无需额外配置即可路由。
@@ -260,7 +321,28 @@ API Key 类条目需要填入对应的密钥；Kilo 这类免密条目保存时�
 - **渲染进程**：`src/renderer/src/` 目录，包含 UI 组件和页面
 - **共享代码**：`src/shared/` 目录，包含主进程和渲染进程共享的代码
 
-### 8.2 扩展提供商
+### 8.2 测试
+
+测试用 Node 内置的 `node --test` 运行器，用例按子系统分目录放在 `tests/` 下：
+
+| 目录 | 覆盖范围 |
+|------|----------|
+| `tests/api/` | 路由层契约：鉴权策略、错误形状、参数策略、工具违规标记 |
+| `tests/proxy/` | 转发与额度：重试策略、计量、流式结果、消息角色 |
+| `tests/shared/` | 主进程 / 渲染进程共享纯函数：聚合路由、成本分类、响应线格式 |
+| `tests/aggregate/` | 聚合目录转录与多 Key 行为 |
+| `tests/channels/` | 12 个登录账号通道的不变量（模型目录、上下文窗口、用量口径、推理回放等） |
+| `tests/compression/` | 上下文压缩：门禁、live zone、选行、CCR 标记、装配 |
+| `tests/providers/` | 提供商适配器、模型列表读取、端点策略、opencode 运行时 |
+| `tests/tool-calling/` | 工具调用引擎、协议适配器、策略与解析 |
+| `tests/store/`、`tests/renderer/`、`tests/ipc/`、`tests/main/`、`tests/build/`、`tests/updater/`、`tests/app-logs/`、`tests/request-logs/` | 存储、渲染层、IPC、入口、构建产物守卫与日志 |
+| `tests/skills/` | 随仓库分发的技能说明文档一致性检查 |
+
+**必须用 Node 24+ 运行。** 仓库里的 `.ts` 用例依赖 Node 原生的 TypeScript 支持，Node 22 会在
+`node --test` 阶段整片报 `ERR_UNKNOWN_FILE_EXTENSION`，看起来像"测试全挂"，实际是运行时太老。
+门禁命令见 `package.json` 的 `scripts`。
+
+### 8.3 扩展提供商
 
 要添加新的提供商支持，需要：
 1. 在 `src/main/providers/builtin/` 目录添加提供商实现
@@ -268,7 +350,7 @@ API Key 类条目需要填入对应的密钥；Kilo 这类免密条目保存时�
 3. 在 `src/main/proxy/adapters/` 目录添加代理适配器
 4. 在渲染进程中添加提供商图标和配置界面
 
-### 8.3 调试技巧
+### 8.4 调试技巧
 
 - 使用 `npm run dev` 启动开发模式，支持热重载
 - 主进程日志可在终端查看
@@ -322,7 +404,7 @@ GNU General Public License v3.0。详见 [LICENSE](LICENSE) 文件。
 
 ### v1.5.0
 - 退役 8 家 Web UI 页面接入供应商（DeepSeek / GLM / Kimi / Mimo / MiniMax / Qwen / Qwen AI / Z.ai），启动时清理其供应商、账户与模型映射
-- 新增 73 条聚合渠道目录（API Key / 免费额度 / 本机），支持 openai-chat 与 anthropic-messages 两种线路
+- 新增 74 条聚合渠道目录（API Key / 免费额度 / 本机），支持 openai-chat 与 anthropic-messages 两种线路
 - 新增 Kilo 免密免费池（`kilo-auto/free`，仅保留 `isFree` 模型）
 - 新增聚合渠道页面与 `aggregate:*` IPC 通道
 
