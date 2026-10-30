@@ -47,7 +47,8 @@ const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 test('versioned Chat2API testing skills exist and have trigger-only descriptions', () => {
   for (const { file, name, description } of skillPaths) {
-    const text = fs.readFileSync(file, 'utf8')
+    // Windows checkouts (core.autocrlf) hand us CRLF; frontmatter is LF on disk.
+    const text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
     // Skill frontmatter is a discovery contract; keep exact names and descriptions stable.
     assert.match(
       text,
