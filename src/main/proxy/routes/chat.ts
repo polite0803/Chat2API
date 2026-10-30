@@ -20,6 +20,7 @@ import { buildStreamErrorFrame, mapUpstreamError, retryAfterHeader } from '../er
 import { findUnsupportedParameter, unsupportedParameterError } from '../parameterPolicy'
 import { createToolViolationTap } from '../utils/toolViolationTap'
 import { normalizeMessageRoles } from '../utils/messageRoles'
+import { toHeaderValue, routeHeaderValue } from '../utils/headerValue'
 import { readStreamOutcome } from '../utils/streamOutcome'
 import { storeManager } from '../../store/store'
 import { AUTO_PREFERENCES, type AutoPreference } from '../../../shared/types'
@@ -289,7 +290,7 @@ router.post('/completions', async (ctx: Context) => {
 
     // 裸名被哪家聚合条目接住，写进响应头；带前缀的名字本来就是点名，不打这个头。
     if (selection && !request.model.includes('/') && selection.provider.type === 'aggregate') {
-      ctx.set('X-Chat2API-Aggregate-Chain', selection.provider.id)
+      ctx.set('X-Chat2API-Aggregate-Chain', toHeaderValue(selection.provider.id))
     }
 
     // 同名能落到 ≥2 家时走跨家链；用户点过具体账号时不换家。
@@ -405,7 +406,10 @@ router.post('/completions', async (ctx: Context) => {
       account = outcome.candidate.account
       provider = outcome.candidate.provider
       actualModel = outcome.candidate.actualModel
-      ctx.set('X-Chat2API-Route', `${actualModel} (${provider.name})`)
+      // 供应商名可能含中文（账号渠道如 `TRAE (字节)`、自定义供应商由用户命名），
+      // 直接写进头值会让 Node 抛 ERR_INVALID_CHAR、把一次成功的路由变成 500，
+      // 所以动态部分一律过 toHeaderValue（非 ASCII 按 UTF-8 百分号编码）。
+      ctx.set('X-Chat2API-Route', routeHeaderValue(actualModel, provider.name))
     } else if (chainCandidates.length > 1) {
       const outcome = await requestForwarder.forwardChainCompletion(
         request,
@@ -435,7 +439,7 @@ router.post('/completions', async (ctx: Context) => {
       account = outcome.candidate.account
       provider = outcome.candidate.provider
       actualModel = outcome.candidate.actualModel
-      ctx.set('X-Chat2API-Aggregate-Chain', provider.id)
+      ctx.set('X-Chat2API-Aggregate-Chain', toHeaderValue(provider.id))
     } else {
       result = await requestForwarder.forwardChatCompletion(
         request,

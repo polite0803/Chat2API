@@ -99,7 +99,7 @@ test('the bare-name chain lives in the load balancer, once', () => {
 
   assert.doesNotMatch(chatRoute, /function selectViaAggregateChain/,
     'the chain must not be implemented twice')
-  assert.match(chatRoute, /ctx\.set\('X-Chat2API-Aggregate-Chain', selection\.provider\.id\)/,
+  assert.match(chatRoute, /ctx\.set\('X-Chat2API-Aggregate-Chain', toHeaderValue\(selection\.provider\.id\)\)/,
     'the chosen entry stays observable in the response headers')
   assert.match(chatRoute, /selection && !request\.model\.includes\('\/'\) && selection\.provider\.type === 'aggregate'/,
     'the header only marks bare names that landed on an aggregate entry')

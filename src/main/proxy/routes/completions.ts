@@ -16,6 +16,7 @@ import type { AutoCandidate } from '../autoRouter'
 import type { AccountSelection, ForwardResult } from '../types'
 import { storeManager } from '../../store/store'
 import { createTextCompletionChunkTransform, toTextCompletion } from '../utils/textCompletion'
+import { routeHeaderValue } from '../utils/headerValue'
 
 const router = new Router({ prefix: '/v1' })
 
@@ -204,7 +205,9 @@ router.post('/completions', async (ctx: Context) => {
       account = outcome.candidate.account
       provider = outcome.candidate.provider
       actualModel = outcome.candidate.actualModel
-      ctx.set('X-Chat2API-Route', `${actualModel} (${provider.name})`)
+      // 与 chat 路由同因：供应商名可能是中文（账号渠道 `TRAE (字节)`、自定义
+      // 供应商），直接写头值会让 Node 抛 ERR_INVALID_CHAR 并变成 500。
+      ctx.set('X-Chat2API-Route', routeHeaderValue(actualModel, provider.name))
     } else {
       result = await requestForwarder.forwardChatCompletion(
         chatRequest,

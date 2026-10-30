@@ -860,6 +860,15 @@ that path.
   additive `x_chat2api_tool_violation: "required"` field on the finish chunk (clients that ignore
   it see an unchanged stream).
 - Every `/v1/*` response carries `X-Request-Id`; it matches the request log row.
+- Response headers that carry dynamic text (the `auto` winner in `X-Chat2API-Route` via
+  `utils/headerValue.ts::routeHeaderValue`, `X-Chat2API-Aggregate-Chain`) go through
+  `toHeaderValue`. Node validates header values as Latin-1 and throws `ERR_INVALID_CHAR`
+  (`Invalid character in header content [...]`) on any character above `0xFF`; eight
+  account-channel names contain Chinese (`TRAE (字节)`, `Qoder (中国版)`, …) and custom provider
+  names are user-typed, so interpolating them raw turned a successful auto route into
+  `500 {"type":"internal_error"}`. ASCII-only values pass through unchanged; anything else is
+  percent-encoded per UTF-8 byte (so `decodeURIComponent` restores it, and CR/LF can never
+  inject a header).
 - `/v1/models` (both the list and the single-model route) carries `context_window` **only when the
   upstream declared one** - the key is omitted otherwise, never `0` and never a guessed default,
   because clients time their own compaction off this number and an over-stated ceiling turns into a
