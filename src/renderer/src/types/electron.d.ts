@@ -27,7 +27,6 @@ import type {
   EffectiveModel,
   CatalogueModel,
   RequestLogEntry,
-  RequestLogTrendPoint,
   AppLogTrendPoint,
   ModelsFetchFailure,
 } from '../../../shared/types'
@@ -418,7 +417,6 @@ interface RequestLogsAPI {
   get: (filter?: RequestLogFilter) => Promise<RequestLogEntry[]>
   getById: (id: string) => Promise<RequestLogEntry | undefined>
   getStats: () => Promise<RequestLogStats>
-  getTrend: (days?: number) => Promise<RequestLogTrendPoint[]>
   clear: () => Promise<void>
   /** Live push of one already-persisted row; subscribe for as long as the list is mounted. */
   onNewLog: (callback: (log: RequestLogEntry) => void) => () => void

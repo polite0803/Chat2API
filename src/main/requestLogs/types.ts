@@ -1,7 +1,6 @@
 import type { RequestLogConfig } from '../store/types.ts'
 
 export type { RequestLogConfig } from '../store/types.ts'
-export type { RequestLogTrendPoint } from '../../shared/types.ts'
 
 export interface RequestLogFilter {
   status?: 'success' | 'error'

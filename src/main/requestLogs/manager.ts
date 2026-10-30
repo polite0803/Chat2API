@@ -1,13 +1,12 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { currentLocalDay, isDayRetained, oldestTimestamp, recentLocalDays } from '../../shared/localDay.ts'
+import { currentLocalDay } from '../../shared/localDay.ts'
 import type { RequestLogEntry } from '../store/types.ts'
 import type {
   RequestLogConfig,
   RequestLogFilter,
   RequestLogStats,
-  RequestLogTrendPoint,
 } from './types.ts'
 import { normalizeRequestLogConfig } from './types.ts'
 import {
@@ -155,30 +154,6 @@ export class RequestLogManager {
       todaySuccess: todayLogs.filter((entry) => entry.status === 'success').length,
       todayError: todayLogs.filter((entry) => entry.status === 'error').length,
     }
-  }
-
-  getRequestLogTrend(days: number = 7): RequestLogTrendPoint[] {
-    this.ensureInitialized()
-    const oldestRetained = oldestTimestamp(this.requestLogs)
-
-    return recentLocalDays(days).map((window) => {
-      if (!isDayRetained(oldestRetained, window.end)) {
-        return { date: window.key, total: null, success: null, error: null, avgLatency: null }
-      }
-
-      const dayLogs = this.requestLogs.filter((entry) => entry.timestamp >= window.start && entry.timestamp < window.end)
-      const successLogs = dayLogs.filter((entry) => entry.status === 'success')
-      const errorLogs = dayLogs.filter((entry) => entry.status === 'error')
-      const totalLatency = successLogs.reduce((sum, entry) => sum + entry.latency, 0)
-
-      return {
-        date: window.key,
-        total: dayLogs.length,
-        success: successLogs.length,
-        error: errorLogs.length,
-        avgLatency: successLogs.length > 0 ? Math.round(totalLatency / successLogs.length) : 0,
-      }
-    })
   }
 
   exportRequestLogs(): RequestLogEntry[] {

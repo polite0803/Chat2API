@@ -910,10 +910,6 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
     return storeManager.getRequestLogStats()
   })
 
-  ipcMain.handle(IpcChannels.REQUEST_LOGS_GET_TREND, async (_, days?: number) => {
-    return storeManager.getRequestLogTrend(days)
-  })
-
   ipcMain.handle(IpcChannels.REQUEST_LOGS_CLEAR, async (): Promise<void> => {
     storeManager.clearRequestLogs()
   })

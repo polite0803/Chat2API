@@ -46,7 +46,7 @@
     "chartEmptyHint": "Request volume will appear here once traffic reaches the proxy.",
     "chartDayNotRetained": "no retained data",
     "trendUnavailable": "no comparison",
-    "chartRetentionGap": "Outside the retained request-log window, no data: {{days}}",
+    "chartRetentionGap": "Recorded history starts later; no data for: {{days}}",
     "tokenUsage": {
       "title": "Tokens today",
       "upstream": "Upstream reported",

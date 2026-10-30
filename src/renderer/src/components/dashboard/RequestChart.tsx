@@ -29,10 +29,13 @@ const CHART_PADDING = {
 
 export function RequestChart({ data, className }: RequestChartProps) {
   const { t } = useTranslation()
+  // `requests` is drawn as a ring so a day where every request succeeded still
+  // shows both the total and the success marker instead of hiding one behind
+  // the other - they sit on the same coordinate.
   const series = useMemo(() => [
-    { key: 'requests' as const, label: t('dashboard.totalRequests'), color: 'hsl(var(--primary))' },
-    { key: 'success' as const, label: t('common.success'), color: 'hsl(142, 76%, 36%)' },
-    { key: 'failed' as const, label: t('common.error'), color: 'hsl(0, 84%, 60%)' },
+    { key: 'requests' as const, label: t('dashboard.totalRequests'), color: 'hsl(var(--primary))', ring: true },
+    { key: 'success' as const, label: t('common.success'), color: 'hsl(142, 76%, 36%)', ring: false },
+    { key: 'failed' as const, label: t('common.error'), color: 'hsl(0, 84%, 60%)', ring: false },
   ], [t])
 
   const chart = useMemo(() => {
@@ -161,8 +164,10 @@ export function RequestChart({ data, className }: RequestChartProps) {
                         key={index}
                         cx={chart.x(index)}
                         cy={chart.y(value)}
-                        r={3}
-                        fill={item.color}
+                        r={item.ring ? 5 : 2.5}
+                        fill={item.ring ? 'none' : item.color}
+                        stroke={item.ring ? item.color : undefined}
+                        strokeWidth={item.ring ? 1.5 : undefined}
                       />
                     )
                   })}

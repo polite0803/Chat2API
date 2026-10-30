@@ -62,7 +62,7 @@ import { DEFAULT_AUTO_ROUTING_CONFIG, RETIRED_PROVIDER_IDS } from '../../shared/
 import { normalizeAutoRoutingConfig } from './autoRoutingConfig'
 import { normalizeCompressionConfig } from './compressionConfig'
 import { normalizeOutputSteeringConfig } from './outputSteeringConfig'
-import type { AppLogTrendPoint, AutoRoutingConfig, RequestLogTrendPoint } from '../../shared/types'
+import type { AppLogTrendPoint, AutoRoutingConfig } from '../../shared/types'
 import { AppLogManager } from '../appLogs/manager'
 import { QuotaLedger } from '../proxy/quota/ledger'
 import { syncBuiltinProvider } from './providerSync'
@@ -1339,14 +1339,6 @@ class StoreManager {
   getRequestLogStats(): { total: number; success: number; error: number; todayTotal: number; todaySuccess: number; todayError: number } {
     this.ensureInitialized()
     return this.getRequestLogManager().getRequestLogStats()
-  }
-
-  /**
-   * Get Request Log Trend
-   */
-  getRequestLogTrend(days: number = 7): RequestLogTrendPoint[] {
-    this.ensureInitialized()
-    return this.getRequestLogManager().getRequestLogTrend(days)
   }
 
   // ==================== Statistics Operations ====================

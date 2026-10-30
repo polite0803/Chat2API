@@ -494,11 +494,11 @@ export interface RequestLogConfig {
 }
 
 /**
- * One day of a per-day aggregate. Counts are `null` when the retained logs
- * cannot speak for that day: a `0` there would read as "that day had no
- * traffic" while the real answer is "those rows are no longer stored".
+ * One day of a per-day aggregate. Counts are `null` when nothing recorded that
+ * day can be trusted to speak for it: a `0` there would read as "that day had no
+ * traffic" while the real answer is "that day is not in the retained window".
  */
-export interface RequestLogTrendPoint {
+export interface DailyTrendPoint {
   date: string
   total: number | null
   success: number | null

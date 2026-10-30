@@ -15,7 +15,6 @@ import type {
   EffectiveModel,
   CatalogueModel,
   RequestLogEntry,
-  RequestLogTrendPoint,
   AppLogTrendPoint,
   ModelsFetchFailure,
 } from '../shared/types'
@@ -329,9 +328,6 @@ const requestLogsAPI = {
   
   getStats: (): Promise<RequestLogStats> => 
     ipcRenderer.invoke(IpcChannels.REQUEST_LOGS_GET_STATS),
-  
-  getTrend: (days?: number): Promise<RequestLogTrendPoint[]> => 
-    ipcRenderer.invoke(IpcChannels.REQUEST_LOGS_GET_TREND, days),
   
   clear: (): Promise<void> => 
     ipcRenderer.invoke(IpcChannels.REQUEST_LOGS_CLEAR),

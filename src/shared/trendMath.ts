@@ -1,4 +1,5 @@
-import type { AppLogTrendPoint, RequestLogTrendPoint } from './types.ts'
+import type { DailyTrendPoint } from './types.ts'
+import { recentLocalDays } from './localDay.ts'
 
 /**
  * The dashboard compares today with yesterday. Both sides can be unknown -
@@ -12,20 +13,49 @@ export interface DayCounts {
 }
 
 /**
- * The two trend sources answer different questions: request logs know requests,
- * successes and latency; app logs only know how many info lines were written.
+ * The dashboard's per-day numbers all come from the persistent daily rollup:
+ * it counts every request the proxy handled (refusals included) and is not
+ * capped by row count, unlike the request log.
  */
-export function dayCountsOf(
-  point: RequestLogTrendPoint | AppLogTrendPoint | undefined,
-  fromRequestLogs: boolean,
-): DayCounts {
+export function dayCountsOf(point: DailyTrendPoint | undefined): DayCounts {
   if (!point) return { requests: null, success: null, avgLatency: null }
-  if (fromRequestLogs) {
-    const requestPoint = point as RequestLogTrendPoint
-    return { requests: requestPoint.total, success: requestPoint.success, avgLatency: requestPoint.avgLatency }
-  }
-  const appPoint = point as AppLogTrendPoint
-  return { requests: appPoint.total, success: appPoint.info, avgLatency: null }
+  return { requests: point.total, success: point.success, avgLatency: point.avgLatency }
+}
+
+export interface DailyBucket {
+  totalRequests: number
+  successRequests: number
+  failedRequests: number
+  totalLatency: number
+}
+
+/**
+ * A day before the oldest recorded bucket has nothing behind it (the app was not
+ * counting yet); a day inside that range without a bucket really did serve
+ * nothing. Never the other way round.
+ */
+export function dailyTrendPoints(
+  buckets: Record<string, DailyBucket>,
+  days: number,
+  now: number = Date.now(),
+): DailyTrendPoint[] {
+  const oldestKey = Object.keys(buckets).sort()[0]
+
+  return recentLocalDays(days, now).map((window) => {
+    if (!oldestKey || oldestKey > window.key) {
+      return { date: window.key, total: null, success: null, error: null, avgLatency: null }
+    }
+
+    const bucket = buckets[window.key]
+    const success = bucket?.successRequests ?? 0
+    return {
+      date: window.key,
+      total: bucket?.totalRequests ?? 0,
+      success,
+      error: bucket?.failedRequests ?? 0,
+      avgLatency: bucket && success > 0 ? Math.round(bucket.totalLatency / success) : 0,
+    }
+  })
 }
 
 export function successRateOf(counts: DayCounts): number | null {

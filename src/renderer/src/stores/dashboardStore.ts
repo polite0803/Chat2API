@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import type { ProxyStatus, ProxyStatistics, Provider, Account, ProviderCheckResult, LogEntry, DayTokenSummary } from '@/types/electron'
-import type { AppLogTrendPoint, RequestLogTrendPoint } from '@shared/types'
+import type { DailyTrendPoint } from '@shared/types'
 import { localDayKey, recentLocalDays } from '@shared/localDay'
-import { dayCountsOf, differenceInPoints, percentChange, successRateOf } from '@shared/trendMath'
+import { dailyTrendPoints, dayCountsOf, differenceInPoints, percentChange, successRateOf } from '@shared/trendMath'
 import type { ProviderStats, ActivityItem, ChartDataPoint } from '@/components/dashboard'
 
 interface DashboardStats {
@@ -96,15 +96,6 @@ const convertRequestLogsToActivities = (logs: DashboardRequestLog[]): ActivityIt
   })
 }
 
-const convertTrendToChartData = (trends: AppLogTrendPoint[]): ChartDataPoint[] => {
-  return trends.map(trend => ({
-    time: trend.date.slice(5),
-    requests: trend.total,
-    success: trend.info,
-    failed: trend.error === null || trend.warn === null ? null : trend.error + trend.warn,
-  }))
-}
-
 export const useDashboardStore = create<DashboardState>((set, get) => ({
   proxyStatus: null,
   statistics: null,
@@ -153,13 +144,11 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       const accountsPromise = window.electronAPI?.accounts?.getAll?.() ?? Promise.resolve([])
       const providerStatusPromise = window.electronAPI?.providers?.checkAllStatus?.() ?? Promise.resolve({})
       const logsPromise = window.electronAPI?.logs?.get?.({ limit: 10 }) ?? Promise.resolve([])
-      const trendPromise = window.electronAPI?.logs?.getTrend?.(7) ?? Promise.resolve([])
-      const requestLogTrendPromise = window.electronAPI?.requestLogs?.getTrend?.(7) ?? Promise.resolve([])
       // Token counters live in their own store key (bounded by days, not rows),
       // so they are fetched independently of the request-log window.
       const tokenUsagePromise = window.electronAPI?.statistics?.getTokenUsage?.() ?? Promise.resolve(null)
 
-      const [proxyStatus, statistics, persistentStats, providers, accounts, providerStatuses, logs, trends, requestLogTrends, tokenUsage] = await Promise.all([
+      const [proxyStatus, statistics, persistentStats, providers, accounts, providerStatuses, logs, tokenUsage] = await Promise.all([
         proxyStatusPromise,
         statisticsPromise,
         persistentStatsPromise,
@@ -167,10 +156,15 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         accountsPromise,
         providerStatusPromise,
         logsPromise,
-        trendPromise,
-        requestLogTrendPromise,
         tokenUsagePromise,
-      ]) as [ProxyStatus | null, ProxyStatistics | null, any, Provider[], Account[], Record<string, ProviderCheckResult>, LogEntry[], AppLogTrendPoint[], RequestLogTrendPoint[], DayTokenSummary | null]
+      ]) as [ProxyStatus | null, ProxyStatistics | null, any, Provider[], Account[], Record<string, ProviderCheckResult>, LogEntry[], DayTokenSummary | null]
+
+      // The trend is computed here, from the rollup the `statistics.get` payload
+      // already carries. A second channel for the same numbers only added a way to
+      // render "no data" when the running build did not have it yet.
+      const dailyTrends: DailyTrendPoint[] = persistentStats?.dailyStats
+        ? dailyTrendPoints(persistentStats.dailyStats, 7)
+        : []
 
       setProxyStatus(proxyStatus)
       setStatistics(statistics)
@@ -194,19 +188,11 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
       const yesterday = recentLocalDays(2)[0].key
 
-      // Request-log rows are capped, so a day can be unknown (null) instead of zero.
-      // The app-log trend has its own retention window, so it only takes over when the
-      // request-log window says nothing at all.
-      const useRequestLogTrends = requestLogTrends.some((point) => point.total !== null)
-      const todayTrend = useRequestLogTrends
-        ? requestLogTrends.find((point) => point.date === today)
-        : trends.find((point) => point.date === today)
-      const yesterdayTrend = useRequestLogTrends
-        ? requestLogTrends.find((point) => point.date === yesterday)
-        : trends.find((point) => point.date === yesterday)
+      const todayTrend = dailyTrends.find((point) => point.date === today)
+      const yesterdayTrend = dailyTrends.find((point) => point.date === yesterday)
 
-      const todayCounts = dayCountsOf(todayTrend, useRequestLogTrends)
-      const yesterdayCounts = dayCountsOf(yesterdayTrend, useRequestLogTrends)
+      const todayCounts = dayCountsOf(todayTrend)
+      const yesterdayCounts = dayCountsOf(yesterdayTrend)
       
       const requestsTrend = percentChange(todayCounts.requests, yesterdayCounts.requests)
       const successRateTrend = differenceInPoints(successRateOf(todayCounts), successRateOf(yesterdayCounts))
@@ -263,16 +249,12 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         setActivities(convertLogsToActivities(logs, providers ?? []))
       }
       
-      if (useRequestLogTrends) {
-        setChartData(requestLogTrends.map((point) => ({
-          time: point.date.slice(5),
-          requests: point.total,
-          success: point.success,
-          failed: point.error,
-        })))
-      } else {
-        setChartData(convertTrendToChartData(trends))
-      }
+      setChartData(dailyTrends.map((point) => ({
+        time: point.date.slice(5),
+        requests: point.total,
+        success: point.success,
+        failed: point.error,
+      })))
 
       set({ lastUpdated: Date.now() })
     } catch (error) {

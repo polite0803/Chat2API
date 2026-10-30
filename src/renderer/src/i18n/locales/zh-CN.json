@@ -46,7 +46,7 @@
     "chartEmptyHint": "代理接收请求后，这里会显示流量趋势。",
     "chartDayNotRetained": "无保留数据",
     "trendUnavailable": "无对照数据",
-    "chartRetentionGap": "以下日期已超出请求日志保留范围，无数据：{{days}}",
+    "chartRetentionGap": "以下日期早于统计起点，没有数据：{{days}}",
     "tokenUsage": {
       "title": "今日 Token",
       "upstream": "上游上报",
