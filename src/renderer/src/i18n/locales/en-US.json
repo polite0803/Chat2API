@@ -943,9 +943,9 @@
       "title": "How it works",
       "steps": {
         "1": "The client sends tools / tool_choice in OpenAI format.",
-        "2": "The engine strips the native fields and injects the tool catalogue as Chat2API XML into the system prompt; required or a forced tool adds a directive, and parallel_tool_calls: false limits the turn to a single call.",
+        "2": "The engine strips the native fields and injects the tool catalogue as ModelPort XML into the system prompt; required or a forced tool adds a directive, and parallel_tool_calls: false limits the turn to a single call.",
         "3": "The model answers with XML markup; streaming and non-streaming responses are parsed back into OpenAI tool_calls with ids like call_<requestId>-<n>.",
-        "4": "When tool_choice: required was declared but the model did not call, the response carries X-Chat2API-Tool-Violation: required; unparseable markup is stripped while the surrounding text is preserved."
+        "4": "When tool_choice: required was declared but the model did not call, the response carries X-ModelPort-Tool-Violation: required; unparseable markup is stripped while the surrounding text is preserved."
       }
     },
     "wireMatrix": {
@@ -988,7 +988,7 @@
     },
     "advanced": {
       "title": "Prompt template",
-      "description": "Override the managed tool-calling prompt injected into model requests. Leave empty to use the built-in Chat2API XML format; applies in managed modes only.",
+      "description": "Override the managed tool-calling prompt injected into model requests. Leave empty to use the built-in ModelPort XML format; applies in managed modes only.",
       "customTemplate": "Custom prompt template",
       "customTemplatePlaceholder": "Use {{tools}}, {{tool_names}}, and {{format}}."
     }

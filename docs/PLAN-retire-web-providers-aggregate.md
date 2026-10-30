@@ -113,7 +113,7 @@
 ### P0 基线与门禁
 - 记录当前 `npm run build`、两份 `tsc --noEmit`、`node --test` 的基线读数
   （288 条，2 条 Windows 环境失败）
-- 备份 `~/.chat2api/data.json` 到 `data.json.pre-aggregate.bak`
+- 备份 `~/.modelport/data.json` 到 `data.json.pre-aggregate.bak`
 
 ### P1 退役（纯删除，不掺新功能）
 1. 删 8 个 builtin 配置 + `builtin/index.ts` 两条登记

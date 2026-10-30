@@ -45,7 +45,7 @@ async function collect(stream: NodeJS.ReadableStream): Promise<string> {
 
 test('managed tool markup from a plan-less provider becomes tool_calls', async () => {
   const toolBlock =
-    '<|CHAT2API|tool_calls><|CHAT2API|invoke name="read_file"><|CHAT2API|parameter name="path">/tmp/a</|CHAT2API|parameter></|CHAT2API|invoke></|CHAT2API|tool_calls>'
+    '<|MODELPORT|tool_calls><|MODELPORT|invoke name="read_file"><|MODELPORT|parameter name="path">/tmp/a</|MODELPORT|parameter></|MODELPORT|invoke></|MODELPORT|tool_calls>'
 
   const input = Readable.from([
     sse({ id: 'c1', model: 'glm', object: 'chat.completion.chunk', created: 1, choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] }),
@@ -59,7 +59,7 @@ test('managed tool markup from a plan-less provider becomes tool_calls', async (
   assert.match(output, /"tool_calls"/)
   assert.match(output, /"id":"call_chatcmpl-x-0"/)
   assert.match(output, /"finish_reason":"tool_calls"/)
-  assert.doesNotMatch(output, /CHAT2API\|tool_calls/)
+  assert.doesNotMatch(output, /modelport\|tool_calls/)
   assert.equal((output.match(/\[DONE\]/g) || []).length, 1)
 })
 

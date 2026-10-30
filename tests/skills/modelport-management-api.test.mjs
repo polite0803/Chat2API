@@ -6,8 +6,8 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import test from 'node:test'
 
-const script = 'skills/chat2api-management-api/scripts/management-api.mjs'
-const skill = 'skills/chat2api-management-api/SKILL.md'
+const script = 'skills/modelport-management-api/scripts/management-api.mjs'
+const skill = 'skills/modelport-management-api/SKILL.md'
 
 test('management helper has documented commands', () => {
   const text = fs.readFileSync(script, 'utf8')
@@ -22,8 +22,8 @@ test('management helper prints safe dry-run output without leaking secret', () =
   const result = spawnSync('node', [script, 'snapshot', '--dry-run'], {
     env: {
       ...process.env,
-      CHAT2API_BASE_URL: 'http://127.0.0.1:8080',
-      CHAT2API_MGMT_SECRET: 'mgmt_super_secret_value',
+      modelport_BASE_URL: 'http://127.0.0.1:8080',
+      modelport_MGMT_SECRET: 'mgmt_super_secret_value',
     },
     encoding: 'utf8',
   })
@@ -45,8 +45,8 @@ test('management helper dry-run commands do not need network and do not leak sec
     const result = spawnSync('node', [script, ...command], {
       env: {
         ...process.env,
-        CHAT2API_BASE_URL: 'http://127.0.0.1:1',
-        CHAT2API_MGMT_SECRET: 'mgmt_super_secret_value',
+        modelport_BASE_URL: 'http://127.0.0.1:1',
+        modelport_MGMT_SECRET: 'mgmt_super_secret_value',
       },
       encoding: 'utf8',
     })
@@ -82,8 +82,8 @@ globalThis.fetch = async (url, options = {}) => {
       '--file',
       configFile,
     ], {
-      CHAT2API_BASE_URL: 'http://mock.local',
-      CHAT2API_MGMT_SECRET: 'mgmt_super_secret_value',
+      modelport_BASE_URL: 'http://mock.local',
+      modelport_MGMT_SECRET: 'mgmt_super_secret_value',
     }, {
       // `--import` 只认 URL：Windows 绝对路径（`c:\...`）会被 ESM 加载器拒绝。
       nodeArgs: ['--import', pathToFileURL(mockFile).href],

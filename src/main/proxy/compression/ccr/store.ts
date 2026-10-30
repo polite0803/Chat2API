@@ -16,7 +16,7 @@
  *    before its own original was durable. Writes are rare (only when a
  *    compression actually lands) and small, so the blocking cost is bounded.
  *
- * Path: `~/.chat2api/ccr/` — same root as `data.json`, so it follows the
+ * Path: `~/.modelport/ccr/` — same root as `data.json`, so it follows the
  * existing install and needs no extra directory choice.
  */
 
@@ -68,7 +68,7 @@ export class CcrStore {
     maxEntries?: number
     maxBytes?: number
   } = {}) {
-    this.dir = options.dir ?? join(homedir(), '.chat2api', 'ccr')
+    this.dir = options.dir ?? join(homedir(), '.modelport', 'ccr')
     this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
     this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES
     this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES

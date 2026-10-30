@@ -228,7 +228,7 @@ async function rpc(call: unknown, signal: AbortSignal): Promise<unknown> {
   const response = await route.fetch(new Request('http://localhost/api/channel-pack', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ type: 'client-request', rpcId: 'chat2api', method: 'channel-pack', payload: call }),
+    body: JSON.stringify({ type: 'client-request', rpcId: 'modelport', method: 'channel-pack', payload: call }),
     signal,
   }))
   const reply = await response.json() as { result?: unknown }

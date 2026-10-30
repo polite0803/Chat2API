@@ -56,7 +56,7 @@ test('OpenAI tools plus DeepSeek choose managed prompt', () => {
   assert.equal(result.plan.shouldInjectPrompt, true)
   assert.equal(result.tools, undefined)
   assert.equal(result.plan.tools.length, 2)
-  assert.match(result.messages[0].content as string, /<\|CHAT2API\|tool_calls>/)
+  assert.match(result.messages[0].content as string, /<\|MODELPORT\|tool_calls>/)
 })
 
 test('explicit Cherry Studio MCP adapter uses managed prompt and preserves tool names', () => {

@@ -55,7 +55,7 @@ class OpencodeService {
   }
 
   private root(): string {
-    return join(homedir(), '.chat2api', 'opencode')
+    return join(homedir(), '.modelport', 'opencode')
   }
 
   private probeCache(): ProbeCache {

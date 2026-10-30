@@ -15,6 +15,7 @@
  */
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { PassThrough } from 'node:stream'
 import { shell } from 'electron'
 import AccountManager from '../../store/accounts'
 import { storeManager } from '../../store/store'
@@ -67,7 +68,7 @@ class AccountChannelManager {
   private onChanged: (() => void) | null = null
 
   private get dataDir(): string {
-    return join(homedir(), '.chat2api')
+    return join(homedir(), '.modelport')
   }
 
   /** Registers the renderer notification sink (called once from IPC setup). */
@@ -458,7 +459,7 @@ class AccountChannelManager {
     requestId: string
     model: string
     openAi: Record<string, unknown>
-  }): Promise<NodeJS.ReadableStream> {
+  }): Promise<PassThrough> {
     const bridge = await this.bridgeOrThrow()
     return bridge.openStream({ ...request, stream: true })
   }

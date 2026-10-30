@@ -12,8 +12,8 @@ import {
   toolNames,
 } from './shared.ts'
 
-const CHAT2API_START = '<|CHAT2API|tool_calls>'
-const CHAT2API_END = '</|CHAT2API|tool_calls>'
+const MODELPORT_START = '<|MODELPORT|tool_calls>'
+const MODELPORT_END = '</|MODELPORT|tool_calls>'
 const XML_START = '<tool_calls>'
 
 export const managedXmlProtocol: ToolProtocolAdapter = {
@@ -26,17 +26,17 @@ Use only the exact tool names listed below. Do not rename, camelCase, translate,
 
 ${renderToolList(tools)}
 
-When calling tools, respond with only this Chat2API XML block:
+When calling tools, respond with only this ModelPort XML block:
 
-<|CHAT2API|tool_calls><|CHAT2API|invoke name="exact_tool_name" tool_call_id="call_id"><|CHAT2API|parameter name="argument"><![CDATA[value]]></|CHAT2API|parameter></|CHAT2API|invoke></|CHAT2API|tool_calls>
+<|MODELPORT|tool_calls><|MODELPORT|invoke name="exact_tool_name" tool_call_id="call_id"><|MODELPORT|parameter name="argument"><![CDATA[value]]></|MODELPORT|parameter></|MODELPORT|invoke></|MODELPORT|tool_calls>
 
-Tool results will be provided as Chat2API XML result blocks:
+Tool results will be provided as ModelPort XML result blocks:
 
-<|CHAT2API|tool_result tool_call_id="call_id"><![CDATA[result]]></|CHAT2API|tool_result>`
+<|MODELPORT|tool_result tool_call_id="call_id"><![CDATA[result]]></|MODELPORT|tool_result>`
   },
 
   detectStart(buffer) {
-    return detectMarkers(buffer, [CHAT2API_START, XML_START])
+    return detectMarkers(buffer, [MODELPORT_START, XML_START])
   },
 
   parse(content: string, context: ToolParseContext) {
@@ -47,9 +47,9 @@ Tool results will be provided as Chat2API XML result blocks:
     const toolCalls: ReturnType<typeof buildToolCall>[] = []
 
     parseBlocks(parseable, {
-      blockPattern: /<\|CHAT2API\|tool_calls>([\s\S]*?)<\/\|CHAT2API\|tool_calls>/g,
-      invokePattern: /<\|CHAT2API\|invoke\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/\|CHAT2API\|invoke>/g,
-      parameterPattern: /<\|CHAT2API\|parameter\s+name="([^"]+)"\s*>([\s\S]*?)<\/\|CHAT2API\|parameter>/g,
+      blockPattern: /<\|MODELPORT\|tool_calls>([\s\S]*?)<\/\|MODELPORT\|tool_calls>/g,
+      invokePattern: /<\|MODELPORT\|invoke\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/\|MODELPORT\|invoke>/g,
+      parameterPattern: /<\|MODELPORT\|parameter\s+name="([^"]+)"\s*>([\s\S]*?)<\/\|MODELPORT\|parameter>/g,
       rawMatches,
       invalidToolNames,
       allowedNames,
@@ -94,19 +94,19 @@ Tool results will be provided as Chat2API XML result blocks:
         ? entries
             .map(([name, value]) => {
               const text = typeof value === 'string' ? value : JSON.stringify(value)
-              return `<|CHAT2API|parameter name="${escapeXmlAttribute(name)}"><![CDATA[${text}]]></|CHAT2API|parameter>`
+              return `<|MODELPORT|parameter name="${escapeXmlAttribute(name)}"><![CDATA[${text}]]></|MODELPORT|parameter>`
             })
             .join('')
         : call.arguments && call.arguments.trim() && call.arguments.trim() !== '{}'
-          ? `<|CHAT2API|parameter name="arguments"><![CDATA[${call.arguments}]]></|CHAT2API|parameter>`
+          ? `<|MODELPORT|parameter name="arguments"><![CDATA[${call.arguments}]]></|MODELPORT|parameter>`
           : ''
-      return `<|CHAT2API|invoke name="${escapeXmlAttribute(call.name)}" tool_call_id="${escapeXmlAttribute(call.id)}">${params}</|CHAT2API|invoke>`
+      return `<|MODELPORT|invoke name="${escapeXmlAttribute(call.name)}" tool_call_id="${escapeXmlAttribute(call.id)}">${params}</|MODELPORT|invoke>`
     })
-    return `${CHAT2API_START}${invokes.join('')}${CHAT2API_END}`
+    return `${MODELPORT_START}${invokes.join('')}${MODELPORT_END}`
   },
 
   formatToolResult(result) {
-    return `<|CHAT2API|tool_result tool_call_id="${escapeXmlAttribute(result.toolCallId)}"><![CDATA[${result.content}]]></|CHAT2API|tool_result>`
+    return `<|MODELPORT|tool_result tool_call_id="${escapeXmlAttribute(result.toolCallId)}"><![CDATA[${result.content}]]></|MODELPORT|tool_result>`
   },
 }
 

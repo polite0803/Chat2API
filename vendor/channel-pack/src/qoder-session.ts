@@ -65,7 +65,7 @@ export interface QoderSessionSeed {
 }
 
 /** 域分隔标记，避免与其它派生函数的输入空间相撞。 */
-const SESSION_DOMAIN = 'chat2api-qoder-session-v1'
+const SESSION_DOMAIN = 'modelport-qoder-session-v1'
 
 /** FNV-1a 64 位（BigInt，避免 2^53 精度丢失）。 */
 function fnv1a64(input: string, basis: bigint): bigint {

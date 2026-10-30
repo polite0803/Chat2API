@@ -3,9 +3,9 @@
 import fs from 'node:fs'
 
 const args = parseArgs(process.argv.slice(2))
-const baseUrl = (process.env.CHAT2API_BASE_URL || 'http://127.0.0.1:8080').replace(/\/$/, '')
-const managementSecret = process.env.CHAT2API_MGMT_SECRET || ''
-const apiKey = process.env.CHAT2API_API_KEY || ''
+const baseUrl = (process.env.modelport_BASE_URL || 'http://127.0.0.1:8080').replace(/\/$/, '')
+const managementSecret = process.env.modelport_MGMT_SECRET || ''
+const apiKey = process.env.MODELPORT_API_KEY || ''
 const runId = new Date().toISOString().replace(/[:.]/g, '-')
 const profile = args.profile || 'custom-har'
 const modelSource = 'v1/models'
@@ -63,8 +63,8 @@ function requireFixtureArg() {
 }
 
 function requireLiveInputs() {
-  if (!managementSecret) throw new Error('CHAT2API_MGMT_SECRET is required')
-  if (!apiKey) throw new Error('CHAT2API_API_KEY is required')
+  if (!managementSecret) throw new Error('modelport_MGMT_SECRET is required')
+  if (!apiKey) throw new Error('MODELPORT_API_KEY is required')
   if (!fs.existsSync(args.fixture)) throw new Error(`Fixture file not found: ${args.fixture}`)
 }
 
@@ -145,7 +145,7 @@ async function main() {
   })
 
   fs.mkdirSync('backup/har', { recursive: true })
-  const reportPath = `backup/har/chat2api-model-matrix-${runId}.json`
+  const reportPath = `backup/har/modelport-model-matrix-${runId}.json`
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
   console.log(JSON.stringify({
     modelSource,

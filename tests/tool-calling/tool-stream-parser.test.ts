@@ -65,17 +65,17 @@ test('XML marker split across chunks emits a tool call', () => {
   assert.equal(chunks.at(-1)?.choices[0].delta.tool_calls[0].function.name, 'default_api:read_file')
 })
 
-test('Chat2API XML marker split across chunks emits a tool call', () => {
+test('modelport XML marker split across chunks emits a tool call', () => {
   const parser = new ToolStreamParser(plan('managed_xml'))
-  assert.deepEqual(parser.push('<|CHAT2API|tool_', baseChunk), [])
-  const chunks = parser.push('calls><|CHAT2API|invoke name="default_api:read_file"><|CHAT2API|parameter name="filePath">/tmp/a</|CHAT2API|parameter></|CHAT2API|invoke></|CHAT2API|tool_calls>', baseChunk)
+  assert.deepEqual(parser.push('<|MODELPORT|tool_', baseChunk), [])
+  const chunks = parser.push('calls><|MODELPORT|invoke name="default_api:read_file"><|MODELPORT|parameter name="filePath">/tmp/a</|MODELPORT|parameter></|MODELPORT|invoke></|MODELPORT|tool_calls>', baseChunk)
 
   assert.equal(chunks.at(-1)?.choices[0].delta.tool_calls[0].function.name, 'default_api:read_file')
 })
 
-test('partial Chat2API start marker is reported as buffered so stream handlers do not leak it', () => {
+test('partial ModelPort start marker is reported as buffered so stream handlers do not leak it', () => {
   const parser = new ToolStreamParser(plan('managed_xml'))
-  const chunks = parser.push('<|CHAT2API|tool_calls', baseChunk)
+  const chunks = parser.push('<|MODELPORT|tool_calls', baseChunk)
 
   assert.deepEqual(chunks, [])
   assert.equal(parser.isBuffering(), true)
@@ -118,7 +118,7 @@ test('generated call IDs stay stable between emitted chunks and final state', ()
 test('call ids are scoped to the request id and unique per response', () => {
   const planWithId = { ...plan('managed_xml'), diagnostics: { ...plan().diagnostics, requestId: 'chatcmpl-abc' } }
   const parser = new ToolStreamParser(planWithId)
-  const block = '<|CHAT2API|tool_calls><|CHAT2API|invoke name="default_api:read_file"><|CHAT2API|parameter name="filePath">/tmp/a</|CHAT2API|parameter></|CHAT2API|invoke></|CHAT2API|tool_calls>'
+  const block = '<|MODELPORT|tool_calls><|MODELPORT|invoke name="default_api:read_file"><|MODELPORT|parameter name="filePath">/tmp/a</|MODELPORT|parameter></|MODELPORT|invoke></|MODELPORT|tool_calls>'
   const first = parser.push(block, baseChunk)
   const second = parser.push(block, baseChunk)
   const ids = [

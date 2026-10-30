@@ -81,7 +81,7 @@ export const createUserMessage = (value: Record<string, unknown>) => ({
   ...value,
 })
 export const attributionHeaders = (): Record<string, string> => ({
-  'user-agent': 'chat2api-channel-pack',
+  'user-agent': 'modelport-channel-pack',
 })
 
 export const CONTEXT_WINDOW_EXCEEDED_CODE = 'CONTEXT_WINDOW_EXCEEDED'

@@ -9,7 +9,7 @@ import { ACCOUNT_CHANNELS } from '../../src/main/providers/accountChannels/catal
  * Node 自己的响应头校验规则（`lib/_http_common.js` 的 `headerCharRegex`）：
  * 值里出现除 `\t` 以外的控制字符、或任何 `> 0xFF` 的字符时，`setHeader` 抛
  * `ERR_INVALID_CHAR`，错误文本正是
- * `Invalid character in header content ["X-Chat2API-Route"]`。
+ * `Invalid character in header content ["X-ModelPort-Route"]`。
  * 这里把它当 oracle：出问题的原始值必须被判非法，编码后的值必须合法。
  */
 const NODE_HEADER_CHAR = /[^\t\x20-\x7e\x80-\xff]/
@@ -26,7 +26,7 @@ test('the auto route header is unchanged when the provider name is ASCII', () =>
 })
 
 test('a Chinese provider name no longer produces an illegal header value', () => {
-  // 线上 500 的那一行：auto 命中 TRAE 渠道时 `X-Chat2API-Route` =
+  // 线上 500 的那一行：auto 命中 TRAE 渠道时 `X-ModelPort-Route` =
   // `实际模型 (供应商名)`，供应商名 `TRAE (字节)` 带中文，Node 写头时直接抛
   // ERR_INVALID_CHAR，被路由的 catch 兜成 500 internal_error。
   const raw = 'TRAE/deepseek-v4 (TRAE (字节))'
@@ -64,10 +64,10 @@ test('encoded values decode back to the original text', () => {
 })
 
 test('control characters are neutralized instead of reaching the wire', () => {
-  const value = toHeaderValue('evil\r\nX-Chat2API-Route: injected')
+  const value = toHeaderValue('evil\r\nX-ModelPort-Route: injected')
   assert.match(value, PRINTABLE_ASCII)
   assert.doesNotMatch(value, /[\r\n]/)
-  assert.equal(value, 'evil%0D%0AX-Chat2API-Route: injected')
+  assert.equal(value, 'evil%0D%0AX-ModelPort-Route: injected')
 })
 
 test('a lone surrogate is replaced instead of making encoding throw', () => {
@@ -92,7 +92,7 @@ test('both chat routes write the auto winner through the shared helper', () => {
     const source = readFileSync(file, 'utf-8')
     assert.match(
       source,
-      /ctx\.set\('X-Chat2API-Route', routeHeaderValue\(actualModel, provider\.name\)\)/,
+      /ctx\.set\('X-ModelPort-Route', routeHeaderValue\(actualModel, provider\.name\)\)/,
       file
     )
     assert.ok(

@@ -7,7 +7,7 @@ import { applyCompression } from '../../src/main/proxy/compression/index.ts'
 import { DEFAULT_COMPRESSION_CONFIG } from '../../src/shared/types.ts'
 
 /**
- * In-memory CCR sink. The production store writes to `~/.chat2api/ccr`, which a
+ * In-memory CCR sink. The production store writes to `~/.modelport/ccr`, which a
  * locked-down test environment cannot create; a fake keeps the assertions about
  * compression behaviour instead of about filesystem permissions.
  */

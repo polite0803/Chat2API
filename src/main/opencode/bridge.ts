@@ -185,14 +185,14 @@ export function isolatedConfig(): Record<string, unknown> {
     autoupdate: false,
     share: 'disabled',
     agent: {
-      'chat2api-chat': {
+      'modelport-chat': {
         mode: 'primary',
         description: 'Text-only external conversation',
         prompt: CHAT_AGENT_PROMPT,
         permission: NATIVE_PERMISSIONS,
         steps: 1,
       },
-      'chat2api': {
+      'modelport': {
         mode: 'primary',
         description: 'External client inference only',
         prompt: TOOL_AGENT_PROMPT,
@@ -563,7 +563,7 @@ export class OpencodeBridge {
     let firstByteMs = 0
     const body: Record<string, unknown> = {
       model: { providerID: 'opencode', modelID: request.modelId },
-      agent: withTools ? 'chat2api' : 'chat2api-chat',
+      agent: withTools ? 'modelport' : 'modelport-chat',
       parts: [{ type: 'text', text: request.prompt }],
     }
     if (request.system) body.system = request.system

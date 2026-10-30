@@ -80,7 +80,7 @@ export class ChannelCredentialVault {
     const name = this.nameOf(ref)
     const stored = this.load()[name]
     const configured = typeof stored === 'string' && stored.length > 0
-    return { configured, source: configured ? 'chat2api' : 'none' }
+    return { configured, source: configured ? 'modelport' : 'none' }
   }
 
   async set(ref: unknown, value: unknown): Promise<void> {

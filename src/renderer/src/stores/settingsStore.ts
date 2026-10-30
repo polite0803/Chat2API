@@ -3,6 +3,22 @@ import { persist } from 'zustand/middleware'
 import type { AppConfig } from '@/types/electron'
 import i18n from '@/i18n'
 
+// 数据迁移（Chat2API → ModelPort）：localStorage key 随品牌改名。渲染层加载时
+// 把旧 key 的值搬到新 key（新 key 已存在则跳过），随后删除旧 key。幂等且无副作用。
+const SETTINGS_STORAGE_KEY = 'modelport-settings'
+const LEGACY_SETTINGS_STORAGE_KEY = 'chat2api-settings'
+try {
+  if (localStorage.getItem(SETTINGS_STORAGE_KEY) === null) {
+    const legacy = localStorage.getItem(LEGACY_SETTINGS_STORAGE_KEY)
+    if (legacy !== null) {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, legacy)
+      localStorage.removeItem(LEGACY_SETTINGS_STORAGE_KEY)
+    }
+  }
+} catch (error) {
+  console.warn('[Migration] settings localStorage migration failed:', error)
+}
+
 export type Theme = 'light' | 'dark' | 'system'
 export type Language = 'zh-CN' | 'en-US'
 export type CloseBehavior = 'minimize' | 'close' | 'ask'
@@ -151,7 +167,7 @@ export const useSettingsStore = create<SettingsState>()(
       },
     }),
     {
-      name: 'chat2api-settings',
+      name: SETTINGS_STORAGE_KEY,
       onRehydrateStorage: () => (state) => {
         if (state?.language) {
           i18n.changeLanguage(state.language)

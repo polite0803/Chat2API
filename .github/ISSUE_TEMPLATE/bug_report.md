@@ -71,4 +71,4 @@ assignees: polite0803
 <!-- 是否配置了自定义 HTTP Headers（如开启 web search、thinking mode、deep research 等） -->
 
 ## 请求日志
-<!-- 请贴入 `~/.chat2api/logs/` 下的相关日志内容，或 Dashboard 中的请求记录，注意脱敏 Token 等敏感信息 -->
+<!-- 请贴入 `~/.modelport/logs/` 下的相关日志内容，或 Dashboard 中的请求记录，注意脱敏 Token 等敏感信息 -->

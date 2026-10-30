@@ -290,7 +290,7 @@ npm run start:sandbox
 
 ### 7.1 配置文件
 
-应用数据存储在 `~/.chat2api/` 目录：
+应用数据存储在 `~/.modelport/` 目录：
 - `data.json` - 单一 electron-store 文件，包含配置、提供商、账户、会话、系统提示词、统计与应用日志（并不存在单独的 `providers.json` / `accounts.json`）
 - `request-logs/` - 请求明细日志
 

@@ -25,9 +25,9 @@ test('managed bracket parses valid tool call', () => {
   assert.equal(result.content, '')
 })
 
-test('managed xml parses valid Chat2API tool call', () => {
+test('managed xml parses valid ModelPort tool call', () => {
   const result = managedXmlProtocol.parse(
-    '<|CHAT2API|tool_calls><|CHAT2API|invoke name="default_api:read_file"><|CHAT2API|parameter name="filePath"><![CDATA[/tmp/a]]></|CHAT2API|parameter></|CHAT2API|invoke></|CHAT2API|tool_calls>',
+    '<|MODELPORT|tool_calls><|MODELPORT|invoke name="default_api:read_file"><|MODELPORT|parameter name="filePath"><![CDATA[/tmp/a]]></|MODELPORT|parameter></|MODELPORT|invoke></|MODELPORT|tool_calls>',
     { tools, protocol: 'managed_xml' },
   )
 
@@ -47,7 +47,7 @@ test('managed xml parses canonical XML compatibility form', () => {
 
 test('managed xml ignores fenced tool examples', () => {
   const result = managedXmlProtocol.parse(
-    '```xml\n<|CHAT2API|tool_calls><|CHAT2API|invoke name="default_api:read_file"><|CHAT2API|parameter name="filePath">fake</|CHAT2API|parameter></|CHAT2API|invoke></|CHAT2API|tool_calls>\n```',
+    '```xml\n<|MODELPORT|tool_calls><|MODELPORT|invoke name="default_api:read_file"><|MODELPORT|parameter name="filePath">fake</|MODELPORT|parameter></|MODELPORT|invoke></|MODELPORT|tool_calls>\n```',
     { tools, protocol: 'managed_xml' },
   )
 
@@ -66,7 +66,7 @@ test('unknown tool name is rejected', () => {
 
 test('managed XML parser rejects undeclared tool names and records invalid names', () => {
   const result = managedXmlProtocol.parse(
-    '<|CHAT2API|tool_calls><|CHAT2API|invoke name="missing_tool">{}</|CHAT2API|invoke></|CHAT2API|tool_calls>',
+    '<|MODELPORT|tool_calls><|MODELPORT|invoke name="missing_tool">{}</|MODELPORT|invoke></|MODELPORT|tool_calls>',
     { tools, protocol: 'managed_xml' },
   )
 

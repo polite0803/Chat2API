@@ -58,7 +58,7 @@ with `spawn EPERM` before any assertion executes, on both of the suite's two chi
 | Files | Mechanism |
 |-------|-----------|
 | `tests/channels/{qoder-plan-gate,qoder-session-payload,workbuddy-port,minimax-tool-call-name}.test.ts` | `esbuild.build()` spawns the esbuild service binary |
-| `tests/skills/chat2api-{har-tool-fixture,tool-client-replay,provider-model-matrix,management-api}.test.mjs` | `spawnSync('node', …)` captures the child's stdout through a pipe |
+| `tests/skills/modelport-{har-tool-fixture,tool-client-replay,provider-model-matrix,management-api}.test.mjs` | `spawnSync('node', …)` captures the child's stdout through a pipe |
 
 Both hit the same boundary: a confined process cannot open a named pipe. (`node --test` spawns one
 child per test file, so in a spawn-blocking sandbox the *whole* command fails regardless of content;
@@ -407,7 +407,7 @@ Bare model names across entries:
 - `forwarder.forwardChainCompletion()` and `forwardAutoCompletion()` share one loop
   (`forwardFirstReachable`), so both fail over on 429/5xx/no-status and stop on other 4xx. When the
   chain is used, `routes/chat.ts` adopts the account that actually answered and sets
-  `X-Chat2API-Aggregate-Chain` to its entry id - observability without log-reading.
+  `X-ModelPort-Aggregate-Chain` to its entry id - observability without log-reading.
 
 The aggregate page renders one quota cell per entry with five mutually exclusive states
 (`needs-key`, `exhausted`, `documented`, `undocumented`, `absent`) plus a separate free-pool badge;
@@ -707,7 +707,7 @@ known `contextTokens` filters hard and an unknown one uses `UNANNOTATED_CONTEXT_
 `response_format: json_object | json_schema`. Only builtin providers fail those (see
 `parameterPolicy.ts`). If no candidate can satisfy the contract: `n > 1` is a 400
 `unsupported_parameter`, while `response_format` still routes and sets
-`X-Chat2API-Auto-Degraded: response_format` - returning free text beats refusing the request, but it
+`X-ModelPort-Auto-Degraded: response_format` - returning free text beats refusing the request, but it
 must never be silent.
 
 **Cost and preference.** `costBucketOf()` (shared with the channels UI) turns the channel
@@ -721,9 +721,9 @@ cost contributes exactly zero). Builtin and custom providers have no cost data a
 (`conversationKey` = system prompt + first user message) scores +0.12 (same account) or +0.06 (same
 model, another account). A cooled-down or exhausted candidate simply leaves the pool.
 
-Response headers on every `auto` response: `X-Chat2API-Route` (winner), `X-Chat2API-Auto-Prefer`,
-`X-Chat2API-Auto-Reason` (`only` / `sticky` / `score`), `X-Chat2API-Auto-Attempts` (set after
-forwarding), and `X-Chat2API-Auto-Degraded` when a contract was relaxed. An empty candidate pool
+Response headers on every `auto` response: `X-ModelPort-Route` (winner), `X-ModelPort-Auto-Prefer`,
+`X-ModelPort-Auto-Reason` (`only` / `sticky` / `score`), `X-ModelPort-Auto-Attempts` (set after
+forwarding), and `X-ModelPort-Auto-Degraded` when a contract was relaxed. An empty candidate pool
 answers 503 with `details.missing` (`vision` / `tools` / `context`) instead of a bare "no model".
 The same decision record is stored on `RequestLogEntry.auto`.
 
@@ -862,12 +862,12 @@ that path.
   No endpoint exposes a token-limit field or a truncation signal, so the proxy never fabricates
   one and can never emit `finish_reason:"length"` on its own.
 - A `tool_choice:"required"` / forced call that the model did not make is reported on the
-  non-stream response as `X-Chat2API-Tool-Violation: required`, and in streaming mode as an
-  additive `x_chat2api_tool_violation: "required"` field on the finish chunk (clients that ignore
+  non-stream response as `X-ModelPort-Tool-Violation: required`, and in streaming mode as an
+  additive `x_modelport_tool_violation: "required"` field on the finish chunk (clients that ignore
   it see an unchanged stream).
 - Every `/v1/*` response carries `X-Request-Id`; it matches the request log row.
-- Response headers that carry dynamic text (the `auto` winner in `X-Chat2API-Route` via
-  `utils/headerValue.ts::routeHeaderValue`, `X-Chat2API-Aggregate-Chain`) go through
+- Response headers that carry dynamic text (the `auto` winner in `X-ModelPort-Route` via
+  `utils/headerValue.ts::routeHeaderValue`, `X-ModelPort-Aggregate-Chain`) go through
   `toHeaderValue`. Node validates header values as Latin-1 and throws `ERR_INVALID_CHAR`
   (`Invalid character in header content [...]`) on any character above `0xFF`; eight
   account-channel names contain Chinese (`TRAE (字节)`, `Qoder (中国版)`, …) and custom provider
@@ -891,8 +891,8 @@ that path.
 
 ## Data Storage
 
-Application data lives in `~/.chat2api/`. The Electron profile directory is pinned to
-`<appData>/chat2api` by `app.setPath('userData', ...)` in `src/main/index.ts` and must stay pinned:
+Application data lives in `~/.modelport/`. The Electron profile directory is pinned to
+`<appData>/modelport` by `app.setPath('userData', ...)` in `src/main/index.ts` and must stay pinned:
 `safeStorage` seals `store.key` and every credential against that profile, so letting the path follow
 `package.json`'s `name` (which is what Electron does by default) makes an existing install unreadable
 the moment the package is renamed.

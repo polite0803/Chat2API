@@ -231,7 +231,7 @@ src/main/proxy/compression/
 ├── estimator.ts             # 内容感知 token 估算（复用/升级 quota/usage）
 ├── policy.ts                # 门禁：字节阈值、最小 token、严格变小、收益比、超时
 ├── ccr/
-│   ├── store.ts             # ~/.chat2api/ccr/ 内容寻址存储 + TTL + LRU
+│   ├── store.ts             # ~/.modelport/ccr/ 内容寻址存储 + TTL + LRU
 │   └── markers.ts           # 标记生成/解析（与 Headroom 格式对齐）
 ├── compressors/
 │   ├── smartCrusher.ts      # P1：JSON 统计选行
@@ -321,12 +321,12 @@ compression?: {
 }
 ```
 
-响应头（沿用 `X-Chat2API-*` 约定，便于客户端观测，不打日志也能看）：
+响应头（沿用 `X-ModelPort-*` 约定，便于客户端观测，不打日志也能看）：
 
 ```
-X-Chat2API-Compression: json,log
-X-Chat2API-Compression-Saved: 18342
-X-Chat2API-Compression-Ratio: 0.57
+X-ModelPort-Compression: json,log
+X-ModelPort-Compression-Saved: 18342
+X-ModelPort-Compression-Ratio: 0.57
 ```
 
 ### 3.5 五条硬不变量
@@ -452,7 +452,7 @@ X-Chat2API-Compression-Ratio: 0.57
 
 ### P3 — CCR 可逆（让有损真正安全）
 
-- 存储：`~/.chat2api/ccr/`，文件名 = 内容哈希，内容含原文 + 元数据（时间、类型、tokens）；TTL 30 min + 总量 64 MiB 的 LRU 淘汰；启动扫描孤儿文件。
+- 存储：`~/.modelport/ccr/`，文件名 = 内容哈希，内容含原文 + 元数据（时间、类型、tokens）；TTL 30 min + 总量 64 MiB 的 LRU 淘汰；启动扫描孤儿文件。
 - 标记：与 Headroom 格式**逐字一致**，但注意**哈希算法与长度随压缩器不同**：
 
 | 来源 | 标记 | 哈希 |
@@ -512,7 +512,7 @@ X-Chat2API-Compression-Ratio: 0.57
 | P4 | 关 | 实验性，带警告文案 |
 | P5 | 关 | 独立开关 + 档位选择 |
 
-观测口径：请求日志 `compression` 字段 + `X-Chat2API-Compression-*` 响应头 + Dashboard 一张「Token 节约」卡（本期只做数字，不做 Headroom 式的置信区间）。
+观测口径：请求日志 `compression` 字段 + `X-ModelPort-Compression-*` 响应头 + Dashboard 一张「Token 节约」卡（本期只做数字，不做 Headroom 式的置信区间）。
 
 ---
 

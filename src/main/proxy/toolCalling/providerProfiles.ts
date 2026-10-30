@@ -12,7 +12,7 @@ export interface ProviderToolProfile {
   formatToolResult(result: NormalizedToolResult): string
 }
 
-const chat2ApiXmlHistoryProfile: Omit<ProviderToolProfile, 'providerId'> = {
+const modelPortXmlHistoryProfile: Omit<ProviderToolProfile, 'providerId'> = {
   managedSupport: true,
   supportsNativeTools: false,
   preferredManagedProtocol: 'managed_xml',
@@ -43,6 +43,6 @@ const profiles: Record<string, ProviderToolProfile> = {
 export function getProviderToolProfile(providerId: string): ProviderToolProfile {
   return profiles[providerId] ?? {
     providerId,
-    ...chat2ApiXmlHistoryProfile,
+    ...modelPortXmlHistoryProfile,
   }
 }

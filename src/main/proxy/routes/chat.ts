@@ -290,7 +290,7 @@ router.post('/completions', async (ctx: Context) => {
 
     // 裸名被哪家聚合条目接住，写进响应头；带前缀的名字本来就是点名，不打这个头。
     if (selection && !request.model.includes('/') && selection.provider.type === 'aggregate') {
-      ctx.set('X-Chat2API-Aggregate-Chain', toHeaderValue(selection.provider.id))
+      ctx.set('X-ModelPort-Aggregate-Chain', toHeaderValue(selection.provider.id))
     }
 
     // 同名能落到 ≥2 家时走跨家链；用户点过具体账号时不换家。
@@ -337,11 +337,11 @@ router.post('/completions', async (ctx: Context) => {
 
   // 没有满足结构化输出的候选时仍然路由，但必须写明降级，不能假装满足
   if (autoDecision && autoDecision.degraded.length > 0) {
-    ctx.set('X-Chat2API-Auto-Degraded', autoDecision.degraded.join(','))
+    ctx.set('X-ModelPort-Auto-Degraded', autoDecision.degraded.join(','))
   }
   if (autoDecision) {
-    ctx.set('X-Chat2API-Auto-Prefer', autoDecision.prefer)
-    ctx.set('X-Chat2API-Auto-Reason', autoDecision.reason)
+    ctx.set('X-ModelPort-Auto-Prefer', autoDecision.prefer)
+    ctx.set('X-ModelPort-Auto-Reason', autoDecision.reason)
   }
 
   // auto 路由时先按排名第一的候选记录请求开始，成功后再用真实命中的账号结算用量
@@ -401,7 +401,7 @@ router.post('/completions', async (ctx: Context) => {
 
       result = outcome.result
       autoAttempts = outcome.attempts
-      ctx.set('X-Chat2API-Auto-Attempts', String(outcome.attempts))
+      ctx.set('X-ModelPort-Auto-Attempts', String(outcome.attempts))
       chosenCandidate = outcome.candidate
       account = outcome.candidate.account
       provider = outcome.candidate.provider
@@ -409,7 +409,7 @@ router.post('/completions', async (ctx: Context) => {
       // 供应商名可能含中文（账号渠道如 `TRAE (字节)`、自定义供应商由用户命名），
       // 直接写进头值会让 Node 抛 ERR_INVALID_CHAR、把一次成功的路由变成 500，
       // 所以动态部分一律过 toHeaderValue（非 ASCII 按 UTF-8 百分号编码）。
-      ctx.set('X-Chat2API-Route', routeHeaderValue(actualModel, provider.name))
+      ctx.set('X-ModelPort-Route', routeHeaderValue(actualModel, provider.name))
     } else if (chainCandidates.length > 1) {
       const outcome = await requestForwarder.forwardChainCompletion(
         request,
@@ -439,7 +439,7 @@ router.post('/completions', async (ctx: Context) => {
       account = outcome.candidate.account
       provider = outcome.candidate.provider
       actualModel = outcome.candidate.actualModel
-      ctx.set('X-Chat2API-Aggregate-Chain', toHeaderValue(provider.id))
+      ctx.set('X-ModelPort-Aggregate-Chain', toHeaderValue(provider.id))
     } else {
       result = await requestForwarder.forwardChatCompletion(
         request,
@@ -482,9 +482,9 @@ router.post('/completions', async (ctx: Context) => {
     // 数字是估算值，绝不写进响应体的 usage。
     const compressionReport = takeCompressionReport(requestId)
     if (compressionReport && compressionReport.applied.length > 0) {
-      ctx.set('X-Chat2API-Compression', compressionReport.applied.join(','))
-      ctx.set('X-Chat2API-Compression-Saved', String(compressionReport.saved))
-      ctx.set('X-Chat2API-Compression-Ratio', compressionReport.ratio.toFixed(3))
+      ctx.set('X-ModelPort-Compression', compressionReport.applied.join(','))
+      ctx.set('X-ModelPort-Compression-Saved', String(compressionReport.saved))
+      ctx.set('X-ModelPort-Compression-Ratio', compressionReport.ratio.toFixed(3))
     }
 
     // 跨轮重复度：纯观测，请求字节未被改动。只在日志里留一行，供日后判断
@@ -832,7 +832,7 @@ router.post('/completions', async (ctx: Context) => {
         (typeof request.tool_choice === 'object' && request.tool_choice?.type === 'function')
       const bodyToolCalls = (result.body as any)?.choices?.[0]?.message?.tool_calls
       if (requiresToolCall && (!Array.isArray(bodyToolCalls) || bodyToolCalls.length === 0)) {
-        ctx.set('X-Chat2API-Tool-Violation', 'required')
+        ctx.set('X-ModelPort-Tool-Violation', 'required')
       }
 
       if (result.body) {

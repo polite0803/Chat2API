@@ -34,7 +34,7 @@ test('a required tool call that never happened is annotated on the finish chunk'
     .find((chunk) => chunk.choices?.[0]?.finish_reason)
 
   assert.equal(finishLine?.choices[0].finish_reason, 'stop')
-  assert.equal(finishLine?.x_chat2api_tool_violation, 'required')
+  assert.equal(finishLine?.x_modelport_tool_violation, 'required')
   assert.equal((output.match(/\[DONE\]/g) || []).length, 1)
 })
 
@@ -47,7 +47,7 @@ test('streams that did call a tool are left untouched', async () => {
     ])
   )
 
-  assert.doesNotMatch(output, /x_chat2api_tool_violation/)
+  assert.doesNotMatch(output, /x_modelport_tool_violation/)
   assert.match(output, /"finish_reason":"tool_calls"/)
 })
 

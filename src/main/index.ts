@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, shell } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
+import { existsSync, renameSync } from 'fs'
 import { createWindow, getMainWindow, loadUrl, loadFile, openDevTools } from './window/manager'
 import { createTrayManager, TrayManager } from './tray/TrayManager'
 import { registerIpcHandlers } from './ipc/handlers'
@@ -14,7 +15,36 @@ import { opencodeService } from './opencode/service'
 // (Windows keeps the wrapped key in `Local State`, macOS in the login keychain
 // entry tied to it), so deriving it from package.json's `name` would make an
 // existing install unreadable the moment the package is renamed.
-app.setPath('userData', join(app.getPath('appData'), 'chat2api'))
+app.setPath('userData', join(app.getPath('appData'), 'modelport'))
+
+// 数据目录迁移（Chat2API → ModelPort）：两处持久化位置都整体搬进新名字，
+// 跑在任何 store/opencode/压缩缓存初始化之前，保证后续读到的都是新路径。
+//
+// - `<appData>/chat2api` → `<appData>/modelport`：Electron profile。safeStorage
+//   封装密钥存在 profile 目录内部（Windows 的 Local State），整体 rename 不破坏
+//   解密；macOS/Linux 的钥匙串条目绑定 app 名而非路径，同样安全。
+// - `~/.chat2api` → `~/.modelport`：data.json / store.key / 凭据表 / ccr /
+//   opencode / quota ledger 的根目录，跟着一起搬。
+//
+// rename 在同卷上是原子的；目标已存在（新版已初始化过）或源不存在则跳过。
+// 失败（旧实例仍占用、权限不足）只告警不挡启动 —— 应用从空的新目录冷启动，
+// 旧目录原样保留，数据不丢。该迁移是幂等的：成功后源目录不复存在。
+function migrateLegacyDirectory(from: string, to: string, label: string): void {
+  if (!existsSync(from) || existsSync(to)) return
+  try {
+    renameSync(from, to)
+    console.log(`[Migration] moved ${label}: ${from} -> ${to}`)
+  } catch (error) {
+    console.warn(`[Migration] could not move ${label} (${from} -> ${to}); starting fresh:`, error)
+  }
+}
+
+migrateLegacyDirectory(
+  join(app.getPath('appData'), 'chat2api'),
+  join(app.getPath('appData'), 'modelport'),
+  'Electron profile',
+)
+migrateLegacyDirectory(join(homedir(), '.chat2api'), join(homedir(), '.modelport'), 'data directory')
 
 // Prevent uncaught exceptions from crashing the app
 process.on('uncaughtException', (error) => {
@@ -148,7 +178,7 @@ function readAutoStartConfig(): boolean {
 }
 
 async function showStorageFailureDialog(mainWindow: BrowserWindow | null): Promise<void> {
-  const dataDir = join(homedir(), '.chat2api')
+  const dataDir = join(homedir(), '.modelport')
   const reason = storeManager.getInitializationError()?.message ?? 'unknown error'
   const options = {
     type: 'error' as const,

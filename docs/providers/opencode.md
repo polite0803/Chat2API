@@ -35,7 +35,7 @@
 | `src/main/proxy/adapters/opencode.ts` | 把回合结果包装成 OpenAI 的 `chat.completion` / SSE 分片 |
 
 隔离性：`XDG_CONFIG_HOME / DATA_HOME / CACHE_HOME / STATE_HOME` 四个目录各自指向
-`~/.chat2api/opencode/` 下的独立目录，**不读也不写用户全局的 `~/.local/share/opencode`**；
+`~/.modelport/opencode/` 下的独立目录，**不读也不写用户全局的 `~/.local/share/opencode`**；
 环境变量只继承白名单那十几个，别的 provider 的 key 与 OpenCode 自己的授权都不带进来
 ⇒ 这条通路天然零凭据；工作目录是一个空目录，agent 的工具即便被触发也落不到真实项目里。
 
@@ -44,7 +44,7 @@
 | 环节 | 做法 |
 | --- | --- |
 | 隔离配置 | 用 `OPENCODE_CONFIG_CONTENT` 注入（不是写配置文件），另带 `OPENCODE_DISABLE_AUTOUPDATE/PROJECT_CONFIG/CLAUDE_CODE/EXTERNAL_SKILLS` |
-| 两个 agent | `chat2api-chat`（纯文本）与 `chat2api`（带工具），prompt 是 Ferry 两条 prompt 的改写 |
+| 两个 agent | `modelport-chat`（纯文本）与 `modelport`（带工具），prompt 是 Ferry 两条 prompt 的改写 |
 | 工具 | 原生工具靠 **`permission` 全 deny**（`bash/edit/read/glob/grep/list/webfetch/websearch/task/todowrite/question/lsp/doom_loop/skill/external_directory`）+ `/permission` 轮询一律 reject 拦住，`StructuredOutput` 承载信封。**不要用 agent 级 `tools: {…:false}`** —— 运行时 `opencode-ai@1.19.4` 的 schema 已把它标成 `@deprecated`，合并 agent 配置时根本不拷贝这个字段，`ToolRegistry.tools()` 也不按权限过滤，所以"让模型看不见原生工具"在这版做不到；挂着 `tools` 只会给人已经遮住的错觉 |
 | 围栏 | 会话级 permission 表把原生工具标成 ask/deny，同时轮询 `/permission` 一律 `reply:'reject'`。判定分三步：**① 先读信封**，拿到 `info.structured` 就放行（运行时自己会重试纠正，`agent.steps` 也留了自纠额度）；**② `invalid` 不算原生工具**（见下）；**③ 只有真被执行的原生工具、且没交出信封**才判 `native_tool_activity`（被围栏挡下 `status:'error'` 的那次不算违规，与 Ferry 同口径） |
 | 工具归属 | 模型只能把"要调什么"写进 `{content, calls}` 信封，由我们翻译成 OpenAI 的 `tool_calls`；客户端没给过的工具名一律丢弃 |
@@ -113,8 +113,8 @@ subscribe to OpenCode Go to keep going
 | 变体 | 时延 | input token | 结果 |
 | --- | --- | --- | --- |
 | OpenCode 默认 build agent | 7.9 s | 87,820 | PONG（agent 壳的代价） |
-| 我们的 `chat2api-chat`（纯文本） | **3.1–4.2 s** | **3,516** | PONG |
-| 我们的 `chat2api`（带工具） | 15.0 s | 3,770 | 文本 + 信封；该模型仍偏好原生 bash → 被围栏挡下并丢弃 |
+| 我们的 `modelport-chat`（纯文本） | **3.1–4.2 s** | **3,516** | PONG |
+| 我们的 `modelport`（带工具） | 15.0 s | 3,770 | 文本 + 信封；该模型仍偏好原生 bash → 被围栏挡下并丢弃 |
 
 把 agent 壳裁掉之后，上下文从 9 万降到 3.5k（-96%），单轮快一倍以上。
 
@@ -137,7 +137,7 @@ subscribe to OpenCode Go to keep going
      被改写成 `invalid`，把一个本来能用的模型判成纯对话；
    - 判定按原因给不同 TTL（成功/只是不听话 6 小时、限流 10 分钟、下线 1 小时）；
      `unknown_tool_call` / `envelope_schema_mismatch` 只缓 **10 分钟**，因为它们反映
-     我们的提示与 schema、不是模型能力。缓存落在 `~/.chat2api/opencode/probe-cache.json`，
+     我们的提示与 schema、不是模型能力。缓存落在 `~/.modelport/opencode/probe-cache.json`，
      跨重启复用；
    - 判定为"纯对话"的模型，请求路径就不给它工具清单（再给，它会转头去用原生工具）。
      **例外**：上面那两个"我们自己的问题"不降级——把模型锁进无工具状态会让客户端

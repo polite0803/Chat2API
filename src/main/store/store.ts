@@ -207,10 +207,10 @@ class StoreManager {
 
   /**
    * Get Storage Path
-   * Storage path: ~/.chat2api/
+   * Storage path: ~/.modelport/
    */
   private getStoragePath(): string {
-    return join(homedir(), '.chat2api')
+    return join(homedir(), '.modelport')
   }
 
   /** Key used by every release before machine-bound keys; only read during migration */

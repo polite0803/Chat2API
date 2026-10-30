@@ -31,7 +31,7 @@ export function createToolViolationTap(): Transform {
     }
 
     if (choice.finish_reason && !sawToolCalls) {
-      return `data: ${JSON.stringify({ ...parsed, x_chat2api_tool_violation: 'required' })}\n\n`
+      return `data: ${JSON.stringify({ ...parsed, x_modelport_tool_violation: 'required' })}\n\n`
     }
 
     return `${event}\n\n`

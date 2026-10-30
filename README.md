@@ -230,7 +230,7 @@ ModelPort/
 
 ## 📁 Data Storage
 
-Application data is stored in `~/.chat2api/` directory (kept unchanged on purpose so existing installs keep their accounts and keys):
+Application data is stored in `~/.modelport/` directory (kept unchanged on purpose so existing installs keep their accounts and keys):
 
 - `data.json` - configuration, providers, accounts and app logs (one electron-store file)
 - `store.key` - this install's data key, sealed by the OS keystore

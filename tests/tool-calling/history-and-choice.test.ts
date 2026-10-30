@@ -36,10 +36,10 @@ function plan(overrides: Partial<ToolCallingPlan> = {}): ToolCallingPlan {
 }
 
 const twoCalls =
-  '<|CHAT2API|tool_calls>' +
-  '<|CHAT2API|invoke name="read_file" tool_call_id="call_a"><|CHAT2API|parameter name="path">/a</|CHAT2API|parameter></|CHAT2API|invoke>' +
-  '<|CHAT2API|invoke name="read_file" tool_call_id="call_b"><|CHAT2API|parameter name="path">/b</|CHAT2API|parameter></|CHAT2API|invoke>' +
-  '</|CHAT2API|tool_calls>'
+  '<|MODELPORT|tool_calls>' +
+  '<|MODELPORT|invoke name="read_file" tool_call_id="call_a"><|MODELPORT|parameter name="path">/a</|MODELPORT|parameter></|MODELPORT|invoke>' +
+  '<|MODELPORT|invoke name="read_file" tool_call_id="call_b"><|MODELPORT|parameter name="path">/b</|MODELPORT|parameter></|MODELPORT|invoke>' +
+  '</|MODELPORT|tool_calls>'
 
 test('replayed assistant calls keep their tool_call_id', () => {
   const profile = getProviderToolProfile('deepseek')

@@ -17,7 +17,7 @@
 | 打分：配额余量、档位匹配、RPM 余量、在途并发、空闲、分散 | `src/main/proxy/autoRouting.ts:334-382` |
 | 会话粘性：system + 首条 user 的哈希做键，命中后把候选 splice 到队首 | `src/main/proxy/autoRouting.ts:266-282`、`autoRouter.ts:148-162` |
 | 失败切换：429/5xx/无状态码才换，stream 首包后不换 | `src/main/proxy/forwarder.ts:335-386` |
-| 可观测：成功时回 `X-Chat2API-Route: <model> (<provider>)` | `src/main/proxy/routes/chat.ts:332` |
+| 可观测：成功时回 `X-ModelPort-Route: <model> (<provider>)` | `src/main/proxy/routes/chat.ts:332` |
 | 成本分档函数已经存在且口径明确（unknown 单独成档，绝不折进付费档） | `src/shared/channels.ts:166-175`、`tests/channels/cost-bucket.test.ts` |
 | 渠道模型目录已经带 `supportsImage` / `weight` / `free`，但**路由层从未读取** | `src/shared/channels.ts:130-151`、`src/main/providers/accountChannels/modelCatalog.ts:76-110` |
 | 聚合目录带每模型 `contextWindow`（46 行有值）、条目 `category` / `freeModelsHint` | `src/shared/aggregateQuota.ts:14-29`、`src/shared/aggregate.ts:32,50` |
@@ -62,7 +62,7 @@
 统一规则：**有能力替代就换过去；没有替代就明示降级，只有图片不允许降级。**
 
 - `multiChoice`：内置供应商本来就会 400（`parameterPolicy.ts:27`），auto 应优先选聚合/自定义候选；全都不能时返回既有的 400 `unsupported_parameter`，与具名路径同一形状。
-- `structuredOutput`：内置供应商会丢弃它（`parameterPolicy.ts:10`），优先选聚合/自定义候选；全都不能时照常路由，但回 `X-Chat2API-Auto-Degraded: response_format` 并写进请求日志。
+- `structuredOutput`：内置供应商会丢弃它（`parameterPolicy.ts:10`），优先选聚合/自定义候选；全都不能时照常路由，但回 `X-ModelPort-Auto-Degraded: response_format` 并写进请求日志。
 - 与 `docs/PLAN-api-defects.md` 的 P5-1（已拍板：不支持的参数显式 400）不冲突：那张表落地后，`parameterPolicy` 多出"拒绝级别"，auto 直接消费级别，不再自己维护名单。
 
 ### 1.3 成本与偏好
@@ -86,8 +86,8 @@
 
 ### 1.5 可观测
 
-- 保留 `X-Chat2API-Route`（已存在）。
-- 新增 `X-Chat2API-Auto-Prefer`（本请求生效的偏好）、`X-Chat2API-Auto-Attempts`（实际尝试数）、`X-Chat2API-Auto-Reason`（胜负因子的机器码：`capability` / `tier` / `cost` / `sticky` / `only`）、`X-Chat2API-Auto-Degraded`（仅在降级时出现）。
+- 保留 `X-ModelPort-Route`（已存在）。
+- 新增 `X-ModelPort-Auto-Prefer`（本请求生效的偏好）、`X-ModelPort-Auto-Attempts`（实际尝试数）、`X-ModelPort-Auto-Reason`（胜负因子的机器码：`capability` / `tier` / `cost` / `sticky` / `only`）、`X-ModelPort-Auto-Degraded`（仅在降级时出现）。
 - `RequestLogEntry` 增加可选 `auto?: { prefer, attempts, candidates: string[], reason? }`；`candidates` 是排名后的展示名，最多 5 条。
 
 ## 2. 已拍板（2026-10-29）
@@ -121,7 +121,7 @@
 | A-2 | 手写表 `MODEL_CAPABILITIES`（`autoRouting.ts:98-150`）的 id 指向已退役的内置供应商；聚合展示名带 `<entryId>/` 前缀，按纯模型名查必然落空（`registry.ts:2973-2975`） | 整表搬到新文件 `src/main/proxy/modelCapabilities.ts` 作为静态参考数据；查询时先拆出 `/` 之后的模型段再查（聚合与账号渠道都适用），未命中再退回整名；补 `opencode` 的 9 个模型标注（全部 free，`nemotron-3.5-super-vl-free` 标 vision yes，其余未知）；`PROVIDER_DEFAULT_CAPABILITY` 保留并注明其真实含义是"按供应商记录的兜底默认" | 单测：`resolveCapability('glm', 'glm/glm-5.3', {})` 命中 glm 的模型行；`opencode` 的 VL 模型 vision 为 yes；负控：不拆前缀时该用例红 | 纯搬家 + 查询修正；`glm`/`kimi`/`minimax` 的条目级 vision 默认保持不变（见风险节） |
 | A-3 | 渠道目录的 `supportsImage` / `weight` / `free` 没有消费路径 | `manager.ts:460-500` 的同步循环把 `ChannelModelInfo` 转成标注，`applyChannel`（`manager.ts:553`）写入 `record.modelCapabilities`；`supportsImage === undefined` 不写 vision（保持未知） | 扩展渠道同步测试：给定一份 fixture 目录，断言写入的 record 含 vision/weight/free 且未知项不出现；负控：删掉映射后红 | 记录变大（每模型几十字节） |
 | A-4 | `satisfiesCapability` 是布尔判定（`autoRouting.ts:309-318`） | 改三态：vision 必须 `yes` 才可接图片；tools `no` 排除、未知可通过但扣分（`toolsUnverified`）；上下文有值才硬过滤，未知用 `UNANNOTATED_CONTEXT_FLOOR` | 单测三条：已知 no 永不被选；vision 未知在图片请求下不被选；带 `contextTokens: 32000` 的模型不接 40k 请求。负控：把 vision 判据改回"非 no 即可"即红 | 打分权重需重新调平 |
-| A-5 | 契约过滤零实现；`response_format` 被静默丢弃（`parameterPolicy.ts:8-18`） | 新增 `contractNeeds(request)`；`autoRouter.select` 先按 `multiChoice` / `structuredOutput` 过滤，全都不能满足时：`multiChoice` 返回既有 400，`structuredOutput` 照常路由并标注降级 | 集成测试：只有内置供应商时 `n=2` → 400；`response_format: json_schema` + 同时存在聚合供应商 → 选中聚合；只有内置时 → 路由成功且带 `X-Chat2API-Auto-Degraded`。负控：去掉过滤即红 | 依赖 `parameterPolicy` 的现有级别；P5-1 落地后自动跟随 |
+| A-5 | 契约过滤零实现；`response_format` 被静默丢弃（`parameterPolicy.ts:8-18`） | 新增 `contractNeeds(request)`；`autoRouter.select` 先按 `multiChoice` / `structuredOutput` 过滤，全都不能满足时：`multiChoice` 返回既有 400，`structuredOutput` 照常路由并标注降级 | 集成测试：只有内置供应商时 `n=2` → 400；`response_format: json_schema` + 同时存在聚合供应商 → 选中聚合；只有内置时 → 路由成功且带 `X-ModelPort-Auto-Degraded`。负控：去掉过滤即红 | 依赖 `parameterPolicy` 的现有级别；P5-1 落地后自动跟随 |
 
 ### 阶段 B：成本与偏好
 
@@ -137,7 +137,7 @@
 | 编号 | 现状证据 | 改法 | 验收（可执行） | 代价 / 回退 |
 | --- | --- | --- | --- | --- |
 | C-1 | 粘性结果 splice 到队首（`autoRouter.ts:148-162`） | 改为打分输入：完全命中 +0.12、同供应商同模型 +0.06；`rankCandidates` 增加 `sticky` 参数，保持纯函数 | 单测：粘性候选在池内时排第一；从池中消失（冷却/配额）时不影响其它候选顺序；分数差距过大时让位。负控：恢复 splice 即红 | 极端情况下同一对话会换模型 |
-| C-2 | 只有 `X-Chat2API-Route`，无理由、无尝试数 | 按 1.5 新增三个响应头；`RequestLogEntry`（`src/shared/types.ts:248`）加 `auto` 字段并在成功/失败两处写入（`chat.ts:416`、`:482`） | 集成测试：成功响应带三个头且值合法；失败响应同样带；请求日志行含 `auto.candidates`。负控：删掉写入即红 | 日志每行 +几十字节 |
+| C-2 | 只有 `X-ModelPort-Route`，无理由、无尝试数 | 按 1.5 新增三个响应头；`RequestLogEntry`（`src/shared/types.ts:248`）加 `auto` 字段并在成功/失败两处写入（`chat.ts:416`、`:482`） | 集成测试：成功响应带三个头且值合法；失败响应同样带；请求日志行含 `auto.candidates`。负控：删掉写入即红 | 日志每行 +几十字节 |
 | C-3 | 503 只带一句 `No available model for auto routing`（`chat.ts:260-270`） | 加 `details: { missing: ['vision' \| 'tools' \| 'context'], rejected: Record<string, number> }` | 单测：只开纯文本模型时请求图片 → 503 且 `missing` 含 `vision`；负控：去掉 details 即红 | 无 |
 
 ### 阶段 D：文档与门禁
@@ -156,7 +156,7 @@
 | 长请求 100k，池中有标注 128k 的模型 | 只选标注 128k 的 |
 | `n=2`，池中含聚合供应商 | 选中聚合供应商 |
 | `n=2`，只有内置供应商 | 400 `unsupported_parameter` |
-| `json_schema`，只有内置供应商 | 路由成功 + `X-Chat2API-Auto-Degraded` |
+| `json_schema`，只有内置供应商 | 路由成功 + `X-ModelPort-Auto-Degraded` |
 | `X-Auto-Prefer: cheap`，池中含免费模型 | 免费模型排第一 |
 | 同分候选，一免费一付费 | 免费优先（balanced 默认即生效） |
 | 首选账号 429 | 换到同模型的另一个账号，而非换模型 |

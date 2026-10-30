@@ -10,7 +10,7 @@
 | `npx tsc --noEmit -p tsconfig.node.json` | 0 错误（0 行输出） |
 | `npx tsc --noEmit -p tsconfig.json` | 仅 2 条既有 TS6305 |
 | `node --test` 全量 | 237 条：235 通过，2 失败 |
-| 2 条失败的性质 | `restore-tool-config` 的 `ERR_UNSUPPORTED_ESM_URL_SCHEME`、`versioned Chat2API testing skills` 的 CRLF 正则；AGENTS.md 已记录的 Windows 环境问题 |
+| 2 条失败的性质 | `restore-tool-config` 的 `ERR_UNSUPPORTED_ESM_URL_SCHEME`、`versioned ModelPort testing skills` 的 CRLF 正则；AGENTS.md 已记录的 Windows 环境问题 |
 
 ## 本批新增（P2-4 / P4-1）
 
@@ -37,5 +37,5 @@ P1-1 ~ P1-5、P2-1 ~ P2-3、P2-5、P2-6、P3-1 ~ P3-5、P4-1 ~ P4-4、P5-1 ~ P5-
 
 ## 仍未做
 
-无。流式强制调用违反已改为在终结 chunk 上增加 `x_chat2api_tool_violation:"required"` 字段
-（`utils/toolViolationTap.ts`），非流式仍是 `X-Chat2API-Tool-Violation` 头。
+无。流式强制调用违反已改为在终结 chunk 上增加 `x_modelport_tool_violation:"required"` 字段
+（`utils/toolViolationTap.ts`），非流式仍是 `X-ModelPort-Tool-Violation` 头。

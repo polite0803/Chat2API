@@ -1,9 +1,9 @@
 ---
-name: chat2api-management-api
-description: Use when operating Chat2API Manager's management API for testing, including health checks, config snapshots, temporary API keys, model mappings, sessions, logs, and cleanup verification.
+name: modelport-management-api
+description: Use when operating ModelPort Manager's management API for testing, including health checks, config snapshots, temporary API keys, model mappings, sessions, logs, and cleanup verification.
 ---
 
-# Chat2API Management API
+# ModelPort Management API
 
 Use this skill before live proxy testing that needs `/v1/management/*`.
 
@@ -21,10 +21,10 @@ Use `scripts/management-api.mjs` for repeatable management API setup, observatio
 ## Commands
 
 ```bash
-CHAT2API_MGMT_SECRET=mgmt_xxx node skills/chat2api-management-api/scripts/management-api.mjs snapshot
-CHAT2API_MGMT_SECRET=mgmt_xxx node skills/chat2api-management-api/scripts/management-api.mjs create-api-key --name codex-live-test
-CHAT2API_MGMT_SECRET=mgmt_xxx node skills/chat2api-management-api/scripts/management-api.mjs delete-api-key --id key-id
-CHAT2API_MGMT_SECRET=mgmt_xxx node skills/chat2api-management-api/scripts/management-api.mjs restore-tool-config --file /private/tmp/toolCallingConfig.json
+modelport_MGMT_SECRET=mgmt_xxx node skills/modelport-management-api/scripts/management-api.mjs snapshot
+modelport_MGMT_SECRET=mgmt_xxx node skills/modelport-management-api/scripts/management-api.mjs create-api-key --name codex-live-test
+modelport_MGMT_SECRET=mgmt_xxx node skills/modelport-management-api/scripts/management-api.mjs delete-api-key --id key-id
+modelport_MGMT_SECRET=mgmt_xxx node skills/modelport-management-api/scripts/management-api.mjs restore-tool-config --file /private/tmp/toolCallingConfig.json
 ```
 
 Use `--dry-run` to verify command shape without network calls.

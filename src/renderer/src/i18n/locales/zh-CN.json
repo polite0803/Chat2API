@@ -943,9 +943,9 @@
       "title": "工作方式",
       "steps": {
         "1": "客户端按 OpenAI 格式发送 tools / tool_choice。",
-        "2": "引擎剥离原生字段，把工具说明以 Chat2API XML 注入 system 提示；required 或强制工具会追加指令，parallel_tool_calls: false 限制单次只调用一个工具。",
+        "2": "引擎剥离原生字段，把工具说明以 ModelPort XML 注入 system 提示；required 或强制工具会追加指令，parallel_tool_calls: false 限制单次只调用一个工具。",
         "3": "模型以 XML 标记应答；流式与非流式响应都会解析回 OpenAI tool_calls，id 形如 call_<requestId>-<n>。",
-        "4": "声明 tool_choice: required 但模型没有调用时，响应附带 X-Chat2API-Tool-Violation: required；无法解析的标记会被剥离并保留正文。"
+        "4": "声明 tool_choice: required 但模型没有调用时，响应附带 X-ModelPort-Tool-Violation: required；无法解析的标记会被剥离并保留正文。"
       }
     },
     "wireMatrix": {
@@ -988,7 +988,7 @@
     },
     "advanced": {
       "title": "提示词模板",
-      "description": "自定义注入给模型的托管工具提示词。留空使用内置 Chat2API XML 格式，仅托管模式下生效。",
+      "description": "自定义注入给模型的托管工具提示词。留空使用内置 ModelPort XML 格式，仅托管模式下生效。",
       "customTemplate": "自定义提示词模板",
       "customTemplatePlaceholder": "可使用 {{tools}}、{{tool_names}} 和 {{format}}。"
     }

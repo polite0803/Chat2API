@@ -1,8 +1,8 @@
-# Chat2API Tool Testing Skills Design
+# ModelPort Tool Testing Skills Design
 
 ## Background
 
-Chat2API's tool-calling behavior must be tested through real OpenAI-compatible client traffic, not only hand-written curl requests. The current local `chat2api-proxy-testing` skill proved useful for live smoke tests, but its Cherry Studio matrix runner mixes several responsibilities:
+modelport's tool-calling behavior must be tested through real OpenAI-compatible client traffic, not only hand-written curl requests. The current local `modelport-proxy-testing` skill proved useful for live smoke tests, but its Cherry Studio matrix runner mixes several responsibilities:
 
 - reading HAR files;
 - operating the management API;
@@ -15,7 +15,7 @@ That shape is too narrow. Future tests will include clients other than Cherry St
 
 ## Goals
 
-Build a stable, reusable testing skill set for Chat2API tool calling:
+Build a stable, reusable testing skill set for ModelPort tool calling:
 
 1. Support multiple OpenAI-compatible clients, starting with Cherry Studio but not designed around it.
 2. Treat HAR ingestion as a generic fixture extraction workflow.
@@ -34,7 +34,7 @@ Build a stable, reusable testing skill set for Chat2API tool calling:
 
 ## Skill Architecture
 
-### 1. `chat2api-management-api`
+### 1. `modelport-management-api`
 
 Purpose: safe, repeatable management API operations for tests.
 
@@ -50,8 +50,8 @@ Responsibilities:
 
 Inputs:
 
-- `CHAT2API_BASE_URL`;
-- `CHAT2API_MGMT_SECRET`;
+- `modelport_BASE_URL`;
+- `modelport_MGMT_SECRET`;
 - optional filters such as provider id, model id, and log limit.
 
 Outputs:
@@ -67,7 +67,7 @@ Safety rules:
 - restore modified config in `finally`;
 - delete only temporary keys/mappings created by the current run.
 
-### 2. `chat2api-har-tool-fixture`
+### 2. `modelport-har-tool-fixture`
 
 Purpose: convert a client HAR into replayable, sanitized tool-calling fixtures.
 
@@ -86,8 +86,8 @@ Responsibilities:
 
 Inputs:
 
-- `CHAT2API_HAR`;
-- optional `CHAT2API_CLIENT_PROFILE`;
+- `modelport_HAR`;
+- optional `modelport_CLIENT_PROFILE`;
 - optional expected tool name override.
 
 Outputs:
@@ -100,9 +100,9 @@ Important rule:
 
 HAR parsing is not client-specific. Client-specific differences belong in client profiles.
 
-### 3. `chat2api-tool-client-replay`
+### 3. `modelport-tool-client-replay`
 
-Purpose: replay client tool-calling fixtures against Chat2API.
+Purpose: replay client tool-calling fixtures against ModelPort.
 
 Responsibilities:
 
@@ -130,7 +130,7 @@ Profile responsibilities:
 - stream/non-stream pass criteria;
 - follow-up tool-result message expectations.
 
-### 4. `chat2api-provider-model-matrix`
+### 4. `modelport-provider-model-matrix`
 
 Purpose: run model/provider coverage against the live proxy surface.
 
@@ -161,8 +161,8 @@ Report requirements:
 
 ## End-to-End Flow
 
-1. Read current health through `chat2api-management-api`.
-2. Extract or validate fixtures through `chat2api-har-tool-fixture`.
+1. Read current health through `modelport-management-api`.
+2. Extract or validate fixtures through `modelport-har-tool-fixture`.
 3. Discover models through `/v1/models`.
 4. Build provider/model targets using management API attribution.
 5. Create one disposable API key.
@@ -174,20 +174,20 @@ Report requirements:
 
 ## Migration Plan Shape
 
-The implementation should not keep expanding `.codex/skills/chat2api-proxy-testing` as the only location. Long-lived project testing skills should be versioned under:
+The implementation should not keep expanding `.codex/skills/modelport-proxy-testing` as the only location. Long-lived project testing skills should be versioned under:
 
 ```text
 skills/
-  chat2api-management-api/
-  chat2api-har-tool-fixture/
-  chat2api-tool-client-replay/
-  chat2api-provider-model-matrix/
-  chat2api-proxy-testing/
+  modelport-management-api/
+  modelport-har-tool-fixture/
+  modelport-tool-client-replay/
+  modelport-provider-model-matrix/
+  modelport-proxy-testing/
 ```
 
-`chat2api-proxy-testing` becomes the orchestrating entry point and links to the focused skills.
+`modelport-proxy-testing` becomes the orchestrating entry point and links to the focused skills.
 
-Existing local `.codex/skills/chat2api-proxy-testing` can remain as a working copy during migration, but it should not be treated as the durable source of truth because `.codex/` is ignored by git.
+Existing local `.codex/skills/modelport-proxy-testing` can remain as a working copy during migration, but it should not be treated as the durable source of truth because `.codex/` is ignored by git.
 
 ## Acceptance Criteria
 

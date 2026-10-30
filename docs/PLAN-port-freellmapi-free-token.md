@@ -53,7 +53,7 @@
 
 **C 账本 + 预检 + 只降不升的学习**
 `proxy/quotaLedger.ts`，键 `(providerId, accountId, modelId)`；UTC 窗口（日窗滚动 24h + 账户级 UTC 午夜，同 `ratelimit.ts:33,38-39`；月键 `YYYY-MM`）；
-落 `~/.chat2api/quota-ledger.json`，防抖批量写、临时文件 `rename`，读不到按空账本起。
+落 `~/.modelport/quota-ledger.json`，防抖批量写、临时文件 `rename`，读不到按空账本起。
 聚合每家实际只有一个 account（`manager.ts:221-236` 明文 "Keeps exactly one keyed account"、`:238-246` 免密账号），三维键在此退化为"每家一账号"。
 预检接 `loadbalancer.getAvailableAccounts:92-126` 与 `autoRouter:92-113` 两处同一判据；无额度证据的**不剔除**。
 429 文本反解 `limit: N` + 轴关键词（沿用 `ratelimit.ts:1526` 的条件：只填空、只下调，从不上调）。
@@ -135,14 +135,14 @@ E 断"裸名命中 ≥2 家时第一条 429 后由第二家成功应答，且请
 | B token 采集 | 完成 | `proxy/quota/usage.ts`；`routes/chat.ts` 三个成功出口计量；两处伪造的 `usage:{0,0,0}` 改为 `null`，并把"禁止伪造 usage"源码门从只抓 `1` 收紧到任意数字 |
 | C 账本 + 预检 + 学习 | 完成 | `proxy/quota/ledger.ts`（滚动分钟/24h + UTC 月，防抖 rename 落盘）、`observations.ts`（额度头 + 429 体，只降不升）、`limits.ts`（条目帽/逐模型帽/实测帽合并）、`gate.ts`（autoRouter 与 loadbalancer 共用一份判据）、`chat.ts` 两出口喂学习 |
 | D 五态标记 | 完成 | `shared/aggregateQuotaView.ts`（五态 + 免费池分离 + 窗口 + `officialNote` 原单位）、`pages/Aggregate.tsx`（额度列）、`aggregate/manager.ts` 经既有 `aggregate:list` 回 `quotaUsage`（未新增 IPC）；死字段 `quotaUsed/quotaTotal` 已删 |
-| E 裸名跨家链 | 完成 | `shared/aggregateRouting.ts`（解析 + 排序）、`loadbalancer.selectChainCandidates`、`forwarder.forwardFirstReachable`（与 auto 共用唯一循环）、`X-Chat2API-Aggregate-Chain` 响应头 |
+| E 裸名跨家链 | 完成 | `shared/aggregateRouting.ts`（解析 + 排序）、`loadbalancer.selectChainCandidates`、`forwarder.forwardFirstReachable`（与 auto 共用唯一循环）、`X-ModelPort-Aggregate-Chain` 响应头 |
 
 **与计划的两处偏离（都写在代码注释里）**：
 1. 目录从 73 家 / 473 模型变成 **72 家 / 465 模型**——7 个上游已退役模型删除、`mistral_codestral` 整条撤下（2026-10-29 用户裁定"上游已不给用的就删除"）。
 2. D 的五态里"已打满"用的是**本应用滚动 24 小时 / UTC 自然月**，不是"UTC 00:00 复位"；面板按窗口逐条标注，不承诺厂商的复位时刻。
 
 **未做**：实机联调（本仓 `tests/api/` 只有纯函数与源码门，没有 HTTP 测试台）。已留一轮核对清单：
-裸名请求的 `X-Chat2API-Aggregate-Chain` 应为链头条目；把链头 429 后请求日志应出现两行且 provider 不同。
+裸名请求的 `X-ModelPort-Aggregate-Chain` 应为链头条目；把链头 429 后请求日志应出现两行且 provider 不同。
 
 **全量门禁**：`npm run build` 0、`tsc -p tsconfig.node.json` 0、`tsc -p tsconfig.json` 0、
 `node --test "tests/**/*.test.{ts,mjs,js}"` **386/386 通过**。
