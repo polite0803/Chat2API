@@ -121,15 +121,20 @@ class StoreManager {
       return
     }
 
-    // Dynamically import electron-store (ESM module)
-    if (!Store) {
-      const module = await import('electron-store')
-      Store = module.default
-    }
-
     const storagePath = this.getStoragePath()
 
     try {
+      // `electron-store` 是 ESM 包，走动态 import。必须在 try **内部**：
+      // 打包产物不带 node_modules（build.files 排除了 `!node_modules/**/*`），
+      // 依赖没被打进 bundle 时这里会抛 ERR_MODULE_NOT_FOUND；若发生在 try 之外，
+      // initializationError 不会被记录，界面只能看到
+      // "Storage not initialized, please call initialize() first" 这种无从下手的文案
+      // （1.4.5 正是如此：electron-store 被 external 后打包应用必然走到这一步）。
+      if (!Store) {
+        const module = await import('electron-store')
+        Store = module.default
+      }
+
       this.encryptionKey = this.resolveEncryptionKey(storagePath)
       this.store = new Store({
         name: 'data',
@@ -158,6 +163,10 @@ class StoreManager {
         )
         throw this.initializationError
       }
+
+      // 依赖模块都没加载起来时（例如打包漏带 electron-store），备份/重建 data.json
+      // 解决不了任何问题，只会把真实的 ERR_MODULE_NOT_FOUND 盖掉。直接抛出。
+      if (!Store) throw this.initializationError
 
       // Try to recover by backing up corrupted data and reinitializing
       try {

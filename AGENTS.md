@@ -80,6 +80,13 @@ breaks `electron-updater` on macOS; no build is code-signed and macOS is not not
 `build.publish` block decides where `--publish=always` uploads and which repo the packaged
 auto-update feed points at, so it must match the repository you are releasing from.
 
+The packaged asar ships **no `node_modules`** (`build.files` excludes the directory), so every
+main-process runtime dependency must be bundled by rollup - an external dependency is a startup
+crash, not a size saving. 1.4.5 externalized `electron-store` and left every install at
+`Storage not initialized, please call initialize() first`; `tests/build/main-bundle-deps.test.ts`
+keeps it bundled, and `store.ts` loads it inside `initialize()`'s try so a future packaging mistake
+surfaces as a real error instead of that generic message.
+
 ## Architecture
 
 ```

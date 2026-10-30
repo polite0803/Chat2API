@@ -75,11 +75,18 @@ export default defineConfig({
           'js-sha3',
           'mime-types',
           'zstd-codec',
-          // ⚠️ electron-store 必须保持 external（不放进 exclude）：
-          // 它是 ESM-only 包，CJS 产物 require 不了；而打包路径在本机的映射盘
-          // 环境下会被 vite resolver 搞挂。store.ts 用的是 `await import(...)`
-          // 动态导入，rollup 4 的 CJS 输出默认保留原生 `import()`，Electron
-          // main 进程（Node ≥20）可以在运行时直接加载 ESM。
+          // ⚠️ electron-store 必须放进 exclude（= 打进 bundle），不能留作 external。
+          //
+          // 打包产物里根本没有 node_modules：`package.json` 的 build.files 排除了
+          // `!node_modules/**/*`，主进程的运行时依赖全部由 rollup 内联进 out/main。
+          // 一旦 electron-store 变成 external，安装包里 `await import('electron-store')`
+          // 必然 ERR_MODULE_NOT_FOUND —— store 初始化失败，但该异常发生在 store.ts
+          // 的 try 之外，`initializationError` 不会被记录，最终所有 IPC 只报
+          // "Storage not initialized, please call initialize() first"（1.4.5 的故障）。
+          //
+          // ESM-only 不是理由：rollup 打包时会把 ESM 转成 CJS 内联，1.4.4 及更早
+          // 的安装包就是这样工作的。映射盘解析问题已由 cwd/preserveSymlinks 处理。
+          'electron-store',
           'electron-updater'
         ]
       })
