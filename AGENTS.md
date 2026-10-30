@@ -26,13 +26,19 @@ npm run preview
 
 ## Verification
 
-The only workflow in this repository is `.github/workflows/release.yml`, which runs **only on a tag
-push** matching `v*.*.*` / `v*.*.*-*`. Nothing lints, typechecks or tests on push, and
-`electron-vite build` transpiles without type checking - a green build says nothing about types.
-There is no `npm test` script and no test framework dependency; the suite runs on Node's built-in
-test runner:
+`.github/workflows/ci.yml` runs the full gate (build + typecheck + suite) on every push and pull
+request across Linux, Windows and macOS; `.github/workflows/release.yml` builds and publishes the
+installers on a tag push matching `v*.*.*` / `v*.*.*-*`. `electron-vite build` transpiles without type
+checking - a green build says nothing about types - which is why the gate runs both `tsc` programs.
+
+The suite runs on Node's built-in test runner and must run on a Node that strips TypeScript natively
+(22.18+ / 23.6+ / 24; CI pins 24). `scripts/check-node-version.mjs` fails fast with the fix when the
+`node` on PATH is an older 22.x, where every `.test.ts` dies with `ERR_UNKNOWN_FILE_EXTENSION` - a
+runtime problem, not a test failure. `npm run gate` is exactly what CI runs:
 
 ```bash
+npm run gate                                           # build + tsc x2 + full suite
+# equivalently, step by step:
 npm run build                                          # bundle + check-source-artifacts guard
 npx tsc --noEmit -p tsconfig.json                      # renderer + shared
 npx tsc --noEmit -p tsconfig.node.json                 # main + preload
