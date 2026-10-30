@@ -643,6 +643,8 @@ export async function collectCreditBalances<TCredential = unknown, TProduct = un
     results.push({
       accountId: entry.id,
       nickname: entry.nickname,
+      // 停用账号的余额照常返回（列表要展示），宿主算渠道总额时据此过滤。
+      enabled: entry.enabled !== false,
       balance,
       ...error === undefined ? {} : { error },
       ...extra === undefined ? {} : { extra },
@@ -2838,6 +2840,7 @@ function registerChannelPackEndpoints(
             return {
               accountId: account.id,
               nickname: account.nickname,
+              enabled: account.enabled !== false,
               balance,
               ...(!account.enabled
                 ? { error: '已停用' }

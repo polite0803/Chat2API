@@ -49,6 +49,15 @@ import { MinimaxAuth } from './minimax-auth.js'
 import { registerMinimaxLlm } from './minimax-adapter.js'
 import { MINIMAX } from './minimax-product.js'
 import type { MinimaxCredential } from './minimax.js'
+import { fetchTraeCreditBalance } from './trae-credits.js'
+import { fetchQoderCreditBalance } from './qoder-credits.js'
+import { fetchZcodeBalance } from './zcode-upstream.js'
+import { fetchClineCreditBalance } from './cline-credits.js'
+import { fetchGeminiCreditBalance } from './gemini-credits.js'
+import { fetchLobsteraiCreditBalance } from './lobsterai-credits.js'
+import { fetchRaccoonCreditBalance } from './raccoon-credits.js'
+import { fetchMinimaxCreditBalance } from './minimax-credits.js'
+import { AccountBalanceGate, type BalanceProbe } from './account-balance-gate.js'
 import { GeminiAuth } from './gemini-auth.js'
 import { registerGeminiLlm } from './gemini-adapter.js'
 import { GEMINI } from './gemini.js'
@@ -274,6 +283,53 @@ export function apply(ctx: Context, config: { disableOpencode?: boolean; outlet?
     'llm-minimax', 'llm-zcode', 'llm-gemini',
   )
   const pool = new AccountPool(ctx)
+
+  // ===== 余额门控注册（选号前的「积分检查」，2026-10-30）=====
+  //
+  // 背景：除 loomy / buddy 有余额感知选号外，其余渠道选号不知道积分余额，
+  // 排在手动顺序首位的 0 积分号会持续被选中并失败（计费错误不写限流标记，
+  // 也不触发换号）。这里给 8 个渠道各注册一个 `AccountBalanceGate`（见
+  // `account-balance-gate.ts`）：选号时确认为 0 的账号跳过，查询失败/超时
+  // 一律 fail-open 放行，TTL 缓存保证选号热路径基本零网络开销。
+  //
+  // - loomy / buddy 不注册：它们已有 selector 分档选号（会自己查余额），
+  //   再挂门控就是双份余额请求；
+  // - opencode 不注册：匿名槽位体系没有可用的余额查询接口。
+  // 各渠道「余额为 0」的判定差异：
+  // - CreditBalance 形（trae/qoder/lobsterai/raccoon/minimax）：`total <= 0`；
+  // - zcode：`remaining` 数值；`enterprise === true` 表示企业额度无配额数字
+  //   （桶列表为空≠没钱），按「未知」放行；
+  // - cline / gemini：`ClineBalanceResult.balance === null` 是查询失败
+  //   （fail-open），非 null 才看 `total`。
+  const creditTotal = (
+    balance: { total: number } | null | undefined,
+  ): number | null => (balance === null || balance === undefined ? null : balance.total)
+  const balanceGate = (probe: BalanceProbe) => new AccountBalanceGate({ probe })
+  pool.setBalanceGate(TRAE.id, balanceGate(async credential =>
+    creditTotal(await fetchTraeCreditBalance(credential as TraeCredential, TRAE))))
+  pool.setBalanceGate(QODER.id, balanceGate(async credential =>
+    creditTotal(await fetchQoderCreditBalance(credential as QoderCredential, QODER))))
+  pool.setBalanceGate(QODER_CN.id, balanceGate(async credential =>
+    creditTotal(await fetchQoderCreditBalance(credential as QoderCredential, QODER_CN))))
+  pool.setBalanceGate(ZCODE.id, balanceGate(async credential => {
+    const result = await fetchZcodeBalance(credential as ZcodeCredential)
+    if (result === undefined || result.enterprise === true) return null
+    return result.remaining
+  }))
+  pool.setBalanceGate(CLINE.id, balanceGate(async credential => {
+    const result = await fetchClineCreditBalance(credential as ClineCredential, CLINE)
+    return result.balance === null ? null : result.balance.total
+  }))
+  pool.setBalanceGate(GEMINI.id, balanceGate(async credential => {
+    const result = await fetchGeminiCreditBalance(credential as GeminiCredential, GEMINI)
+    return result.balance === null ? null : result.balance.total
+  }))
+  pool.setBalanceGate(LOBSTERAI.id, balanceGate(async credential =>
+    creditTotal(await fetchLobsteraiCreditBalance(credential as LobsteraiCredential, LOBSTERAI))))
+  pool.setBalanceGate(RACCOON.id, balanceGate(async credential =>
+    creditTotal(await fetchRaccoonCreditBalance(RACCOON, credential as RaccoonCredential))))
+  pool.setBalanceGate(MINIMAX.id, balanceGate(async credential =>
+    creditTotal(await fetchMinimaxCreditBalance(credential as MinimaxCredential))))
   const accountForRefresh = async (provider: string, accountId?: string) => {
     if (accountId === undefined) return pool.getAvailableAccount(provider, '')
     const entry = pool.listAccountsByProvider(provider).find(account => account.id === accountId)

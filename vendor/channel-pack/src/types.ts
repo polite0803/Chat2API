@@ -476,6 +476,15 @@ export interface RpcPermanentLockResponse {
 export interface RpcCreditsBalanceAccount {
   accountId: string
   nickname: string
+  /**
+   * 该账号当前是否启用（停用只影响账号池的自动选择，余额照常返回供列表展示）。
+   *
+   * 宿主计算**渠道总额**时只应累计启用账号 —— 否则启停一个号渠道总额纹丝
+   * 不动（2026-10-30 缺陷：总额始终含停用账号，「关掉没钱/开启有积分的号」
+   * 在渠道卡片上看不出任何变化）。
+   * 缺省按 `true` 处理（向后兼容旧 worker 的响应）。
+   */
+  enabled?: boolean
   /** 余额查询失败（网络/凭据/响应异常）时为 null —— 与「余额为 0」严格区分。 */
   balance: import('./credits.js').CreditBalance | null
   /** 查询失败的原因，供 UI 提示（成功时为 undefined）。 */

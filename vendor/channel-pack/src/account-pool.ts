@@ -5,6 +5,7 @@ import { createChannelPackStore, mergeLegacyLoomyLock, sanitizeAccounts, sanitiz
 import type { ChannelPackStore, ChannelPackState, ModelDisableMap, PermanentLockMap } from './channel-pack-store.js'
 import { createPermanentLockStore } from './permanent-lock-store.js'
 import type { PermanentLockStore } from './permanent-lock-store.js'
+import { AccountBalanceGate, isBalanceGateEnabled } from './account-balance-gate.js'
 import type {
   ProviderAccountEntry,
   ProviderAccountStatus,
@@ -918,6 +919,21 @@ export class AccountPool {
    * 在池这一层排除（而非让调用方自己跳过）是必要的：调用方只能拿到
    * 「池认为最优的一个」，无法枚举候选自己去重。
    */
+
+  /**
+   * 各渠道的余额门控（见 `account-balance-gate.ts`），由 index.ts 注册。
+   *
+   * 背景：除 loomy / buddy 有余额感知选号外，其余渠道选号不知道积分余额，
+   * 0 积分的号若排在手动顺序首位会持续被选中并失败。门控在候选循环里
+   * 查一次余额，**确认为 0** 的账号跳过；查询失败一律 fail-open 放行。
+   * loomy / buddy 已有 selector 分档，不注册（避免双份余额请求）。
+   */
+  private readonly balanceGates = new Map<string, AccountBalanceGate>()
+
+  setBalanceGate(provider: string, gate: AccountBalanceGate): void {
+    this.balanceGates.set(provider, gate)
+  }
+
   async getAvailableAccount(
     provider: string,
     modelId: string,
@@ -961,6 +977,15 @@ export class AccountPool {
       }
       try {
         const credential = JSON.parse(resolved.value) as StoredTokenCredential
+        // 余额门控：确认为 0 的账号跳过；查询失败/超时返回 undefined → fail-open。
+        const gate = this.balanceGates.get(provider)
+        if (gate !== undefined && isBalanceGateEnabled(process.env.DSH_ACCOUNT_BALANCE_GATE)) {
+          const usable = await gate.usable(entry.id, credential)
+          if (usable === false) {
+            failures.push(`${entry.id}: 余额为 0（余额门控跳过）`)
+            continue
+          }
+        }
         if (failures.length > 0) {
           this.ctx.logger?.warn?.(
             `[channel-pack] ${failures.length} 个 ${provider} 账号不可用，已跳过：${failures.join('; ')}`,

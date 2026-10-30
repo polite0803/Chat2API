@@ -1,5 +1,5 @@
 import { withQueueAccountRotation } from './queue-rotation.js'
-import { checkQueuedResponse } from './model-queue.js'
+import { checkQueuedResponse, nextUtc8DayStartMs } from './model-queue.js'
 /**
  * MiniMax Code 模型适配器。
  *
@@ -176,6 +176,9 @@ export interface MinimaxAdapterOptions {
   product?: MinimaxProduct
 }
 
+/** 单笔请求内 402 换号重试的硬上限（正常 1 次即中；上限只为防御空转）。 */
+const MINIMAX_MAX_QUOTA_ROTATE = 3
+
 /** MiniMax Code 模型适配器。 */
 export class MinimaxAdapter extends LlmAdapter {
   private readonly product: MinimaxProduct
@@ -345,6 +348,8 @@ export class MinimaxAdapter extends LlmAdapter {
     if (credential === undefined || credential.access_token === '') {
       throw new LlmError('minimax: no usable credential; log in first', 'MISSING_CREDENTIAL')
     }
+    // 402（余额不足）换号重试的已试集合（与 qoder/zcode 同款语义）。
+    const tried = new Set<string>()
 
     const entry = (await this.loadModels()).find((item) => item.id === options.model)
 
@@ -415,12 +420,25 @@ export class MinimaxAdapter extends LlmAdapter {
       ...images === undefined ? {} : { images },
     })
 
-    const response = await fetch(`${this.product.apiHost}${MINIMAX_INFER_PATH}`, {
-      method: 'POST',
-      headers: minimaxInferHeaders(credential),
-      body: JSON.stringify(payload),
-      signal: options.signal,
-    }).then(checkQueuedResponse)
+    const sendInfer = (activeCredential: MinimaxCredential) =>
+      fetch(`${this.product.apiHost}${MINIMAX_INFER_PATH}`, {
+        method: 'POST',
+        headers: minimaxInferHeaders(activeCredential),
+        body: JSON.stringify(payload),
+        signal: options.signal,
+      }).then(checkQueuedResponse)
+
+    let response = await sendInfer(credential)
+    // 402 = 当前账号余额不足：标记 + 换下一个号重发（未产出任何 chunk 前重发
+    // 是安全的）。仍 402 时落到下方 `!response.ok` 分支，原样抛出余额错误。
+    let quotaRetries = 0
+    while (response.status === 402 && quotaRetries < MINIMAX_MAX_QUOTA_ROTATE) {
+      quotaRetries += 1
+      const next = await this.switchAccountOnQuota(options.model, credential, tried)
+      if (next === undefined) break
+      credential = next
+      response = await sendInfer(credential)
+    }
     if (!response.ok) {
       const text = await response.text().catch(() => '')
       // ⚠️ 402 是**余额不足**，必须原样透出 —— 它是最常见的真实失败，
@@ -437,6 +455,51 @@ export class MinimaxAdapter extends LlmAdapter {
     }
 
     yield* consumeMinimaxSse({ body: response.body, signal: options.signal })
+  }
+
+  /**
+   * 402（余额不足）时的「标记 + 换号」（2026-10-30，与 qoder/zcode 同名方法同款）。
+   *
+   * ## 背景
+   *
+   * MiniMax 此前是**唯一**既不标记也不换号的渠道（全渠道审计结论）：排第一的
+   * 号余额烧光后，请求反复砸在它上面失败，有积分的号永远轮不到。余额门控
+   * （`account-balance-gate.ts`）能挡住「已知的 0 余额」，但挡不住「刚烧光的
+   * 60 秒缓存窗口」—— 本方法是运行时的兜底。
+   *
+   * 402 不带重置时刻，与 qoder/zcode 同款用 {@link nextUtc8DayStartMs} 标到
+   * 「UTC+8 当日 24:00」。**不能**退回「1 小时后」兜底：按自然日结算的额度，
+   * 标记过早失效会让用户 1 小时后再撞同一堵墙（qoder-adapter.ts:1262 的教训）。
+   *
+   * @param modelId - 只标记**该模型**：额度是「账号 + 模型」维度，本账号在别的
+   *   模型上仍可能可用（`modelRateLimits` 的既有语义）。
+   * @param credential - **当前正在用的**凭据；用它的 `access_token` 反查账号 id，
+   *   而不是「池当前的默认账号」—— 切号后默认账号不跟着变，用它标记会在
+   *   两个号之间反复空转（qoder-adapter.ts:1284 的教训）。
+   * @returns 下一个账号的凭据；无可换账号时 `undefined`（调用方如实抛原错误）。
+   */
+  private async switchAccountOnQuota(
+    modelId: string,
+    credential: MinimaxCredential,
+    tried: Set<string>,
+  ): Promise<MinimaxCredential | undefined> {
+    const pool = this.options.accountPool
+    if (pool === undefined) return undefined
+
+    const activeAccountId = await pool.findAccountIdByCredential(
+      this.product.id,
+      credential.access_token,
+    )
+    if (activeAccountId !== '') {
+      await pool.updateModelRateLimit(activeAccountId, modelId, nextUtc8DayStartMs())
+      tried.add(activeAccountId)
+    }
+
+    // ⚠️ 必须传 `tried`：刚失败的账号仍可能排候选第一，不排除就会拿回同一个。
+    const next = await pool.getAvailableAccount(this.product.id, modelId, tried)
+    if (next === null || tried.has(next.entry.id)) return undefined
+    tried.add(next.entry.id)
+    return next.credential as MinimaxCredential
   }
 }
 
