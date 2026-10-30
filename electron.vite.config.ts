@@ -58,6 +58,10 @@ function contentSecurityPolicy(): Plugin {
 }
 
 export default defineConfig({
+  // ⚠️ 不要用 __dirname：electron-vite 加载 config 前会 realpathSync(configFile)，
+  // 在 VMware 共享文件夹的映射盘环境（D: → \\vmware-host\Shared Folders\D）下会得到
+  // UNC 形态路径，随后 vite 的 realpath/URL 转换会产出 `Z:\ Folders\D\...` 这类坏路径。
+  // 构建进程的 cwd 始终是 package.json 所在目录（盘符形态），以此为基准最稳。
   main: {
     plugins: [
       externalizeDepsPlugin({
@@ -71,15 +75,23 @@ export default defineConfig({
           'js-sha3',
           'mime-types',
           'zstd-codec',
-          'electron-store',
+          // ⚠️ electron-store 必须保持 external（不放进 exclude）：
+          // 它是 ESM-only 包，CJS 产物 require 不了；而打包路径在本机的映射盘
+          // 环境下会被 vite resolver 搞挂。store.ts 用的是 `await import(...)`
+          // 动态导入，rollup 4 的 CJS 输出默认保留原生 `import()`，Electron
+          // main 进程（Node ≥20）可以在运行时直接加载 ESM。
           'electron-updater'
         ]
       })
     ],
+    resolve: {
+      // 映射盘 realpath 会把模块 id 还原成 UNC，见顶部说明。
+      preserveSymlinks: true
+    },
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/main/index.ts')
+          index: resolve(process.cwd(), 'src/main/index.ts')
         },
         output: {
           format: 'cjs'
@@ -92,25 +104,27 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/preload/index.ts')
+          index: resolve(process.cwd(), 'src/preload/index.ts')
         }
       }
     }
   },
   renderer: {
-    root: resolve(__dirname, 'src/renderer'),
+    root: resolve(process.cwd(), 'src/renderer'),
+    plugins: [react(), contentSecurityPolicy()],
+    resolve: {
+      // 映射盘 realpath 会把模块 id 还原成 UNC 坏路径，见顶部说明。
+      preserveSymlinks: true,
+      alias: {
+        '@': resolve(process.cwd(), 'src/renderer/src'),
+        '@shared': resolve(process.cwd(), 'src/shared'),
+      }
+    },
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/renderer/index.html')
+          index: resolve(process.cwd(), 'src/renderer/index.html')
         }
-      }
-    },
-    plugins: [react(), contentSecurityPolicy()],
-    resolve: {
-      alias: {
-        '@': resolve(__dirname, 'src/renderer/src'),
-        '@shared': resolve(__dirname, 'src/shared'),
       }
     },
     server: {
