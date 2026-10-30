@@ -217,7 +217,7 @@ class AccountChannelManager {
       }
     }
     const value = result.value as
-      | { accounts?: Array<{ accountId?: string; nickname?: string; balance?: { total?: number } | null; error?: string }> }
+      | { accounts?: Array<{ accountId?: string; nickname?: string; enabled?: boolean; balance?: { total?: number } | null; error?: string }> }
       | undefined
     const rows = Array.isArray(value?.accounts) ? value.accounts : []
     let total = 0
@@ -225,8 +225,13 @@ class AccountChannelManager {
     const accounts = rows.map(row => {
       const remaining = typeof row.balance?.total === 'number' ? row.balance.total : undefined
       if (remaining !== undefined) {
-        total += remaining
         reported += 1
+        // 渠道总额只累计**启用**账号（worker 对停用账号也回余额，供列表展示；
+        // `enabled` 缺省按 true 处理以兼容旧 worker）。否则启停一个号总额
+        // 纹丝不动 —— 用户开/关账号就看不到积分的加或减（2026-10-30 缺陷）。
+        if (row.enabled !== false) {
+          total += remaining
+        }
       }
       return {
         accountId: String(row.accountId ?? ''),

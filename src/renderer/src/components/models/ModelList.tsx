@@ -382,7 +382,11 @@ export function ModelList() {
       return
     }
     await Promise.all(connected.map(async (provider) => {
-      setCredits(current => ({ ...current, [provider.id]: 'loading' }))
+      // stale-while-revalidate：已有旧值时不置 loading（同 Channels.tsx ——
+      // 账号启停等触发的重刷不该让所有渠道的上标一起闪）。
+      setCredits(current => current[provider.id] === undefined
+        ? { ...current, [provider.id]: 'loading' }
+        : current)
       try {
         const value = await window.electronAPI.channels.credits(provider.id)
         setCredits(current => ({ ...current, [provider.id]: value }))

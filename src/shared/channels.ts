@@ -60,7 +60,12 @@ export interface ChannelView {
 
 /** Credits for one channel; `null` means "the channel has no balance endpoint". */
 export interface ChannelCredits {
-  /** Sum of every account's usable balance; undefined when no account answered. */
+  /**
+   * Sum of **enabled** accounts' usable balance; undefined when no account answered.
+   *
+   * 停用账号的余额不出现在这里（它们的读数仍在 `accounts` 明细行里）——
+   * 否则启停一个账号渠道总额不会变化，用户看不出积分的加或减。
+   */
   remaining?: number
   /** Accounts that answered with a usable balance. */
   reported: number

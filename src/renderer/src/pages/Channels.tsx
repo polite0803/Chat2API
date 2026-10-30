@@ -67,7 +67,12 @@ export function Channels() {
     const connected = views.filter(view => view.accounts.total > 0)
     if (connected.length === 0) return
     await Promise.all(connected.map(async view => {
-      setCredits(current => ({ ...current, [view.id]: 'loading' }))
+      // stale-while-revalidate：已有旧值时**不**置 loading —— worker 的 `changed`
+      // 事件（请求消耗、启停账号等）都会触发全量刷新，若每次都闪 loading，
+      // 用户看到的就是「所有渠道的积分都在刷」而不是目标渠道的加减（2026-10-30）。
+      setCredits(current => current[view.id] === undefined
+        ? { ...current, [view.id]: 'loading' }
+        : current)
       const value = await window.electronAPI.channels.credits(view.id)
       setCredits(current => ({ ...current, [view.id]: value }))
     }))
