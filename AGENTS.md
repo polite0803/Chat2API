@@ -754,11 +754,45 @@ route then records the total elapsed time instead of the time to first byte.
 The envelope is constrained at the decoding layer, not just in the prompt: `opencode/envelopeSchema.ts`
 builds `calls[].items` as an `anyOf` over the tools actually offered (each name is a `const`, its
 parameter schema is inlined) and turns `tool_choice: required`/a forced function into `minItems: 1`
-and `parallel_tool_calls: false` into `maxItems: 1`. `usage` is reported in the OpenAI shape
+and `parallel_tool_calls: false` into `maxItems: 1`. Two constraints are deliberately **not**
+enforced, because the runtime hard-codes `toolChoice: "required"` for every `format: json_schema`
+turn: `required` on a call is `['name']` only (`arguments` may be omitted), and
+`additionalProperties` is `true` at both levels. Anything stricter turns a harmless extra field or a
+missing `arguments` into `InvalidToolInputError`, which the runtime rewrites into its `invalid` tool
+and the whole turn is lost. What must stay strict is the tool-name `const` and the inlined parameter
+schema. `usage` is reported in the OpenAI shape
 (prompt = input + cache read/write, completion = output + reasoning, plus the `*_details` fields)
 because the upstream reports it; it stays `null` when it does not, and the contract's "never
 fabricated" rule still holds. Non-text content (images) is rejected with 400 before the stream
 opens instead of being dropped silently.
+
+**`invalid` is the runtime's trash can, not a tool the model called.** `opencode-ai@1.19.4` ships a
+builtin tool literally named `invalid` (description `"Do not use"`) and removes it from the model's
+`activeTools`. It only appears through `experimental_repairToolCall`: when the model names a tool
+that is not in the table (`NoSuchToolError`) or passes arguments that fail the schema
+(`InvalidToolInputError`), the runtime rewrites that call to `tool: "invalid"` and stashes the truth
+in `state.input = {tool, error}`. So `part.tool === 'invalid'` means "the model did not speak in the
+envelope this time", **not** "the model touched a native tool". The old fence exempted only
+`StructuredOutput` and `status: 'error'`, so it flagged `invalid` as native activity and reported the
+self-contradictory `native_tool_activity ... tool "invalid"`, killing a turn the runtime would have
+retried and corrected. `bridge.ts::findNativeToolActivity` now applies three rules in order: an
+envelope short-circuits everything (the runtime retries, and `agent.steps` leaves room for it);
+`invalid` never counts as a native tool; only a native tool that actually **executed** with no
+envelope is a violation (permission-denied attempts come back `status: 'error'` and do not count).
+Genuine `invalid` turns now throw `envelope_violation`, split by source into `unknown_tool_call`
+(the model fired an external tool name as a native function - a prompt problem) and
+`envelope_schema_mismatch` (right tool, schema too tight). `probe.ts` caches both for 10 minutes
+only and `adapters/opencode.ts::resolveTools` deliberately does **not** downgrade the model to
+chat-only for them: they describe our prompt and schema, not model capability, and downgrading locks
+the model out of tool use for the whole TTL.
+
+**Do not re-add agent-level `tools: {bash: false, …}`.** In `opencode-ai@1.19.4` that key is marked
+`@deprecated` in the schema, the agent-config merge loop copies every other field but skips `tools`,
+and `ToolRegistry.tools()` does not filter by permission. Only the top-level `config.tools` is
+translated (into permission rules), and even that gates execution rather than hiding a tool. Native
+tools are therefore held off by `permission` alone - `bash/edit/read/glob/grep/list/webfetch/
+websearch/task/todowrite/question/lsp/doom_loop/skill/external_directory` all `deny` - plus the
+`/permission` poll that rejects everything, and the model will still *see* them.
 
 Two more facts about that path, both measured on 2026-10-27:
 

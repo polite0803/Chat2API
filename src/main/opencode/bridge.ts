@@ -58,6 +58,36 @@ export interface BridgeReply {
   totalMs: number
 }
 
+/** 运行时回给我们的 part（只声明用得到的字段）。 */
+export interface BridgePart {
+  type?: string
+  text?: string
+  tool?: string
+  state?: {
+    input?: unknown
+    status?: string
+    output?: string
+    error?: string
+  }
+}
+
+/** 承载信封的工具名：运行时为 `format: json_schema` 注入的那个结构化输出工具。 */
+export const ENVELOPE_TOOL = 'StructuredOutput'
+
+/**
+ * 运行时合成的「垃圾桶工具」名。
+ *
+ * 它**不是**模型点出来的工具：模型的 `experimental_repairToolCall` 一旦发现
+ * 模型点了工具表里没有的名字（`NoSuchToolError`）或参数过不了 schema
+ * （`InvalidToolInputError`），就会把这次调用改写成 `tool: "invalid"`，
+ * 并把原工具名与错误原因塞进 `state.input = {tool, error}`。
+ *
+ * 因此 `part.tool === 'invalid'` 只说明"模型这一次没按信封说话"，
+ * **不说明它动了原生工具**。之前的围栏把两者混为一谈，才会报出
+ * `native_tool_activity ... OpenCode tool "invalid"` 这种自相矛盾的错误。
+ */
+export const INVALID_TOOL = 'invalid'
+
 export interface BridgeChatRequest {
   modelId: string
   prompt: string
@@ -74,18 +104,49 @@ export interface BridgeChatRequest {
 const HEALTH_TIMEOUT_MS = 90_000
 const MESSAGE_TIMEOUT_MS = 300_000
 
-/** OpenCode 的原生工具一律不许真执行：默认 'ask'（弹审批由我们拒），其余直接 deny */
+/**
+ * OpenCode 的原生工具一律不许真执行。
+ *
+ * 键名取自运行时的 `PermissionConfig`（`opencode-ai@1.19.4`）：
+ * `read / edit / glob / grep / list / bash / task / external_directory /
+ *  todowrite / question / webfetch / websearch / lsp / doom_loop / skill`。
+ * 之前的 `codesearch` / `plan_enter` / `plan_exit` 在这版里**根本不存在**，
+ * 只是被 `'*'` 兜住才没出事；工具 id 也不是旧名字（`shell` 才是 bash、
+ * `fetch` 才是 webfetch、`search` 才是 websearch/codesearch 的合体）。
+ *
+ * 注意 `StructuredOutput`（承载信封的那个工具）不走权限，实测它的 part 直接是
+ * `status: completed`，所以这里把各项都 deny 掉不会挡住信封。
+ */
 const NATIVE_PERMISSIONS: Record<string, string> = {
+  // 没点名的权限一律要审批，由下面 /permission 轮询一律 reject 兜住
   '*': 'ask',
-  question: 'deny',
-  websearch: 'deny',
-  codesearch: 'deny',
+  // 点名的一律直接拒：不执行、不进审批队列，模型立刻拿到错误
+  bash: 'deny',
+  edit: 'deny',
+  read: 'deny',
+  glob: 'deny',
+  grep: 'deny',
+  list: 'deny',
   webfetch: 'deny',
+  websearch: 'deny',
   task: 'deny',
-  plan_enter: 'deny',
-  plan_exit: 'deny',
   todowrite: 'deny',
+  question: 'deny',
+  lsp: 'deny',
+  doom_loop: 'deny',
+  skill: 'deny',
+  external_directory: 'deny',
 }
+
+/**
+ * 一次回合最多走几个 step（`agent.steps`，运行时侧默认无限）。
+ *
+ * 这里**不能**设成 1：运行时把「模型点错工具」修好后会把错误喂回去重试，
+ * 那个自纠发生在第二个 step（见 chat() 里对 `invalid` 的处理）。设成 1
+ * 等于关掉自纠，反而让本来能成功的回合失败。
+ * 设成 3 是「留一次自纠、又不让原生工具无限空转烧免费额度」。
+ */
+const MAX_AGENT_STEPS = 3
 
 const CHAT_AGENT_PROMPT =
   'Reply in plain text to the external conversation. No tool use or local actions. Never claim to have executed an action.'
@@ -105,30 +166,19 @@ export function ensureBridgePaths(root: string): BridgePaths {
 }
 
 /**
- * 原生工具在 agent 层直接关掉：只拒绝（deny）只是不让它执行，模型仍然看得见这些工具、
- * 仍然会去调用，然后整回合被判失败。要让模型"看不见"，就得从工具清单里摘掉。
- * StructuredOutput 保留 —— 它是承载信封的工具。
+ * agent 级 `tools` 字段**不要用**，它在当前运行时里是空操作。
+ *
+ * 曾经的写法是给两个 agent 各挂一份 `tools: {bash:false, …}`，指望"从工具清单里摘掉"。
+ * 实测（反查 `opencode-ai@1.19.4`）这个假设不成立：
+ *  - schema 里 `agent.tools` 标着 `@deprecated Use 'permission' field instead`；
+ *  - 合并 agent 配置的循环只拷 `model/variant/prompt/description/temperature/
+ *    top_p/mode/color/hidden/name/steps/options/permission`，**唯独不拷 `tools`**；
+ *  - `ToolRegistry.tools()` 也完全不按权限过滤。
+ *
+ * 只有**顶层** `config.tools` 会被翻译成权限（`allow`/`deny`），而且那也只是
+ * "拦执行"而不是"藏起来"。所以"让模型看不见原生工具"在这版运行时做不到，
+ * 只能靠 `permission` 全 deny + 围栏兜底，并接受模型仍会尝试这一点。
  */
-const NATIVE_TOOLS_DISABLED: Record<string, boolean> = {
-  bash: false,
-  edit: false,
-  write: false,
-  read: false,
-  glob: false,
-  grep: false,
-  list: false,
-  patch: false,
-  webfetch: false,
-  websearch: false,
-  codesearch: false,
-  todowrite: false,
-  task: false,
-  question: false,
-  plan_enter: false,
-  plan_exit: false,
-}
-
-/** 隔离配置：原生工具一律要审批（我们一律拒），自动更新/分享/外部技能全关 */
 export function isolatedConfig(): Record<string, unknown> {
   return {
     permission: NATIVE_PERMISSIONS,
@@ -140,14 +190,14 @@ export function isolatedConfig(): Record<string, unknown> {
         description: 'Text-only external conversation',
         prompt: CHAT_AGENT_PROMPT,
         permission: NATIVE_PERMISSIONS,
-        tools: NATIVE_TOOLS_DISABLED,
+        steps: 1,
       },
       'chat2api': {
         mode: 'primary',
         description: 'External client inference only',
         prompt: TOOL_AGENT_PROMPT,
         permission: NATIVE_PERMISSIONS,
-        tools: NATIVE_TOOLS_DISABLED,
+        steps: MAX_AGENT_STEPS,
       },
     },
   }
@@ -215,6 +265,92 @@ export function normalizeTokens(tokens: unknown): BridgeTokens | null {
   }
 
   return Object.values(out).some(value => value !== undefined) ? out : null
+}
+
+/**
+ * 运行时把「模型点错工具」改写成 `invalid` 后塞进 `state.input` 的内容：
+ * `{ tool: <模型真正想调的名字>, error: <原始错误信息> }`。
+ */
+export interface InvalidToolActivity {
+  /** 模型真正点名想调的工具（可能是一个我们没提供的外部工具名） */
+  tool?: string
+  /** ai-sdk 的原始错误文案，含 `Model tried to call unavailable tool '...'` 或参数校验信息 */
+  error?: string
+}
+
+export function readInvalidToolActivity(part: BridgePart): InvalidToolActivity | null {
+  if (part.tool !== INVALID_TOOL) return null
+  const input = part.state?.input
+  if (input && typeof input === 'object') {
+    const raw = input as Record<string, unknown>
+    return {
+      tool: typeof raw.tool === 'string' ? raw.tool : undefined,
+      error: typeof raw.error === 'string' ? raw.error : undefined,
+    }
+  }
+  // 有的路径只给了一段 JSON 字符串
+  if (typeof input === 'string') {
+    try {
+      const parsed = JSON.parse(input) as Record<string, unknown>
+      return {
+        tool: typeof parsed.tool === 'string' ? parsed.tool : undefined,
+        error: typeof parsed.error === 'string' ? parsed.error : undefined,
+      }
+    } catch {
+      return {}
+    }
+  }
+  return {}
+}
+
+/**
+ * 这次 `invalid` 是不是「模型把一个不存在/参数不合法的东西当成工具调了」。
+ *
+ * 两种来源的处置完全不同，所以必须分开：
+ *  - `NoSuchToolError`（`Model tried to call unavailable tool`）：模型把提示里列出的
+ *    **外部工具名**当成原生工具发了。这是我们"列外部工具名 + format 强制 required"
+ *    逼出来的，属于**提示词**问题；
+ *  - `InvalidToolInputError`（`Invalid input for tool`）：模型选对了 `StructuredOutput`，
+ *    但参数过不了我们那张严格信封 schema，属于 **schema 太严**的问题。
+ */
+export function classifyInvalidTool(activity: InvalidToolActivity): 'unknown_tool' | 'bad_arguments' | 'unclassified' {
+  const error = activity.error ?? ''
+  if (/unavailable tool|NoSuchToolError/i.test(error)) return 'unknown_tool'
+  if (/Invalid input for tool|InvalidToolInputError/i.test(error)) return 'bad_arguments'
+  return 'unclassified'
+}
+
+/**
+ * 判定一次回合是否真的"动了原生工具"。
+ *
+ * 三条规则，都是从实测的运行时行为反推出来的：
+ *
+ *  1. **有信封就不算违规。** 运行时在拿到结构化输出后会把它放在
+ *     `info.structured`；模型哪怕中途点错过工具，只要最终交出了信封，
+ *     这个回合对客户端就是有用的，没有理由判失败。
+ *  2. **`invalid` 不是原生工具。** 它是运行时合成的垃圾桶，模型根本看不见它
+ *     （运行时把它从 `activeTools` 里摘掉）。把它算成 native tool activity
+ *     就会报出 `native_tool_activity ... tool "invalid"` 这种自相矛盾的错误。
+ *  3. **只有真的去执行原生工具才算违规，而且只罚"真的动了手"。**
+ *     权限层已经全 deny，所以被执行到的原生工具一定是我们漏配的权限；
+ *     被拦下（`status: 'error'`）的那次不算——那是围栏按设计生效。
+ */
+export function findNativeToolActivity(
+  parts: BridgePart[] | undefined,
+  options: { hasEnvelope: boolean },
+): { tool: string } | null {
+  // 规则 1：拿到信封就一律放行，后面的原生工具痕迹不再追究
+  if (options.hasEnvelope) return null
+
+  const native = (parts ?? []).find(
+    part =>
+      part.type === 'tool' &&
+      part.tool !== undefined &&
+      part.tool !== ENVELOPE_TOOL &&
+      part.tool !== INVALID_TOOL &&
+      part.state?.status !== 'error',
+  )
+  return native?.tool ? { tool: native.tool } : null
 }
 
 export class OpencodeBridge {
@@ -450,12 +586,7 @@ export class OpencodeBridge {
     const watcher = this.watchTurnFailure(sessionId, controller)
 
     const reply = await this.request<{
-      parts?: Array<{
-        type?: string
-        text?: string
-        tool?: string
-        state?: { input?: unknown; status?: string }
-      }>
+      parts?: BridgePart[]
       info?: { tokens?: { input?: number; output?: number }; structured?: unknown }
     }>(
       'POST',
@@ -483,24 +614,48 @@ export class OpencodeBridge {
       throw new Error(`OpenCode replied HTTP ${reply.status}: ${reply.text.slice(0, 200)}`)
     }
 
-    // 围栏的第二道：模型一旦真的用了 OpenCode 的原生工具（读写文件、跑命令…），
+    // 信封先读，围栏后判：**拿到信封就说明这次回合对客户端有用**，
+    // 模型中途点错过工具也不该判失败（运行时自己会重试纠正，
+    // `agent.steps` 也留了自纠的额度）。
+    const envelope = reply.json?.info?.structured ?? this.structuredPart(reply.json?.parts)
+
+    // 围栏的第二道：模型一旦真的**执行**了 OpenCode 的原生工具（读写文件、跑命令…），
     // 说明它想自己动手而不是把动作交给客户端。这种回合必须判失败，不能把
     // 原生工具调用当成"给客户端的工具调用"交出去。
-    // 被围栏挡下的那次尝试（status=error）不算违规——那是模型被拦住，
-    // 正如 RuiC-oc-ferry 的判据：只罚"真的动了手"。
-    const nativeTool = (reply.json?.parts ?? []).find(
-      part =>
-        part.type === 'tool' &&
-        part.tool !== 'StructuredOutput' &&
-        part.state?.status !== 'error',
-    )
+    // 判据见 findNativeToolActivity：信封优先、`invalid` 不算原生工具、
+    // 被围栏挡下（status=error）的那次不算违规。
+    const nativeTool = findNativeToolActivity(reply.json?.parts, { hasEnvelope: envelope !== undefined })
     if (nativeTool) {
       throw new Error(
         `native_tool_activity: the model tried to use the OpenCode tool "${nativeTool.tool}" instead of returning an envelope`,
       )
     }
 
-    const envelope = reply.json?.info?.structured ?? this.structuredPart(reply.json?.parts)
+    // 走到这里还没信封，且确实有过 `invalid`：把它真正的原因带出去。
+    // 报 "native_tool_activity ... invalid" 是错的（模型看不见那个工具），
+    // 真实情况是模型点了工具表里没有的名字、或者信封参数不合 schema。
+    if (envelope === undefined) {
+      const invalid = (reply.json?.parts ?? [])
+        .map(part => readInvalidToolActivity(part))
+        .find(activity => activity !== null)
+      if (invalid) {
+        const kind = classifyInvalidTool(invalid)
+        const asked = invalid.tool ? `tool "${invalid.tool}"` : 'an unnamed tool'
+        const detail = invalid.error ? `: ${invalid.error}` : ''
+        if (kind === 'unknown_tool') {
+          throw new Error(
+            `envelope_violation: the model called ${asked} as a native tool instead of writing it into the envelope${detail}`,
+          )
+        }
+        if (kind === 'bad_arguments') {
+          throw new Error(
+            `envelope_violation: the model's envelope did not satisfy the schema (${asked})${detail}`,
+          )
+        }
+        throw new Error(`envelope_violation: the model called ${asked} instead of returning an envelope${detail}`)
+      }
+    }
+
     const text = envelope
       ? String((envelope as { content?: string }).content ?? '')
       : (reply.json?.parts ?? [])
@@ -521,18 +676,11 @@ export class OpencodeBridge {
     }
   }
 
-  private structuredPart(
-    parts?: Array<{
-      type?: string
-      text?: string
-      tool?: string
-      state?: { input?: unknown; status?: string }
-    }>,
-  ): unknown {
+  private structuredPart(parts?: BridgePart[]): unknown {
     const part = (parts ?? []).find(
       candidate =>
         candidate.type === 'tool' &&
-        candidate.tool === 'StructuredOutput' &&
+        candidate.tool === ENVELOPE_TOOL &&
         candidate.state?.status === 'completed' &&
         candidate.state?.input !== undefined,
     )

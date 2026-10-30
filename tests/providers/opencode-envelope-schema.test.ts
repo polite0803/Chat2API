@@ -22,15 +22,40 @@ test('Schema 把工具名写成 const、参数内联，模型编不出没提供�
   const items = schema.properties.calls.items
 
   assert.equal(items.anyOf.length, 2)
-  assert.ok(items.anyOf.every((entry: any) => entry.additionalProperties === false))
+  // 真正要守住的约束：工具名是 const，参数 schema 内联。
   assert.deepEqual(
     items.anyOf.map((entry: any) => entry.properties.name.const),
     ['get_weather', 'Read'],
   )
   // 参数 schema 直接内联，而不是一个宽松的"任意对象"
   assert.deepEqual(items.anyOf[0].properties.arguments, tools[0].parameters)
-  assert.deepEqual(items.anyOf[0].required, ['name', 'arguments'])
-  assert.deepEqual(schema.required, ['content', 'calls'])
+})
+
+test('信封只强制 calls：arguments 与 content 缺省不该让整回合失败', () => {
+  const schema = buildEnvelopeSchema({ tools }) as any
+  const items = schema.properties.calls.items
+
+  // 模型给无参工具省略 arguments 是常态；把它放进 required 会触发
+  // InvalidToolInputError，进而被运行时改写成 invalid 工具、整回合报废。
+  for (const entry of items.anyOf) {
+    assert.deepEqual(entry.required, ['name'])
+  }
+  assert.deepEqual(schema.required, ['calls'])
+  assert.equal(schema.properties.content.type, 'string')
+})
+
+test('额外字段放行，但工具名的 const 仍然是硬约束', () => {
+  const schema = buildEnvelopeSchema({ tools }) as any
+  const items = schema.properties.calls.items
+
+  // 放宽 additionalProperties 是为了容忍模型自带的解释字段，
+  // 而不是为了让它可以编造工具名——`name` 仍然是 const。
+  for (const entry of items.anyOf) {
+    assert.equal(entry.additionalProperties, true)
+    assert.equal(entry.properties.name.type, 'string')
+    assert.ok(typeof entry.properties.name.const === 'string')
+  }
+  assert.equal(schema.additionalProperties, true)
 })
 
 test('没有参数的工具有兜底 schema', () => {

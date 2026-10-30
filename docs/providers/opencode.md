@@ -45,9 +45,31 @@
 | --- | --- |
 | 隔离配置 | 用 `OPENCODE_CONFIG_CONTENT` 注入（不是写配置文件），另带 `OPENCODE_DISABLE_AUTOUPDATE/PROJECT_CONFIG/CLAUDE_CODE/EXTERNAL_SKILLS` |
 | 两个 agent | `chat2api-chat`（纯文本）与 `chat2api`（带工具），prompt 是 Ferry 两条 prompt 的改写 |
-| 工具 | 原生工具在 agent 层**关掉**（`tools: {bash:false,…}`），只留 `StructuredOutput` 承载信封。只在权限层 deny 不够——模型仍看得见这些工具、仍会去调，然后整回合被判失败 |
-| 围栏 | 会话级 permission 表把原生工具标成 ask/deny，同时轮询 `/permission` 一律 `reply:'reject'`；真跑了原生工具的回合判失败（被围栏挡下的那次尝试不算违规，与 Ferry 同口径） |
+| 工具 | 原生工具靠 **`permission` 全 deny**（`bash/edit/read/glob/grep/list/webfetch/websearch/task/todowrite/question/lsp/doom_loop/skill/external_directory`）+ `/permission` 轮询一律 reject 拦住，`StructuredOutput` 承载信封。**不要用 agent 级 `tools: {…:false}`** —— 运行时 `opencode-ai@1.19.4` 的 schema 已把它标成 `@deprecated`，合并 agent 配置时根本不拷贝这个字段，`ToolRegistry.tools()` 也不按权限过滤，所以"让模型看不见原生工具"在这版做不到；挂着 `tools` 只会给人已经遮住的错觉 |
+| 围栏 | 会话级 permission 表把原生工具标成 ask/deny，同时轮询 `/permission` 一律 `reply:'reject'`。判定分三步：**① 先读信封**，拿到 `info.structured` 就放行（运行时自己会重试纠正，`agent.steps` 也留了自纠额度）；**② `invalid` 不算原生工具**（见下）；**③ 只有真被执行的原生工具、且没交出信封**才判 `native_tool_activity`（被围栏挡下 `status:'error'` 的那次不算违规，与 Ferry 同口径） |
 | 工具归属 | 模型只能把"要调什么"写进 `{content, calls}` 信封，由我们翻译成 OpenAI 的 `tool_calls`；客户端没给过的工具名一律丢弃 |
+
+### `invalid` 是运行时的垃圾桶，不是模型点的工具
+
+运行时（`opencode-ai@1.19.4`）内置一个叫 `invalid` 的工具，**描述就是 "Do not use"**，
+且被从模型可见的 `activeTools` 里摘掉 —— 模型不可能点名它。它只在
+`experimental_repairToolCall` 兜底时出现：模型点了工具表里没有的名字（`NoSuchToolError`）
+或参数过不了 schema（`InvalidToolInputError`），运行时就把那次调用改写成
+`tool: "invalid"`，并把真相塞进 `state.input = {tool, error}`。
+
+所以 `part.tool === 'invalid'` 只说明"模型这一次没按信封说话"，**不说明它动了原生工具**。
+旧围栏只豁免 `StructuredOutput` 与 `status:'error'`，于是把 `invalid` 算成原生工具，
+报出自相矛盾的 `native_tool_activity ... tool "invalid"`，并把一个本来会自纠成功的回合判死。
+
+现在按来源分开处置（`bridge.ts::readInvalidToolActivity` / `classifyInvalidTool`）：
+
+| 来源 | 含义 | 报错 |
+| --- | --- | --- |
+| `NoSuchToolError` | 模型把**外部工具名**当成原生工具发了 | `envelope_violation: … called tool "X" as a native tool …` |
+| `InvalidToolInputError` | 模型选对 `StructuredOutput`，参数过不了 schema | `envelope_violation: … envelope did not satisfy the schema …` |
+
+两者都是 `envelope_violation`（**不是** `native_tool_activity`），并且在探针里只缓 10 分钟、
+且**不**把模型降级成"纯对话"——它们反映的是我们的提示词与 schema，不是模型能力。
 
 ## 并发与配额
 
@@ -109,10 +131,17 @@ subscribe to OpenCode Go to keep going
 3. **流式是"一次性"的**：agent 不吐 token 流，整段答复在一个内容分片里发出，之后 `finish_reason`、usage 帧与 `[DONE]`。
 4. **采样参数不生效**：`temperature` / `max_tokens` 这些是网页端的对话参数，上游不认。
 5. **工具是否可用取决于模型**，所以每个模型先做一次"信封体检"：
-   - 探针用一个指令式提示（"调用 `probe_tool`"）并检查信封里有没有那个调用；
-   - 判定按原因给不同 TTL（成功/只是不听话 6 小时、限流 10 分钟、下线 1 小时），缓存落在
-     `~/.chat2api/opencode/probe-cache.json`，跨重启复用；
-   - 判定为"纯对话"的模型，请求路径就不给它工具清单（再给，它会转头去用原生工具）；
+   - 探针用一个指令式提示（"调用 `probe_tool`"）并检查信封里有没有那个调用。
+     **提示里必须写清信封形状**：运行时给 `format: json_schema` 的回合硬塞
+     `toolChoice: "required"`，只写"调用 X"会让模型直接发同名原生 function call，
+     被改写成 `invalid`，把一个本来能用的模型判成纯对话；
+   - 判定按原因给不同 TTL（成功/只是不听话 6 小时、限流 10 分钟、下线 1 小时）；
+     `unknown_tool_call` / `envelope_schema_mismatch` 只缓 **10 分钟**，因为它们反映
+     我们的提示与 schema、不是模型能力。缓存落在 `~/.chat2api/opencode/probe-cache.json`，
+     跨重启复用；
+   - 判定为"纯对话"的模型，请求路径就不给它工具清单（再给，它会转头去用原生工具）。
+     **例外**：上面那两个"我们自己的问题"不降级——把模型锁进无工具状态会让客户端
+     再也拿不到 `tool_calls`；
    - 判定为"会调工具"的模型，把客户端的工具清单按 Ferry 的措辞交给它；它若仍写了原生工具名，
      先纠正重试一次，仍不听话就把这类调用丢掉，只保留正文。
 
@@ -122,6 +151,13 @@ subscribe to OpenCode Go to keep going
    `const`、把该工具的参数 schema 直接内联；`tool_choice: required`（或指定函数）落成
    `minItems: 1`，`parallel_tool_calls: false` 落成 `maxItems: 1`，本轮不给工具则 `maxItems: 0`。
    模型编不出没提供的工具名，也编不出对不上的参数形状（见 `opencode/envelopeSchema.ts`）。
+
+   **但严格要有上限。** 运行时把 `format: json_schema` 的回合硬塞成
+   `toolChoice: "required"`，任何一处不满足都会被报成 `InvalidToolInputError` →
+   改写成 `invalid` → 整回合报废。所以对模型自然写出的**无害偏差**做兼容：
+   `required` 只强制 `name`（`arguments` 缺省时补 `{}`），顶层与每次调用的
+   `additionalProperties` 放行（多带一个 `reasoning`/`thought` 字段不值得判失败）。
+   真正守住的约束只有两条：**工具名是 `const`**、参数按内联 schema 校验。
 7. **免费模型清单会变**：清单来自本机运行时，只收**四个价格字段全 0** 的条目
    （含名字不带 free 但计费为 0 的 `big-pickle`）。点「更新模型」时，若运行时**还没起来**，
    会先跑一次 `models opencode --refresh` 把运行时包里的目录快照刷到最新（失败忽略）；

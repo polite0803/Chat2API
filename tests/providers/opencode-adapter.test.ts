@@ -198,3 +198,49 @@ test('the proxy hands the response back before the agent turn finishes', () => {
   assert.match(source, /void runTurn\(\)\.then\(/)
   assert.doesNotMatch(source, /const reply = await runTurn\(\)[\s\S]{0,200}request\.stream/)
 })
+
+test('系统提示把外部工具名钉在信封里，不邀请原生调用', () => {
+  const source = readFileSync(join(root, 'src/main/proxy/adapters/opencode.ts'), 'utf8')
+
+  // 回归：运行时会为 `format: json_schema` 的回合硬塞 toolChoice: "required"。
+  // 只写 "Available external tools: [...]" 会让模型直接发同名原生 function call，
+  // 那个名字不在运行时工具表里 → 被改写成 `invalid` → 整回合报废。
+  assert.doesNotMatch(source, /'Available external tools: '/)
+  assert.match(source, /External tools available inside the "calls" array/)
+  assert.match(source, /Never call a native tool whose name matches an external tool name/)
+  // 必须点明唯一可用的原生工具就是信封载体
+  assert.match(source, /The only native tool you may invoke is StructuredOutput/)
+})
+
+test('提示词/schema 类体检失败不降级成"纯对话"', () => {
+  const source = readFileSync(join(root, 'src/main/proxy/adapters/opencode.ts'), 'utf8')
+
+  // 这两种原因是我们自己的问题，把模型锁进无工具状态会让客户端再也拿不到 tool_calls
+  assert.match(source, /capability\.reason === 'unknown_tool_call'/)
+  assert.match(source, /capability\.reason === 'envelope_schema_mismatch'/)
+  assert.match(source, /keeping tools/)
+})
+
+test('隔离配置不再依赖已废弃的 agent.tools，并用 steps 给自纠留额度', () => {
+  const source = readFileSync(join(root, 'src/main/opencode/bridge.ts'), 'utf8')
+
+  // 运行时（opencode-ai@1.19.4）合并 agent 配置时不拷贝 `tools`，
+  // schema 里它也标着 @deprecated —— 挂着它只是给人"已经遮住了"的错觉。
+  assert.doesNotMatch(source, /NATIVE_TOOLS_DISABLED/)
+  assert.doesNotMatch(source, /tools:\s*NATIVE_TOOLS_DISABLED/)
+
+  // 纯对话 agent 一个 step 足够；带工具的 agent 要留一次自纠
+  assert.match(source, /steps: 1,/)
+  assert.match(source, /steps: MAX_AGENT_STEPS,/)
+  assert.match(source, /const MAX_AGENT_STEPS = 3/)
+})
+
+test('围栏先读信封再判定，且单独处理 invalid', () => {
+  const source = readFileSync(join(root, 'src/main/opencode/bridge.ts'), 'utf8')
+
+  // 信封必须先读出来，才能实现"有信封就放行"
+  const envelopeAt = source.indexOf('const envelope = reply.json?.info?.structured')
+  const fenceAt = source.indexOf('findNativeToolActivity(reply.json?.parts')
+  assert.ok(envelopeAt > 0 && fenceAt > 0)
+  assert.ok(envelopeAt < fenceAt, 'envelope must be read before the fence判定')
+})

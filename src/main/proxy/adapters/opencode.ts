@@ -217,21 +217,31 @@ export class OpencodeAdapter {
     const system = tools.length
       ? [
           request.system ?? '',
-          'The only native tool you may invoke is StructuredOutput for formatting the response. ' +
+          // 运行时给 `format: json_schema` 的回合硬塞 `toolChoice: "required"`，
+          // 所以模型**一定**会被逼着调一个工具。此时若把外部工具名平铺出来说
+          // "你可以调这些"，它会直接发同名原生 function call —— 那个名字不在
+          // 运行时的工具表里，会被改写成 `invalid`，整回合报废。
+          // 因此这里必须把"唯一可调的原生工具"和"外部工具名只能写在信封里"
+          // 两件事同时讲清楚，且把外部工具清单明确标成**信封内的数据**。
+          'The only native tool you may invoke is StructuredOutput, which carries the JSON response. ' +
           'All other native tools are forbidden; do not perform the external actions yourself.',
           'Ignore all native OpenCode environment details, including its working directory. ' +
           'They belong to the adapter, NOT the external client.',
-          'Choose actions ONLY from the external tools supplied in THIS request. Copy tool names and ' +
-          'argument field names exactly, including capitalization. Never substitute a native tool ' +
-          'for a supplied one, run a local command, or invent a tool.',
-          `Available external tools: ${JSON.stringify(
+          'Never call a native tool whose name matches an external tool name. An external tool name is ' +
+          'data that belongs inside the calls array, never a native function you invoke.',
+          'Copy external tool names and argument field names exactly, including capitalization. ' +
+          'Never substitute a native tool for a supplied one, run a local command, or invent a tool.',
+          `External tools available inside the "calls" array: ${JSON.stringify(
             tools.map(tool => ({
               name: tool.name,
               description: tool.description,
               parameters: tool.parameters,
             })),
           )}`,
-          'Return exactly one JSON object, no Markdown fences: {"content":"text or empty string","calls":[{"name":"tool name","arguments":{}}]}.',
+          'Return exactly one JSON object through StructuredOutput, no Markdown fences: ' +
+            '{"content":"text or empty string","calls":[{"name":"tool name","arguments":{}}]}. ' +
+            'Every entry of calls must be one of the external tool names listed above; ' +
+            'an empty calls array is valid when no external action is needed.',
           'The content field is the answer to the user. calls contains only external tool requests; ' +
           'never pretend they have executed.',
           'A returned call is a proposal, not a completed action. Only a matching external tool result ' +
@@ -255,18 +265,20 @@ export class OpencodeAdapter {
       request.signal,
     )
 
-    // 模型偶尔会写一个 OpenCode 原生工具名（例如 bash）：那是它想自己动手，
-    // 不能交给客户端执行。先纠正一次让它改口（Ferry 也是这么纠的），
-    // 仍然不听话就把这类调用丢掉，只保留正文。
+    // 模型偶尔会把一个外部工具名当成原生工具点下去（不是真的调了 bash，
+    // 而是发了一个运行时不认识的 function call）。运行时会先把那次调用改写成
+    // `invalid` 并重试一次；走到这里说明它仍把原生工具名写进了 replies。
+    // 先纠正一次让它改口（Ferry 也是这么纠的），仍然不听话就丢掉这类调用、只保留正文。
     const stray = reply.toolCalls.filter(call => !allowed.has(call.name))
     if (stray.length > 0 && tools.length > 0) {
       console.warn(
-        `[OpenCode] model ${request.model} asked for a native tool (${stray.map(call => call.name).join(', ')}); retrying with the external tool list`,
+        `[OpenCode] model ${request.model} asked for an unknown tool (${stray.map(call => call.name).join(', ')}); retrying with the external tool list`,
       )
       const correction =
         'Your previous response asked for a tool that is not available to you. ' +
-        'Reply again using only the external tools listed above, describing each call as ' +
-        '{"name":"tool name","arguments":{}} inside the calls array. ' +
+        `The ONLY native tool you may invoke is StructuredOutput. External tool names are data, ` +
+        `never native functions: write them as {"name":"tool name","arguments":{}} inside the calls array. ` +
+        `Allowed names in calls are exactly: ${[...allowed].join(', ')}. ` +
         'Do not run local commands and do not describe them as tool calls.'
       reply = await opencodeService.chat(
         {
@@ -289,6 +301,14 @@ export class OpencodeAdapter {
    * 体检过的模型才配带工具：判定是"纯对话"的模型再给工具清单，它会转头去用
    * OpenCode 的原生工具（bash 之类），那一回合既没有客户端要的调用、又白烧额度。
    * 没有判定就现探一次，判定结果带缓存，不会每条请求都探。
+   *
+   * 有两条判定**不构成"模型不会调工具"的证据**，所以不降级：
+   *  - `unknown_tool_call`：模型把外部工具名当成原生工具发了。这是我们列清单的方式
+   *    和运行时强制 `toolChoice: required` 合起来逼出来的，改的是提示词，不是模型；
+   *  - `envelope_schema_mismatch`：信封参数过不了我们那张 schema，该放宽的是 schema。
+   *
+   * 把这两种当成"纯对话"会让一次提示词缺陷把模型锁进无工具状态（TTL 期间每条
+   * 请求都不发工具清单），客户端再也拿不到 tool_calls —— 这正是要避免的事。
    */
   private async resolveTools(
     modelId: string,
@@ -303,6 +323,12 @@ export class OpencodeAdapter {
     }
 
     if (capability?.status === 'chat-only') {
+      if (capability.reason === 'unknown_tool_call' || capability.reason === 'envelope_schema_mismatch') {
+        console.warn(
+          `[OpenCode] model ${modelId} failed the envelope probe for a prompt/schema reason (${capability.reason}); keeping tools`,
+        )
+        return requested
+      }
       console.warn(
         `[OpenCode] model ${modelId} cannot express tool calls as an envelope (${capability.reason}); replying without tools`,
       )
