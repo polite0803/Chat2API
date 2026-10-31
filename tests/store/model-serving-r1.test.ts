@@ -599,20 +599,47 @@ test('R1-用户动作：停用/启用、removeModel、resetModels 的账本变�
   assert.deepEqual(overrides().um.excludedModels || [], [], '删除同步行不是停用，绝不写进 excludedModels')
 })
 
-test('R1-边界（钉住已知缺陷）：手坏的 overrides 记录（缺 excludedModels）会让 removeModel 抛 TypeError', () => {
+test('R1-边界：手坏的 overrides 记录（缺 excludedModels）被读取侧归一，四个写入口都不抛', () => {
   sm.clearAll()
   sm.addProvider(customProvider('pm', ['a', 'b']) as never)
   // 模拟一份被人手改过 / 由外部工具写坏的 data.json：这张表没有任何读取侧归一
-  // （`normalizeConfig` 只管 `config`），所以 `get*().push()` 直接撞在 undefined 上。
+  // （`normalizeConfig` 只管 `config`），所以写路径以前直接撞在 undefined 上。
   sm.getStore().set('userModelOverrides', { pm: { addedModels: [] } })
 
-  assert.throws(
-    () => sm.removeModel('pm', 'a'),
-    /Cannot read properties of undefined/,
-    '现状：src/main/store/store.ts:2233 用 `excludedModels.includes(...)`，缺键即抛；修好后本条会红，请改成断言写入成功',
+  // 删一个默认模型：以前 `excludedModels.includes()` 抛 TypeError，现在补全并写回。
+  sm.removeModel('pm', 'a')
+  assert.deepEqual(overrides().pm.excludedModels, ['a'], '缺键记录被补全，删除照常生效')
+  assert.deepEqual(
+    sm.getEffectiveModels('pm').map((m: any) => m.displayName),
+    ['b'],
+    '停用只作用于被删的那一行',
   )
-  // 同一份坏记录走「目录合并」那条路是安全的（`buildModelCatalogue` 有 `|| []` 兜底）。
-  assert.deepEqual(sm.getModelCatalogue('pm').map((m: any) => m.served), [true, true])
+
+  // 手加模型：以前 `addedModels.find()` 同样抛。
+  sm.addCustomModel('pm', { displayName: 'mine', actualModelId: 'mine-up' } as never)
+  assert.deepEqual(
+    sm.getEffectiveModels('pm').map((m: any) => m.displayName),
+    ['b', 'mine'],
+    '缺键记录上仍能手加模型',
+  )
+
+  // 批量停用/启用：以前 `applyServed(current.excludedModels || [])` 侥幸没炸，现在走同一口径。
+  sm.setModelsServed('pm', ['b'], false)
+  assert.deepEqual(overrides().pm.excludedModels.sort(), ['a', 'b'])
+  sm.setModelsServed('pm', ['b'], true)
+  assert.deepEqual(overrides().pm.excludedModels, ['a'])
+
+  // 在线同步：写回的记录必须是补全过的形态（`addedModels` 存在，`fetchedModels` 只在真的有时留）。
+  sm.applyFetchedModels('pm', [{ displayName: 'pm/synced', actualModelId: 'synced' }] as never)
+  assert.deepEqual(overrides().pm.addedModels, [{ displayName: 'mine', actualModelId: 'mine-up' }])
+  assert.deepEqual(overrides().pm.fetchedModels, [{ displayName: 'pm/synced', actualModelId: 'synced' }])
+
+  // 同一份坏记录走「目录合并」那条路本来就是安全的（`buildModelCatalogue` 有 `|| []` 兜底），
+  // 而补全后的记录在读侧表现一致：只有被停用的那一行是 false。
+  assert.deepEqual(
+    sm.getModelCatalogue('pm').map((m: any) => m.served),
+    [false, true, true, true],
+  )
 })
 
 test('R1-纯函数口径：served 只看 excluded，三种来源同一条规则（无第二条真值源）', async () => {

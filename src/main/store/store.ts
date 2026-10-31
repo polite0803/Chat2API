@@ -2073,6 +2073,34 @@ class StoreManager {
   }
 
   /**
+   * 一份 overrides 记录的**读取侧**归一。
+   *
+   * 这张表没有读取侧归一（`normalizeConfig` 只管 `config`），所以一份被人手改过、
+   * 或被外部工具写坏的 `data.json`（缺 `addedModels` / `excludedModels`）会让
+   * `removeModel` / `addCustomModel` 直接撞在 `undefined` 上抛 TypeError：用户在 UI 上
+   * 删一行模型，拿到的是「内部错误」而不是「删掉了」。读侧的
+   * {@link buildModelCatalogue} 有 `|| []` 兜底，所以只有写路径会炸。
+   * 补全只发生在内存里，写回时把补全后的形态一起落盘，等于一次自愈。
+   */
+  private normalizeOverrideRecord(record: unknown): ProviderModelOverrides {
+    const source =
+      record !== null && typeof record === 'object' && !Array.isArray(record)
+        ? (record as Partial<ProviderModelOverrides>)
+        : {}
+    const normalized: ProviderModelOverrides = {
+      ...source,
+      addedModels: Array.isArray(source.addedModels) ? source.addedModels : [],
+      excludedModels: Array.isArray(source.excludedModels) ? source.excludedModels : [],
+    }
+    // `fetchedModels` 只在真的是数组时才保留：类型上它是可选的，但 `...source` 会把
+    // 一份写坏的值原样带进来，而读侧的 `|| []` 兜不住 `find`/`filter` 之外的用法。
+    if (!Array.isArray(source.fetchedModels)) {
+      delete normalized.fetchedModels
+    }
+    return normalized
+  }
+
+  /**
    * 全部手工能力标注（providerId -> displayName -> hint）。
    *
    * 与 `userModelOverrides` 分开存储，所以模型列表同步、重置都不会碰它 ——
@@ -2193,15 +2221,12 @@ class StoreManager {
     }
 
     const overrides = this.getUserModelOverrides()
-    const current: ProviderModelOverrides = overrides[providerId] || {
-      addedModels: [],
-      excludedModels: [],
-    }
+    const current = this.normalizeOverrideRecord(overrides[providerId])
     this.setUserModelOverrides({
       ...overrides,
       [providerId]: {
         ...current,
-        excludedModels: applyServed(current.excludedModels || [], names, served),
+        excludedModels: applyServed(current.excludedModels, names, served),
       },
     })
 
@@ -2219,21 +2244,15 @@ class StoreManager {
 
     const before = new Set(this.getEffectiveModels(providerId).map(model => model.displayName))
     const overrides = this.getUserModelOverrides()
-
-    if (!overrides[providerId]) {
-      overrides[providerId] = {
-        addedModels: [],
-        excludedModels: [],
-      }
-    }
+    const current = this.normalizeOverrideRecord(overrides[providerId])
 
     const fetchedAt = Date.now()
-    overrides[providerId].fetchedModels = models.map(model => ({
+    current.fetchedModels = models.map(model => ({
       displayName: model.displayName,
       actualModelId: model.actualModelId,
     }))
-    overrides[providerId].fetchedAt = fetchedAt
-    this.setUserModelOverrides(overrides)
+    current.fetchedAt = fetchedAt
+    this.setUserModelOverrides({ ...overrides, [providerId]: current })
 
     const effectiveModels = this.getEffectiveModels(providerId)
     const addedCount = effectiveModels.filter(model => !before.has(model.displayName)).length
@@ -2249,14 +2268,9 @@ class StoreManager {
     
     const overrides = this.getUserModelOverrides()
     
-    if (!overrides[providerId]) {
-      overrides[providerId] = {
-        addedModels: [],
-        excludedModels: [],
-      }
-    }
+    const current = this.normalizeOverrideRecord(overrides[providerId])
 
-    const existingModel = overrides[providerId].addedModels.find(
+    const existingModel = current.addedModels.find(
       m => m.displayName === model.displayName || m.actualModelId === model.actualModelId
     )
     
@@ -2264,8 +2278,8 @@ class StoreManager {
       throw new Error(`Model with display name "${model.displayName}" or actual ID "${model.actualModelId}" already exists`)
     }
 
-    overrides[providerId].addedModels.push(model)
-    this.setUserModelOverrides(overrides)
+    current.addedModels.push(model)
+    this.setUserModelOverrides({ ...overrides, [providerId]: current })
 
     return this.getEffectiveModels(providerId)
   }
@@ -2285,31 +2299,22 @@ class StoreManager {
 
     const overrides = this.getUserModelOverrides()
     
-    if (!overrides[providerId]) {
-      overrides[providerId] = {
-        addedModels: [],
-        excludedModels: [],
-      }
-    }
+    const current = this.normalizeOverrideRecord(overrides[providerId])
 
     const defaultModels = provider.supportedModels || []
     const isDefaultModel = defaultModels.includes(modelName)
 
     if (isDefaultModel) {
-      if (!overrides[providerId].excludedModels.includes(modelName)) {
-        overrides[providerId].excludedModels.push(modelName)
+      if (!current.excludedModels.includes(modelName)) {
+        current.excludedModels.push(modelName)
       }
     } else {
-      overrides[providerId].addedModels = overrides[providerId].addedModels.filter(
-        m => m.displayName !== modelName
-      )
+      current.addedModels = current.addedModels.filter(m => m.displayName !== modelName)
       // Otherwise deleting a row that came from the last online sync would do nothing
-      overrides[providerId].fetchedModels = (overrides[providerId].fetchedModels || []).filter(
-        m => m.displayName !== modelName
-      )
+      current.fetchedModels = (current.fetchedModels || []).filter(m => m.displayName !== modelName)
     }
 
-    this.setUserModelOverrides(overrides)
+    this.setUserModelOverrides({ ...overrides, [providerId]: current })
 
     return this.getEffectiveModels(providerId)
   }
