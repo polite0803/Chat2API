@@ -72,8 +72,11 @@ interface DashboardRequestLog {
   status: 'success' | 'error'
   statusCode: number
   model: string
+  actualModel?: string
   providerId?: string
   providerName?: string
+  accountId?: string
+  accountName?: string
   modelName?: string
   latency: number
   userInput?: string
@@ -90,6 +93,8 @@ const convertRequestLogsToActivities = (logs: DashboardRequestLog[]): ActivityIt
       timestamp: log.timestamp,
       providerName: log.providerName,
       modelName: log.model,
+      actualModel: log.actualModel,
+      accountName: log.accountName,
       latency: log.latency,
       statusCode: log.statusCode,
     }

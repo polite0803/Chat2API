@@ -11,6 +11,8 @@ export interface ActivityItem {
   timestamp: number
   providerName?: string
   modelName?: string
+  actualModel?: string
+  accountName?: string
   latency?: number
   statusCode?: number
 }
@@ -117,6 +119,18 @@ export function RecentActivity({
                   <>
                     <span>·</span>
                     <span>{item.providerName}</span>
+                  </>
+                )}
+                {item.actualModel && (
+                  <>
+                    <span>·</span>
+                    <span className="font-mono">{item.actualModel}</span>
+                  </>
+                )}
+                {item.accountName && (
+                  <>
+                    <span>·</span>
+                    <span>{item.accountName}</span>
                   </>
                 )}
                 {item.latency !== undefined && (

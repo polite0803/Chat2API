@@ -122,7 +122,7 @@ export function Dashboard() {
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <StatsCard
           title={t('dashboard.totalRequests')}
           value={stats.totalRequests.toLocaleString()}
@@ -151,21 +151,23 @@ export function Dashboard() {
             label: t('dashboard.vsYesterday'),
           }}
         />
-        <StatsCard
-          title={t('dashboard.activeAccountCount')}
-          value={stats.activeAccounts}
-          icon={Users}
-          trend={{
-            value: stats.accountsTrend,
-            label: t('dashboard.vsYesterday'),
-          }}
-        />
       </div>
-
-      {/* Token 面板独立一行：它有两行口径（上游真值 / 本地估算），塞进
-          单值 StatsCard 会强迫把两个不可相加的数合并成一个。 */}
-      <div className="mt-4">
-        <TokenUsageCard usage={tokenUsage} />
+      {/* Row with Active Accounts (clickable) and Token Usage */}
+      <div className="mt-4 flex flex-col gap-4 lg:flex-row">
+        <div className="cursor-pointer" onClick={handleAddAccount}>
+          <StatsCard
+            title={t('dashboard.activeAccountCount')}
+            value={stats.activeAccounts}
+            icon={Users}
+            trend={{
+              value: stats.accountsTrend,
+              label: t('dashboard.vsYesterday'),
+            }}
+          />
+        </div>
+        <div className="flex-1">
+          <TokenUsageCard usage={tokenUsage} />
+        </div>
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
