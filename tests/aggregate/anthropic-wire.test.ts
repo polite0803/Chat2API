@@ -151,3 +151,84 @@ test('the SSE stream is re-emitted as OpenAI chunks with exactly one [DONE]', as
   assert.equal(final.choices[0].finish_reason, 'tool_calls')
   assert.deepEqual(final.usage, { prompt_tokens: 5, completion_tokens: 4, total_tokens: 9 })
 })
+
+/** Drives a raw Anthropic SSE script through convertAnthropicStream; returns raw `data:` payloads. */
+async function runStream(events: string[]): Promise<string[]> {
+  const source = new PassThrough()
+  const output = convertAnthropicStream(source, 'anthropic/claude')
+  const frames: string[] = []
+  output.on('data', (chunk: Buffer) => frames.push(chunk.toString()))
+  const done = new Promise<void>(resolve => output.on('end', resolve))
+  for (const event of events) source.write(event)
+  source.end()
+  await done
+  return frames.join('').split('\n\n').filter(Boolean).map(frame => frame.replace(/^data: /, ''))
+}
+
+const MESSAGE_START = 'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":5,"output_tokens":0}}}\n\n'
+const toolStart = (id: string, name: string) =>
+  `event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"${id}","name":"${name}"}}\n\n`
+const toolDelta = (partial: string) =>
+  `event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":${JSON.stringify(partial)}}}\n\n`
+const toolStop = 'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n'
+
+test('stream cut before stop_reason: the half tool call is dropped and finish upgrades to length', async () => {
+  const payloads = await runStream([
+    MESSAGE_START,
+    toolStart('tool_1', 'Bash'),
+    toolDelta('{"command":"ls -la"}'),
+    toolStop,
+    // no message_delta: upstream died here
+  ])
+  const chunks = payloads.filter(p => p !== '[DONE]').map(p => JSON.parse(p))
+
+  const toolChunks = chunks.filter(c => c.choices?.[0]?.delta?.tool_calls)
+  assert.equal(toolChunks.length, 0, `截断流不得下发任何 tool_calls 分片，收到 ${JSON.stringify(toolChunks)}`)
+  const final = chunks[chunks.length - 1]
+  assert.equal(final.choices[0].finish_reason, 'length')
+})
+
+test('partial JSON args with stop_reason tool_use: the call is dropped and finish upgrades to length', async () => {
+  const payloads = await runStream([
+    MESSAGE_START,
+    toolStart('tool_1', 'Bash'),
+    toolDelta('{"command":"ls'),
+    toolStop,
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":4}}\n\n',
+  ])
+  const chunks = payloads.filter(p => p !== '[DONE]').map(p => JSON.parse(p))
+
+  const toolChunks = chunks.filter(c => c.choices?.[0]?.delta?.tool_calls)
+  assert.equal(toolChunks.length, 0)
+  const final = chunks[chunks.length - 1]
+  assert.equal(final.choices[0].finish_reason, 'length')
+})
+
+test('max_tokens landing mid-call: the call is dropped and finish stays length', async () => {
+  const payloads = await runStream([
+    MESSAGE_START,
+    toolStart('tool_1', 'Bash'),
+    toolDelta('{"command":"for i in 1 2 3'),
+    toolStop,
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":4096}}\n\n',
+  ])
+  const chunks = payloads.filter(p => p !== '[DONE]').map(p => JSON.parse(p))
+
+  const toolChunks = chunks.filter(c => c.choices?.[0]?.delta?.tool_calls)
+  assert.equal(toolChunks.length, 0)
+  const final = chunks[chunks.length - 1]
+  assert.equal(final.choices[0].finish_reason, 'length')
+})
+
+test('an upstream error event terminates the stream: one error frame, one [DONE], no trailing finish', async () => {
+  const payloads = await runStream([
+    MESSAGE_START,
+    'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n',
+  ])
+
+  assert.equal(payloads.filter(p => p === '[DONE]').length, 1, '必须恰好一个 [DONE]')
+  const parsed = payloads.filter(p => p !== '[DONE]').map(p => JSON.parse(p))
+  const errorFrame = parsed.find(p => p.error)
+  assert.equal(errorFrame?.error?.type, 'overloaded_error')
+  assert.equal(parsed.filter(p => p.choices?.[0]?.finish_reason != null).length, 0, 'error 终止后不得再发 finish 帧')
+})

@@ -76,6 +76,11 @@ export interface ChatCompletionRequest {
   stream?: boolean
   stop?: string | string[]
   max_tokens?: number
+  /**
+   * Codex 系客户端（DSH、Codex CLI）唯一的输出上限写法，`max_tokens` 是被废弃的旧名。
+   * 入口由 `normalizeOutputCap` 折进 `max_tokens`，下游只读那一个字段。
+   */
+  max_completion_tokens?: number
   presence_penalty?: number
   frequency_penalty?: number
   logit_bias?: Record<string, number>

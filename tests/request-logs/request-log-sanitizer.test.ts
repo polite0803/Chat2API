@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import type { RequestLogEntry } from '../../src/main/store/types.ts'
 import type { RequestLogConfig } from '../../src/main/requestLogs/types.ts'
+import { normalizeRequestLogConfig } from '../../src/main/requestLogs/types.ts'
 import {
   sanitizeRequestLogEntry,
   sanitizeRequestLogUpdates,
@@ -106,4 +107,15 @@ test('trimRequestLogsToMaxEntries keeps the newest entries only', () => {
     trimmed.map((entry) => entry.id),
     ['2', '3'],
   )
+})
+
+test('normalizeRequestLogConfig：默认 maxBodyChars 抬到 200000，存量旧默认随升级迁移', () => {
+  // 全新配置：直接拿新默认（用户要求 2026-10-30，8000 排查 1.8MB 请求体时不够用）
+  assert.equal(normalizeRequestLogConfig().maxBodyChars, 200_000)
+  // 升级迁移：store 里停留在旧默认值 8000 的视为「从未自定义」，提到新默认 ——
+  // 否则改默认值对老用户永远不生效（store 里早已落盘 8000）
+  assert.equal(normalizeRequestLogConfig({ maxBodyChars: 8000 }).maxBodyChars, 200_000)
+  // 用户主动改过的值不得被吞掉
+  assert.equal(normalizeRequestLogConfig({ maxBodyChars: 4096 }).maxBodyChars, 4096)
+  assert.equal(normalizeRequestLogConfig({ maxBodyChars: 500_000 }).maxBodyChars, 500_000)
 })

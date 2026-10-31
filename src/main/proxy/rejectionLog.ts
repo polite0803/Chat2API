@@ -44,3 +44,35 @@ export function requestedModelOf(body: unknown): string {
   const model = (body as { model?: unknown }).model
   return typeof model === 'string' ? model : ''
 }
+
+/**
+ * The same refusal row, built from a live Koa context. `server.ts` inlines this
+ * for the refusals its own middleware sees (bad key, unmounted path); a route
+ * that answers mid-handler (`route_disabled`) calls it instead, so every
+ * refusal shares one format and one stats path. Kept pure (no store import) so
+ * `node --test` can exercise it without an Electron runtime.
+ */
+export function rejectionEntryFromContext(
+  ctx: {
+    method: string
+    path: string
+    state?: { startedAt?: unknown }
+    request?: { body?: unknown }
+  },
+  statusCode: number,
+  code: string,
+  message: string,
+): Omit<RequestLogEntry, 'id'> {
+  const startedAt = typeof ctx.state?.startedAt === 'number' ? ctx.state.startedAt : Date.now()
+
+  return buildRejectionLogEntry({
+    method: ctx.method,
+    path: ctx.path,
+    statusCode,
+    code,
+    message,
+    startedAt,
+    now: Date.now(),
+    model: requestedModelOf(ctx.request?.body),
+  })
+}

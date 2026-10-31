@@ -67,6 +67,7 @@ import {
   errorDetail,
   httpErrorCode,
   isTransportError,
+  requiredArgsToolsOption,
   serializeMessages,
 } from './openai-compat.js'
 
@@ -864,6 +865,9 @@ export class ClineAdapter extends LlmAdapter {
       ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
       // 旁路观测网关路由元数据（真正服务这笔请求的上游渠道）。
       ...onFrame === undefined ? {} : { onFrame },
+      // 「必填参数工具 + 零参数」判据：finish 报 max-tokens 丢弃重试，
+      // 不放行 `{}` 伪合法调用（2026-10-31 用户报障，见 openai-compat.ts）。
+      ...requiredArgsToolsOption(options.tools),
     })
   }
 

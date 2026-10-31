@@ -33,6 +33,35 @@ interface ToolState {
   id: string
   name?: string
   arguments: string
+  /**
+   * 客户端侧的 `tool_calls[].index`（**按首次出现顺序的密集序号** 0,1,2…）。
+   *
+   * 与 DSH 的内部块 index（`chunk.index`）**必须解耦**：内部 index 是
+   * reasoning / text / tool-call 各类块**共用**一个计数器（openai-compat 的
+   * `nextIndex++`、minimax 的 Anthropic content_block index 同理）。2026-10-31
+   * 用户报障（本机 Qoder CN，`mcp_list` + `{}` 合法输入被拦）：「思考块(0) +
+   * 工具块(1)」的响应把 `tool_calls` 以 `index:1` 凭空下发（没有 0），
+   * Qoder 的 StreamAdapter 严格校验 wire 索引，直接判
+   * `MALFORMED_TOOL_CALL_STREAM: incomplete_tool_replaced` 把整个 turn 打死
+   * （用户看到 "Request cancelled during pre-tool-use hook"）。OpenAI 规范里
+   * `index` 是工具调用在 tool_calls 数组里的**位置**，与内容块序号无关 ——
+   * 投影边界必须重编号。
+   */
+  wireIndex: number
+  /**
+   * `id`/`type` 是否已随首分片下发给客户端。
+   *
+   * OpenAI 流式规范：tool_calls 分片的 `id`/`type`/`name` 只随**首个**分片
+   * 出现，后续分片只带 `index` + `function.arguments` 增量。2026-10-31 用户
+   * 报障（第七轮，本机 Qoder CN 02:59:45 `incomplete_tool_replaced,
+   * wireIndex:0, existingInternal:1`）：投影此前给**每个**分片都重复携带完整
+   * id+name，Qoder 的 StreamAdapter 把「带 id 的分片」当成一次**新工具调用
+   * 宣告** —— 第二个宣告到达时替换掉还在累积参数的第一个，整个 turn 被判
+   * 畸形报废。宽容客户端（Trae CN）按 id 去重所以从不报错。
+   */
+  announced: boolean
+  /** `name` 是否已下发（上游可能把 name 放在 id 之后的分片里，需补发一次）。 */
+  nameAnnounced: boolean
 }
 
 interface Accumulated {
@@ -82,11 +111,13 @@ function line(value: unknown): string {
   return `data: ${JSON.stringify(value)}\n\n`
 }
 
-function baseChunk(id: string, model: string, delta: Record<string, unknown>, finish?: string): Record<string, unknown> {
+function baseChunk(id: string, model: string, delta: Record<string, unknown>, finish?: string, created?: number): Record<string, unknown> {
   return {
     id,
     object: 'chat.completion.chunk',
-    created: Math.floor(Date.now() / 1000),
+    // created 由调用方冻结传入（OpenAI 全流共享同一个值）；缺省兜底现取，
+    // 仅供非流式辅助路径使用。
+    created: created ?? Math.floor(Date.now() / 1000),
     model,
     choices: [{ index: 0, delta, finish_reason: finish ?? null }],
   }
@@ -105,22 +136,38 @@ function consumeChunk(state: Accumulated, chunk: StreamChunk): Record<string, un
       state.reasoning += chunk.text
       return { delta: { reasoning_content: chunk.text } }
     case 'tool-call-delta': {
-      let tool = state.tools.get(chunk.index)
+      // 同 id 合并兜底（2026-10-31 Qoder invalid_tool_call_id）：个别上游会把
+      // 同一个调用的分片打在多个内部块 index 上（openai-compat 已在适配器侧
+      // 合并，这里兜住其余 Anthropic 形状适配器的同类形态）。同 id 只能是同一
+      // 次调用 —— tool 结果按 id 配对，复用 id 的「并行调用」本就配不了对。
+      const incomingId = String(chunk.id || '')
+      let tool = (incomingId.length > 0
+        ? [...state.tools.values()].find(existing => existing.id === incomingId)
+        : undefined) ?? state.tools.get(chunk.index)
       if (!tool) {
-        tool = { id: String(chunk.id), arguments: '' }
+        tool = { id: incomingId, arguments: '', wireIndex: state.tools.size, announced: false, nameAnnounced: false }
         state.tools.set(chunk.index, tool)
       }
-      tool.id = String(chunk.id || tool.id)
+      if (incomingId.length > 0) tool.id = incomingId
       if (chunk.name !== undefined) tool.name = chunk.name
       tool.arguments += chunk.argumentsDelta
+      // 首分片宣告：id/type 只随第一个分片下发，name 随第一个已知 name 的分片
+      // 下发（上游可能把 name 放在 id 之后的分片里）。后续分片只带 index +
+      // arguments 增量 —— 重复 id 会被严格客户端（Qoder StreamAdapter）当成
+      // 新宣告，替换掉还在累积参数的调用（见 ToolState.announced 注释）。
+      const first = !tool.announced && tool.id.length > 0
+      if (first) tool.announced = true
+      const withName = tool.name !== undefined && !tool.nameAnnounced
+      if (withName) tool.nameAnnounced = true
       return {
         delta: {
           tool_calls: [{
-            index: chunk.index,
-            id: tool.id,
-            type: 'function',
+            // 密集重编号（见 ToolState.wireIndex 注释）：内部块 index 与思考/文本
+            // 块共用计数器，直接透传会出现「单工具调用却 index:1」的规范外形状。
+            index: tool.wireIndex,
+            ...first ? { id: tool.id, type: 'function' as const } : {},
             function: {
-              ...tool.name === undefined ? {} : { name: tool.name },
+              ...withName ? { name: tool.name } : {},
               arguments: chunk.argumentsDelta,
             },
           }],
@@ -158,6 +205,12 @@ export async function* toOpenAiSse(
   suggest?: SuggestionHook,
 ): AsyncIterable<string> {
   const state: Accumulated = { content: '', reasoning: '', tools: new Map() }
+  // OpenAI 全流共享同一个 created（2026-10-31 审计项：每帧现取会跨秒不一致）。
+  const created = Math.floor(Date.now() / 1000)
+  // OpenAI 惯例首块 `delta:{role:"assistant",content:""}`（2026-10-31 审计项）：
+  // 官方流永远以它开场，严格客户端可能以此定位会话角色。惰性下发 —— 错误帧
+  // （choices:[]）与 usage 帧不需要它，首个内容/finish 帧之前发一次即可。
+  let roleAnnounced = false
   try {
     for await (const chunk of chunks) {
       const event = consumeChunk(state, chunk)
@@ -192,24 +245,29 @@ export async function* toOpenAiSse(
         yield 'data: [DONE]\n\n'
         return
       }
+      // Role 首块：惰性发一次（首个内容/finish 帧之前）。
+      if (!roleAnnounced) {
+        roleAnnounced = true
+        yield line(baseChunk(requestId, model, { role: 'assistant', content: '' }, undefined, created))
+      }
       if ('finish_reason' in event) {
-        yield line({ ...baseChunk(requestId, model, event.delta as Record<string, unknown>, event.finish_reason as string) })
+        yield line(baseChunk(requestId, model, event.delta as Record<string, unknown>, event.finish_reason as string, created))
       } else {
-        yield line(baseChunk(requestId, model, event.delta as Record<string, unknown>))
+        yield line(baseChunk(requestId, model, event.delta as Record<string, unknown>, undefined, created))
       }
     }
     if (state.finishReason === undefined) {
-      yield line({ id: requestId, object: 'chat.completion.chunk', model, choices: [], error: { message: 'upstream stream ended before finish', type: 'server_error', code: 'incomplete_stream' } })
+      yield line({ id: requestId, object: 'chat.completion.chunk', created, model, choices: [], error: { message: 'upstream stream ended before finish', type: 'server_error', code: 'incomplete_stream' } })
       yield 'data: [DONE]\n\n'
       return
     }
     if (state.usage !== undefined) {
-      yield line({ id: requestId, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model, choices: [], usage: usageJson(state.usage) })
+      yield line({ id: requestId, object: 'chat.completion.chunk', created, model, choices: [], usage: usageJson(state.usage) })
     }
     yield 'data: [DONE]\n\n'
   } catch (error) {
     const converted = failureToOpenAiError(error)
-    yield line({ id: requestId, object: 'chat.completion.chunk', model, choices: [], error: converted.body.error })
+    yield line({ id: requestId, object: 'chat.completion.chunk', created, model, choices: [], error: converted.body.error })
     yield 'data: [DONE]\n\n'
   }
 }

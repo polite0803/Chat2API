@@ -52,7 +52,7 @@ import {
   type OpencodeModelCapability,
 } from './opencode-capability.js'
 import { buildProxyDispatcher } from './opencode-proxy.js'
-import { consumeOpenAiSse, collectImages, httpErrorCode, serializeMessages } from './openai-compat.js'
+import { consumeOpenAiSse, collectImages, httpErrorCode, requiredArgsToolsOption, serializeMessages } from './openai-compat.js'
 import { registerAdapterIdempotent } from './llm-register-compat.js'
 import { translateReasoningEffort } from './reasoning-ladder.js'
 import { reportLedgerAccount } from './token-ledger.js'
@@ -612,6 +612,10 @@ export class OpencodeAdapter extends LlmAdapter {
       chunkTimeoutMs: OPENCODE.chatChunkTimeoutMs,
       ...options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {},
       restoreToolName: (name) => toolNameMap.get(name) ?? name,
+      // 「必填参数工具 + 零参数」判据：finish 报 max-tokens 丢弃重试，
+      // 不放行 `{}` 伪合法调用（2026-10-31 用户报障，见 openai-compat.ts）。
+      // 集合键是调用方名称，块名经 restoreToolName 还原后比对。
+      ...requiredArgsToolsOption(options.tools),
     })
   }
 }

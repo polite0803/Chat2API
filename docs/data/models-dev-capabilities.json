@@ -1,0 +1,1002 @@
+{
+  "source": "models.dev",
+  "url": "https://models.dev/api.json",
+  "asOf": "2026-10-31",
+  "note": "第三方社区目录的逐模型能力声明；只采 true（tools/reasoning）与显式输入模态/上下文。不是厂商口径。",
+  "entries": [
+    {
+      "entryId": "alibaba_cloud",
+      "modelsDevProviderId": "alibaba",
+      "baseUrl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "models": {
+        "qwen3.5-plus": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 1000000
+        },
+        "qwen3-coder-plus": {
+          "tools": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1048576
+        }
+      }
+    },
+    {
+      "entryId": "cline_pass",
+      "modelsDevProviderId": "cline-pass",
+      "baseUrl": "https://api.cline.bot/api/v1",
+      "models": {
+        "cline-pass/glm-5.2": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "cline-pass/kimi-k2.7-code": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 262144
+        },
+        "cline-pass/kimi-k2.6": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 262144
+        },
+        "cline-pass/deepseek-v4-pro": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "cline-pass/deepseek-v4-flash": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "cline-pass/mimo-v2.5": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "audio",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 1048576
+        },
+        "cline-pass/mimo-v2.5-pro": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1048576
+        },
+        "cline-pass/minimax-m3": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 1048576
+        },
+        "cline-pass/qwen3.7-max": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "cline-pass/qwen3.7-plus": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 1000000
+        },
+        "cline-pass/kimi-k3": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 1048576
+        }
+      }
+    },
+    {
+      "entryId": "deepseek",
+      "modelsDevProviderId": "deepseek",
+      "baseUrl": "https://api.deepseek.com",
+      "models": {
+        "deepseek-v4-pro": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1048576
+        },
+        "deepseek-v4-flash": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image"
+          ],
+          "vision": "yes",
+          "contextTokens": 1048576
+        },
+        "deepseek-v4-flash-vision-exp": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image"
+          ],
+          "vision": "yes",
+          "contextTokens": 1048576
+        }
+      }
+    },
+    {
+      "entryId": "glm-cn",
+      "modelsDevProviderId": "zhipuai-coding-plan",
+      "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+      "models": {
+        "glm-5.3": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "glm-5.3-flash": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video",
+            "pdf"
+          ],
+          "vision": "yes",
+          "contextTokens": 1000000
+        },
+        "glm-4.6v": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 128000
+        }
+      }
+    },
+    {
+      "entryId": "kilo",
+      "modelsDevProviderId": "kilo",
+      "baseUrl": "https://api.kilo.ai/api/gateway",
+      "models": {
+        "kilo-auto/free": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 256000
+        },
+        "nvidia/nemotron-3-ultra-550b-a55b:free": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        }
+      }
+    },
+    {
+      "entryId": "kimi_code",
+      "modelsDevProviderId": "kimi-code-plan-cn",
+      "baseUrl": "https://api.kimi.com/coding/v1",
+      "models": {
+        "k3": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 1048576
+        },
+        "kimi-for-coding": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 1048576
+        },
+        "kimi-for-coding-highspeed": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 262144
+        }
+      }
+    },
+    {
+      "entryId": "morph",
+      "modelsDevProviderId": "morph",
+      "baseUrl": "https://api.morphllm.com/v1",
+      "models": {
+        "morph-v3-large": {
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 262144
+        },
+        "morph-v3-fast": {
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 262144
+        },
+        "morph-dsv4flash": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1048576
+        }
+      }
+    },
+    {
+      "entryId": "nvidia_nim",
+      "modelsDevProviderId": "nvidia",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "models": {
+        "moonshotai/kimi-k2.6": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 262144
+        },
+        "nvidia/nemotron-3-ultra-550b-a55b": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        }
+      }
+    },
+    {
+      "entryId": "ollama_cloud",
+      "modelsDevProviderId": "ollama-cloud",
+      "baseUrl": "https://ollama.com/v1",
+      "models": {
+        "gpt-oss:120b": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 131072
+        },
+        "minimax-m3": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 512000
+        }
+      }
+    },
+    {
+      "entryId": "open_router",
+      "modelsDevProviderId": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "models": {
+        "openrouter/free": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image"
+          ],
+          "vision": "yes",
+          "contextTokens": 200000
+        }
+      }
+    },
+    {
+      "entryId": "opper",
+      "modelsDevProviderId": "opper",
+      "baseUrl": "https://api.opper.ai/v3/compat",
+      "models": {
+        "claude-sonnet-4-6": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "pdf"
+          ],
+          "vision": "yes",
+          "contextTokens": 1000000
+        }
+      }
+    },
+    {
+      "entryId": "orcarouter",
+      "modelsDevProviderId": "orcarouter",
+      "baseUrl": "https://api.orcarouter.ai/v1",
+      "models": {
+        "deepseek/deepseek-v4-flash-free": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        }
+      }
+    },
+    {
+      "entryId": "ovh",
+      "modelsDevProviderId": "ovhcloud",
+      "baseUrl": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+      "models": {
+        "gpt-oss-120b": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 131072
+        },
+        "gpt-oss-20b": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 131072
+        }
+      }
+    },
+    {
+      "entryId": "poolside",
+      "modelsDevProviderId": "poolside",
+      "baseUrl": "https://inference.poolside.ai/v1",
+      "models": {
+        "poolside/laguna-s-2.1": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1048576
+        },
+        "poolside/laguna-xs-2.1": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 262144
+        }
+      }
+    },
+    {
+      "entryId": "qwencloud",
+      "modelsDevProviderId": "alibaba-token-plan",
+      "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "models": {
+        "qwen3.8-max-preview": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 1000000
+        },
+        "qwen3.7-max": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "qwen3.7-plus": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 1000000
+        },
+        "qwen3.6-flash": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 1000000
+        },
+        "glm-5.2": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "deepseek-v4-pro": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        }
+      }
+    },
+    {
+      "entryId": "qwencloud_coding",
+      "modelsDevProviderId": "alibaba-coding-plan",
+      "baseUrl": "https://coding-intl.dashscope.aliyuncs.com/v1",
+      "models": {
+        "qwen3.5-plus": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 1000000
+        },
+        "kimi-k2.5": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 262144
+        },
+        "glm-5": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 202752
+        },
+        "MiniMax-M2.5": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 196608
+        },
+        "qwen3-coder-next": {
+          "tools": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 262144
+        },
+        "qwen3-coder-plus": {
+          "tools": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "glm-4.7": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 202752
+        }
+      }
+    },
+    {
+      "entryId": "sambanova",
+      "modelsDevProviderId": "sambanova",
+      "baseUrl": "https://api.sambanova.ai/v1",
+      "models": {
+        "Meta-Llama-3.3-70B-Instruct": {
+          "tools": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 131072
+        }
+      }
+    },
+    {
+      "entryId": "sensenova",
+      "modelsDevProviderId": "sensenova",
+      "baseUrl": "https://token.sensenova.cn/v1",
+      "models": {
+        "deepseek-v4-pro": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1048576
+        },
+        "deepseek-v4-flash": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "deepseek-v4.1-flash": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image"
+          ],
+          "vision": "yes",
+          "contextTokens": 1048576
+        },
+        "glm-5.2": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "kimi-k3": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image"
+          ],
+          "vision": "yes",
+          "contextTokens": 1048576
+        },
+        "sensenova-6.8-flash-lite": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image"
+          ],
+          "vision": "yes",
+          "contextTokens": 262144
+        }
+      }
+    },
+    {
+      "entryId": "siliconflow",
+      "modelsDevProviderId": "siliconflow",
+      "baseUrl": "https://api.siliconflow.com/v1",
+      "models": {
+        "deepseek-ai/DeepSeek-V4-Pro": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "deepseek-ai/DeepSeek-V4-Flash": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "deepseek-ai/DeepSeek-V3.2": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 164000
+        },
+        "deepseek-ai/DeepSeek-V3.2-Exp": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 164000
+        },
+        "deepseek-ai/DeepSeek-V3.1": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 164000
+        },
+        "deepseek-ai/DeepSeek-V3.1-Terminus": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 164000
+        },
+        "deepseek-ai/DeepSeek-R1": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 164000
+        },
+        "Qwen/Qwen3.5-397B-A17B": {
+          "tools": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 262144
+        },
+        "Qwen/Qwen3.5-122B-A10B": {
+          "tools": "yes",
+          "modalities": [
+            "text",
+            "image"
+          ],
+          "vision": "yes",
+          "contextTokens": 262144
+        },
+        "zai-org/GLM-5.1": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 205000
+        },
+        "zai-org/GLM-5": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 205000
+        },
+        "moonshotai/Kimi-K2.6": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image"
+          ],
+          "vision": "yes",
+          "contextTokens": 262000
+        },
+        "moonshotai/Kimi-K2.5": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image"
+          ],
+          "vision": "yes",
+          "contextTokens": 262000
+        },
+        "openai/gpt-oss-120b": {
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 131000
+        },
+        "MiniMaxAI/MiniMax-M2.5": {
+          "tools": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 197000
+        },
+        "inclusionAI/Ling-flash-2.0": {
+          "tools": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 131000
+        },
+        "Qwen/Qwen3-32B": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 131000
+        }
+      }
+    },
+    {
+      "entryId": "tokenrouter",
+      "modelsDevProviderId": "tokenrouter",
+      "baseUrl": "https://api.tokenrouter.com/v1",
+      "models": {
+        "z-ai/glm-5.3-free": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        }
+      }
+    },
+    {
+      "entryId": "wandb",
+      "modelsDevProviderId": "wandb",
+      "baseUrl": "https://api.inference.wandb.ai/v1",
+      "models": {
+        "openai/gpt-oss-20b": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 131072
+        }
+      }
+    },
+    {
+      "entryId": "xiaomi-tokenplan",
+      "modelsDevProviderId": "xiaomi-token-plan-sgp",
+      "baseUrl": "https://token-plan-sgp.xiaomimimo.com/v1",
+      "models": {
+        "mimo-v2.5-pro": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1048576
+        },
+        "mimo-v2.5": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "audio",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 1048576
+        }
+      }
+    },
+    {
+      "entryId": "zai",
+      "modelsDevProviderId": "zai-coding-plan",
+      "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+      "models": {
+        "glm-5.3": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "glm-5.3-flash": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video",
+            "pdf"
+          ],
+          "vision": "yes",
+          "contextTokens": 1000000
+        },
+        "glm-5.2": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "glm-5-turbo": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 200000
+        },
+        "glm-4.7": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 204800
+        }
+      }
+    },
+    {
+      "entryId": "zai_api",
+      "modelsDevProviderId": "zai",
+      "baseUrl": "https://api.z.ai/api/paas/v4",
+      "models": {
+        "glm-5.3": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "glm-5.3-flash": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video",
+            "pdf"
+          ],
+          "vision": "yes",
+          "contextTokens": 1000000
+        },
+        "glm-5.2": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 1000000
+        },
+        "glm-5.1": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 200000
+        },
+        "glm-5-turbo": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 200000
+        },
+        "glm-5": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 204800
+        },
+        "glm-4.7": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 204800
+        },
+        "glm-4.6v": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "vision": "yes",
+          "contextTokens": 128000
+        },
+        "glm-4.7-flash": {
+          "tools": "yes",
+          "reasoning": "yes",
+          "modalities": [
+            "text"
+          ],
+          "contextTokens": 200000
+        }
+      }
+    }
+  ]
+}

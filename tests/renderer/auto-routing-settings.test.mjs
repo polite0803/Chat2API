@@ -5,18 +5,45 @@ import { join } from 'node:path'
 
 const root = process.cwd()
 
-test('the settings panel reuses the shared auto-routing defaults instead of its own copy', () => {
-  const panel = readFileSync(
-    join(root, 'src/renderer/src/components/proxy/LoadBalanceConfig.tsx'),
-    'utf8',
-  )
+// 路由面板不再是一个文件：列表容器（LoadBalanceConfig.tsx）+ 每条路由与新建表单共用的
+// 字段子组件（ModelRouteFields.tsx）。钉点从「单文件」平移到「组件集」，
+// 下面每一条断言的语义都保持原样，只是检查范围变宽（更严），没有放宽任何一项。
+const ROUTE_PANEL_FILES = [
+  'src/renderer/src/components/proxy/LoadBalanceConfig.tsx',
+  'src/renderer/src/components/proxy/ModelRouteFields.tsx',
+]
 
+function readRoutePanel(relative) {
+  return readFileSync(join(root, relative), 'utf8')
+}
+
+// 组件集拼起来的文本：原来钉「面板」的那几条断言现在钉这一段
+const routePanel = ROUTE_PANEL_FILES.map(readRoutePanel).join('\n')
+
+test('the settings panel reuses the shared auto-routing defaults instead of its own copy', () => {
   // 两处各自维护默认值就会漂移：渲染层必须取共享常量
-  assert.match(panel, /DEFAULT_AUTO_ROUTING_CONFIG/)
-  assert.doesNotMatch(panel, /stickyMinutes:\s*30\b/)
+  assert.match(routePanel, /DEFAULT_AUTO_ROUTING_CONFIG/)
+  // 整个组件集都不许出现手抄的默认值（原断言只查一个文件，现在两个文件都查）
+  assert.doesNotMatch(routePanel, /stickyMinutes:\s*30\b/)
+  assert.doesNotMatch(routePanel, /(?:maxAttempts|stickyMinutes):\s*\d/)
   // 偏好选择器要列出全部共享枚举，而不是手写一份选项数组
-  assert.match(panel, /AUTO_PREFERENCES\.map/)
-  assert.match(panel, /id="auto-prefer"/)
+  assert.match(routePanel, /AUTO_PREFERENCES\.map/)
+
+  // prefer 下拉的 id 随路由动态化（同一张卡片里有多份控件组，静态 id 会撞车）。
+  // 等价迁移：仍然要求存在这个 id 前缀，并且 label 用 htmlFor 指向同一个模板值 ——
+  // 比原来的 /id="auto-prefer"/ 更严：光有 id 不够，还必须与 label 关联。
+  const preferLabelFor = routePanel.match(/htmlFor=\{`auto-prefer-\$\{([^}]+)\}`\}/)
+  const preferTriggerId = routePanel.match(/id=\{`auto-prefer-\$\{([^}]+)\}`\}/)
+  assert.ok(preferLabelFor, 'the preference select must carry a per-route auto-prefer id')
+  assert.ok(
+    preferTriggerId,
+    'the preference label must be linked to that control with htmlFor'
+  )
+  assert.equal(
+    preferLabelFor[1],
+    preferTriggerId[1],
+    'htmlFor and the control id must be built from the same per-route value'
+  )
 })
 
 test('every preference has a translation in both locales', () => {
@@ -34,5 +61,87 @@ test('every preference has a translation in both locales', () => {
     ]) {
       assert.equal(typeof messages.proxy?.[key], 'string', `${locale} is missing proxy.${key}`)
     }
+  }
+})
+
+// 新增覆盖：新建路由的表单与已有路由的编辑区必须复用同一份字段实现与同一份共享默认值，
+// 否则「加一个路由字段要改两处」的漂移又会回来。
+test('the create form and the per-route editor share one field component on the shared defaults', () => {
+  const container = readRoutePanel(ROUTE_PANEL_FILES[0])
+  const fields = readRoutePanel(ROUTE_PANEL_FILES[1])
+
+  // 初始值逐项来自共享常量，而不是子组件自己抄一份
+  for (const field of ['prefer', 'maxAttempts', 'stickyMinutes', 'poolStrategies']) {
+    assert.match(
+      fields,
+      new RegExp(`DEFAULT_AUTO_ROUTING_CONFIG\\.${field}\\b`),
+      `the route field defaults must read DEFAULT_AUTO_ROUTING_CONFIG.${field}`,
+    )
+  }
+
+  // 17 条策略 + 5 个预设的选择 UI 只存在于子组件里：容器再写一份就是重复实现
+  assert.match(fields, /AUTO_POOL_STRATEGIES\.filter/)
+  assert.match(fields, /AUTO_POOL_PRESETS\.map/)
+  assert.doesNotMatch(container, /AUTO_POOL_STRATEGIES|AUTO_POOL_PRESETS|AUTO_PREFERENCES/)
+
+  // 两处消费同一个子组件：新建表单一份、已有路由的编辑区一份
+  const usages = container.match(/<ModelRouteFields\b/g) ?? []
+  assert.equal(
+    usages.length,
+    2,
+    'the create form and the per-route editor must both render ModelRouteFields',
+  )
+})
+
+// 新增覆盖：路由面板的文案在双语里成对存在（与上面 prefer 四项的检查同形）。
+test('route copy exists in both locales', () => {
+  const keys = [
+    'modelRoutes',
+    'modelRoutesDesc',
+    'modelRoutesNew',
+    'modelRoutesEmpty',
+    'modelRoutesEmptyHelp',
+    'routesUnavailable',
+    'routesLoadFailed',
+    'routeNameLabel',
+    'routeNamePlaceholder',
+    'routeNameHelp',
+    'routeNameRequired',
+    'routeCreate',
+    'routeSaveChanges',
+    'routeEnabledSwitch',
+    'routeStrategy',
+    'routeStrategyHelp',
+    'routeRename',
+    'routeRenameHelp',
+    'routeDeleteConfirmTitle',
+    'routeDeleteWarning_auto',
+    'routeDeleteWarning_other',
+    'routeCreatedToast',
+    'routeSavedToast',
+    'routeUpdatedToast',
+    'routeDeletedToast',
+    'routeImmediateHelp',
+    'routeAttemptsSummary',
+    'routeStickySummary',
+  ]
+
+  for (const locale of ['zh-CN', 'en-US']) {
+    const messages = JSON.parse(
+      readFileSync(join(root, 'src/renderer/src/i18n/locales', `${locale}.json`), 'utf8'),
+    )
+    for (const key of keys) {
+      assert.equal(typeof messages.proxy?.[key], 'string', `${locale} is missing proxy.${key}`)
+    }
+  }
+
+  // 删除提示必须真的指出「不再广告 + 退回普通模型名解析」，两条语言都要
+  for (const locale of ['zh-CN', 'en-US']) {
+    const messages = JSON.parse(
+      readFileSync(join(root, 'src/renderer/src/i18n/locales', `${locale}.json`), 'utf8'),
+    )
+    assert.match(messages.proxy.routeDeleteWarning_auto, /\/v1\/models/)
+    assert.match(messages.proxy.routeDeleteWarning_auto, /auto/)
+    assert.match(messages.proxy.routeDeleteWarning_other, /\{\{name\}\}/)
   }
 })

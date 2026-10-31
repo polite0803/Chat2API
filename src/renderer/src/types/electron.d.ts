@@ -14,6 +14,7 @@ import type {
   AppConfig,
   AutoRoutingConfig,
   AutoPreference,
+  ModelRoute,
   AccountStatus,
   ProviderType,
   ProviderVendor,
@@ -29,6 +30,9 @@ import type {
   RequestLogEntry,
   AppLogTrendPoint,
   ModelsFetchFailure,
+  ModelCapabilityHint,
+  RoutePreviewResult,
+  RoutePreviewSample,
 } from '../../../shared/types'
 import type {
   AggregateDetail,
@@ -48,6 +52,11 @@ import type {
   ChannelRpcResult,
   ChannelView,
 } from '../../../shared/channels'
+import type {
+  RouteListResult,
+  RouteMutationResult,
+  RouteRemovalResult,
+} from '../../../shared/modelRouteName'
 
 export type { 
   Provider, 
@@ -65,6 +74,7 @@ export type {
   AppConfig,
   AutoRoutingConfig,
   AutoPreference,
+  ModelRoute,
   AccountStatus,
   ProviderType,
   ProviderVendor,
@@ -79,6 +89,9 @@ export type {
   CatalogueModel,
   RequestLogEntry,
   ModelsFetchFailure,
+  RouteListResult,
+  RouteMutationResult,
+  RouteRemovalResult,
 }
 
 export interface CustomProviderFormData {
@@ -160,6 +173,14 @@ interface ProvidersAPI {
   resetModels: (providerId: string) => Promise<{
     success: boolean
     models: EffectiveModel[]
+    error?: string
+  }>
+  /** 全部手动标注，`providerId -> displayName -> hint`。 */
+  getModelMarks: () => Promise<Record<string, Record<string, ModelCapabilityHint>>>
+  /** `mark: null` 清除该模型的手动标注（回到自动解析结果）。 */
+  setModelMark: (providerId: string, displayName: string, mark: ModelCapabilityHint | null) => Promise<{
+    success: boolean
+    marks: Record<string, Record<string, ModelCapabilityHint>>
     error?: string
   }>
 }
@@ -326,6 +347,37 @@ interface ConfigAPI {
   get: () => Promise<AppConfig>
   update: (updates: Partial<AppConfig>) => Promise<boolean>
   onConfigChanged: (callback: (config: AppConfig) => void) => () => void
+}
+
+/**
+ * 多路由 CRUD（`AppConfig.routes`）。与主进程 `routes:list|create|update|delete`
+ * 一一对应；返回形状与 `ChannelsAPI` 同风格 —— 错误以可读文本到达界面，
+ * 永不 reject 成协议异常。
+ *
+ * 三个写方法成功时都带回**归一后的整表**（`routes`），所以写完不必再 `list()`；
+ * 主进程随后广播 `CONFIG_CHANGED`（载荷是带 `routes` 的完整 `AppConfig`），
+ * 订阅了 `config.onConfigChanged` 的页面会自动拿到同一份新表。
+ *
+ * 名字规则（`[a-z0-9_-]{1,64}`、大小写不敏感唯一、不与在服模型/别名冲突）与
+ * 池策略 id 都在主进程校验；UI 只做提示，不要把校验逻辑复制一份。
+ * `error.code` 是 i18n 取文案的键（`invalid_name` / `duplicate_name` /
+ * `conflicts_model` / `conflicts_alias` / `unknown_pool_strategy` / `not_found` /
+ * `invalid_input` / `storage_unavailable`），`message` 只是英文兜底。
+ */
+interface RoutesAPI {
+  /** 全部路由（含停用的），按名字排序。 */
+  list: () => Promise<RouteListResult>
+  create: (input: Partial<ModelRoute> & { name: string }) => Promise<RouteMutationResult>
+  /** `currentName` 是盘上的现名；`patch.name` 才是改名。 */
+  update: (currentName: string, patch: Partial<ModelRoute>) => Promise<RouteMutationResult>
+  /** 命名跟随 `providers.delete` / `accounts.delete`（通道是 `routes:delete`）。 */
+  delete: (name: string) => Promise<RouteRemovalResult>
+  /**
+   * 只算不写：按当前配置预览这条路由的候选池，逐模型给出最终状态
+   * （`kept` / `included` / `excluded` / `filtered` / `unavailable`）与能力来源。
+   * `sample` 是请求画像样本，缺省为纯文本、无工具、短请求。
+   */
+  preview: (route: ModelRoute, sample?: RoutePreviewSample) => Promise<RoutePreviewResult>
 }
 
 interface SessionConfig {
@@ -590,6 +642,7 @@ interface ElectronAPI {
   statistics: StatisticsAPI
   app: AppAPI
   config: ConfigAPI
+  routes: RoutesAPI
   session: SessionAPI
   managementApi: ManagementApiAPI
   contextManagement: ContextManagementAPI

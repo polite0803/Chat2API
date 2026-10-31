@@ -31,6 +31,16 @@ import type { AggregateEntry } from '../../../shared/aggregate'
  * documentation and declares that base URL, `agnes-2.0-flash` is marked 已废弃
  * there, and the served models are `agnes-3.0-flash` / `agnes-2.5-flash`
  * (`agnes-3.0-pro` is still 即将上线, so it is not listed).
+ *
+ * Five entries were ported from the freellmpool catalogue (0xzr/freellmpool,
+ * MIT) on 2026-10-30 after deduping against this registry — the other 18 of
+ * its 23 provider groups were already covered here. Pollinations and OVHcloud
+ * answer keyless (authKind 'none', autoProvision: true): startup creates their
+ * records enabled and merges the upstream model list. Requesty, Aion Labs and
+ * ModelScope need a user key and stay unprovisioned until saved. Their static
+ * baselines carry only the rows freellmpool marks enabled+auto; the disabled
+ * and pin-only rows stay out (noted per entry) and discovery can still merge
+ * them later. Base URLs and keyless model lists were verified live that day.
  */
 export const AGGREGATE_REGISTRY: AggregateEntry[] = [
   {
@@ -2992,6 +3002,212 @@ export const AGGREGATE_REGISTRY: AggregateEntry[] = [
       "muse-spark-1.3-contributor-free",
       "muse-spark-1.2-contributor-free",
       "jev-1.13-free"
+    ]
+  },
+  {
+    "id": "pollinations",
+    "name": "Pollinations",
+    "category": "free-tier",
+    "authKind": "none",
+    "baseUrl": "https://text.pollinations.ai/openai",
+    "wire": "openai-chat",
+    "models": [
+      {
+        "id": "openai-fast",
+        "name": "OpenAI Fast (GPT-OSS 20B)"
+      }
+    ],
+    "modelsUrl": "https://text.pollinations.ai/openai/models",
+    "notes": "Keyless anonymous tier over the OpenAI-compatible /openai endpoint (freellmpool port, checked live 2026-10-30: the anonymous listing serves openai-fast, GPT-OSS 20B relayed via OVH, with tool calls). The openai/gpt-oss/ovh-reasoning aliases resolve to the same backend, so they stay out of the baseline to keep one route per backend; discovery merges whatever the listing currently reports.",
+    "website": "https://pollinations.ai/",
+    "freeModelsHint": ["openai-fast"],
+    "autoProvision": true
+  },
+  {
+    "id": "ovh",
+    "name": "OVHcloud AI Endpoints",
+    "category": "free-tier",
+    "authKind": "none",
+    "baseUrl": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+    "wire": "openai-chat",
+    "models": [
+      {
+        "id": "Meta-Llama-3_3-70B-Instruct",
+        "name": "Meta Llama 3.3 70B Instruct"
+      },
+      {
+        "id": "Qwen3.5-397B-A17B",
+        "name": "Qwen3.5 397B A17B"
+      },
+      {
+        "id": "gpt-oss-120b",
+        "name": "GPT-OSS 120B"
+      },
+      {
+        "id": "Mistral-Small-3.2-24B-Instruct-2506",
+        "name": "Mistral Small 3.2 24B Instruct"
+      },
+      {
+        "id": "Mistral-Nemo-Instruct-2407",
+        "name": "Mistral Nemo Instruct 2407"
+      },
+      {
+        "id": "Qwen3.6-27B",
+        "name": "Qwen3.6 27B"
+      },
+      {
+        "id": "Qwen3.5-9B",
+        "name": "Qwen3.5 9B"
+      },
+      {
+        "id": "Qwen2.5-VL-72B-Instruct",
+        "name": "Qwen2.5 VL 72B Instruct"
+      },
+      {
+        "id": "Mistral-7B-Instruct-v0.3",
+        "name": "Mistral 7B Instruct v0.3"
+      },
+      {
+        "id": "gpt-oss-20b",
+        "name": "GPT-OSS 20B"
+      },
+      {
+        "id": "Qwen3-Coder-30B-A3B-Instruct",
+        "name": "Qwen3 Coder 30B A3B Instruct"
+      }
+    ],
+    "notes": "OVHcloud AI Endpoints keyless anonymous tier, rate-limited per IP (freellmpool port; chat model list verified live 2026-10-30). Qwen3-32B and Llama-3.1-8B-Instruct are disabled upstream and Qwen3.8-27B is kept pin-only after slow canaries, so none of them is in the baseline.",
+    "website": "https://www.ovhcloud.com/en/public-cloud/ai-endpoints/",
+    "freeModelsHint": [
+      "Meta-Llama-3_3-70B-Instruct",
+      "Qwen3.5-397B-A17B",
+      "gpt-oss-120b",
+      "Mistral-Small-3.2-24B-Instruct-2506",
+      "Mistral-Nemo-Instruct-2407",
+      "Qwen3.6-27B",
+      "Qwen3.5-9B",
+      "Qwen2.5-VL-72B-Instruct",
+      "Mistral-7B-Instruct-v0.3",
+      "gpt-oss-20b",
+      "Qwen3-Coder-30B-A3B-Instruct"
+    ],
+    "autoProvision": true
+  },
+  {
+    "id": "requesty",
+    "name": "Requesty",
+    "category": "free-tier",
+    "authKind": "apiKey",
+    "baseUrl": "https://router.requesty.ai/v1",
+    "wire": "openai-chat",
+    "models": [
+      {
+        "id": "google/gemma-4-31b-it",
+        "name": "Gemma 4 31B IT"
+      },
+      {
+        "id": "nvidia/muse-glimmer-30b",
+        "name": "Muse Glimmer 30B"
+      },
+      {
+        "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+        "name": "Nemotron 3 Nano Omni 30B (Reasoning)"
+      },
+      {
+        "id": "nvidia/nemotron-3-super-120b-a12b",
+        "name": "Nemotron 3 Super 120B"
+      },
+      {
+        "id": "nvidia/nemotron-3-ultra-550b-a55b",
+        "name": "Nemotron 3 Ultra 550B"
+      }
+    ],
+    "authUrl": "https://app.requesty.ai/api-keys",
+    "envVar": "REQUESTY_API_KEY",
+    "notes": "Zero-priced routes only (freellmpool port, prices re-checked 2026-09-25): 200 requests/day per account across the free models, no card needed. Ids carry no :free suffix and can be repriced under the same id — keep no paid credit on the account or set a key spend limit. mistral/leanstral-1-5 and nemotron-3.5-lightning-30b-a3b are listed at zero price upstream but stayed disabled pending canaries, so they are not in the baseline.",
+    "website": "https://www.requesty.ai/",
+    "freeModelsHint": [
+      "google/gemma-4-31b-it",
+      "nvidia/muse-glimmer-30b",
+      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b"
+    ]
+  },
+  {
+    "id": "aion",
+    "name": "Aion Labs",
+    "category": "free-tier",
+    "authKind": "apiKey",
+    "baseUrl": "https://api.aionlabs.ai/v1",
+    "wire": "openai-chat",
+    "models": [
+      {
+        "id": "aion-labs/aion-2.0",
+        "name": "Aion 2.0"
+      },
+      {
+        "id": "aion-labs/aion-3.0",
+        "name": "Aion 3.0"
+      },
+      {
+        "id": "aion-labs/aion-3.0-mini",
+        "name": "Aion 3.0 Mini"
+      },
+      {
+        "id": "aion-labs/aion-rp-llama-3.1-8b",
+        "name": "Aion RP Llama 3.1 8B"
+      }
+    ],
+    "authUrl": "https://api.aionlabs.ai",
+    "envVar": "AION_API_KEY",
+    "notes": "No-card free tier: 15 requests/minute and 20,000 tokens/day shared across Aion's priced models, renewing daily (freellmpool port, ids checked against the public /models endpoint 2026-07-16). aion-2.5 is disabled upstream, so it is not in the baseline.",
+    "website": "https://aionlabs.ai/"
+  },
+  {
+    "id": "modelscope",
+    "name": "ModelScope API Inference",
+    "category": "free-tier",
+    "authKind": "apiKey",
+    "baseUrl": "https://api-inference.modelscope.cn/v1",
+    "wire": "openai-chat",
+    "models": [
+      {
+        "id": "MiniMax/MiniMax-M3",
+        "name": "MiniMax M3"
+      },
+      {
+        "id": "Qwen/Qwen3.5-27B",
+        "name": "Qwen3.5 27B"
+      },
+      {
+        "id": "Qwen/Qwen3.5-35B-A3B",
+        "name": "Qwen3.5 35B A3B"
+      },
+      {
+        "id": "stepfun-ai/Step-3.7-Flash",
+        "name": "Step 3.7 Flash"
+      },
+      {
+        "id": "Tencent-Hunyuan/Hy3",
+        "name": "Hunyuan Hy3"
+      },
+      {
+        "id": "ZhipuAI/GLM-5.2",
+        "name": "GLM 5.2"
+      }
+    ],
+    "authUrl": "https://modelscope.cn/my/myaccesstoken",
+    "envVar": "MODELSCOPE_API_KEY",
+    "notes": "ModelScope (魔搭) API-Inference: 2,000 free calls/day total and up to 200 calls/day for one model; the free quota is dynamic with platform capacity (freellmpool port, official free-tier docs checked 2026-07-19). The key is the long-lived ModelScope access token. Domestic CN network friendly. deepseek-ai/DeepSeek-V4-Flash rows are disabled upstream and stay out of the baseline; discovery merges the rest.",
+    "website": "https://www.modelscope.cn/",
+    "freeModelsHint": [
+      "MiniMax/MiniMax-M3",
+      "Qwen/Qwen3.5-27B",
+      "Qwen/Qwen3.5-35B-A3B",
+      "stepfun-ai/Step-3.7-Flash",
+      "Tencent-Hunyuan/Hy3",
+      "ZhipuAI/GLM-5.2"
     ]
   },
   {

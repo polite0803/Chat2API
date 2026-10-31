@@ -11,12 +11,15 @@ import { requestForwarder } from '../forwarder'
 import { streamHandler } from '../stream'
 import { proxyStatusManager } from '../status'
 import { modelMapper } from '../modelMapper'
-import { autoRouter, isAutoModel } from '../autoRouter'
+import { autoRouter } from '../autoRouter'
 import type { AutoCandidate } from '../autoRouter'
 import type { AccountSelection, ForwardResult } from '../types'
 import { storeManager } from '../../store/store'
+import { resolveRouteRequest } from '../../store/modelRoutes'
+import { rejectionEntryFromContext } from '../rejectionLog'
 import { createTextCompletionChunkTransform, toTextCompletion } from '../utils/textCompletion'
-import { routeHeaderValue } from '../utils/headerValue'
+import { routeHeaderValue, toHeaderValue } from '../utils/headerValue'
+import { clientHeaderValue, identifyClientByUserAgent } from '../../../shared/clientProfile'
 
 const router = new Router({ prefix: '/v1' })
 
@@ -60,6 +63,9 @@ router.post('/completions', async (ctx: Context) => {
   const startTime = Date.now()
   const requestId = generateRequestId()
   ctx.set('X-Request-Id', requestId)
+  // 与 chat 路由同口径：UA 归类只进日志与响应头，不参与选路
+  const client = identifyClientByUserAgent(ctx.headers['user-agent'])
+  ctx.set('X-ModelPort-Client', clientHeaderValue(client))
 
   let request: CompletionRequest
   try {
@@ -101,14 +107,52 @@ router.post('/completions', async (ctx: Context) => {
 
   const config = storeManager.getConfig()
   const promptMessages = promptToMessages(request.prompt)
-  const autoDecision = isAutoModel(request.model) && config.autoRouting?.enabled !== false
+
+  // 路由优先 + 可读错误：判定与 chat 路由共用 `resolveRouteRequest`（见该函数注释），
+  // 两条入口不许对同一个名字给出两种答案。
+  const routeOutcome = resolveRouteRequest(config.routes, request.model)
+
+  // 路由名透出（与 chat 路由同因）：必须在任何 return 之前、也在流式首块 commit
+  // 之前写；值过 toHeaderValue。
+  if (routeOutcome.kind === 'routable' || routeOutcome.kind === 'disabled') {
+    ctx.set('X-ModelPort-Route-Name', toHeaderValue(routeOutcome.route.name))
+  }
+
+  // 与 chat 路由同因：停用路由的 404 到不了供应商，必须进请求日志留痕
+  // （`rejectionEntryFromContext` 与 server.ts 的 recordRejectedRequest 同一份条目形状）。
+  if (routeOutcome.kind === 'disabled') {
+    const disabledMessage = `Route '${routeOutcome.route.name}' is disabled`
+    ctx.status = 404
+    ctx.body = {
+      error: {
+        message: disabledMessage,
+        type: 'invalid_request_error',
+        param: 'model',
+        code: 'route_disabled',
+      },
+    }
+    const rejected = rejectionEntryFromContext(ctx, 404, 'route_disabled', disabledMessage)
+    rejected.client = client
+    storeManager.addRequestLog(rejected)
+    storeManager.recordRequestInStats(false, rejected.latency, rejected.model || undefined)
+    return
+  }
+
+  // `not-a-route`（含「点名 `auto` 而那条路由已被删除」）与 chat 路由同构：这里没有
+  // 分支，直接落到下面 `!autoDecision` 的具名模型路径，找不到模型就是既有的
+  // `503 no_available_account`。曾经的 `404 code:'route_not_found'` 与 URL 层未挂载
+  // 共用一个 code 装两种语义，已删（见 `resolveRouteRequest` 注释）。
+  const route = routeOutcome.kind === 'routable' ? routeOutcome.route : undefined
+  const autoDecision = route !== undefined
     ? autoRouter.select(
         {
           model: request.model,
           messages: promptMessages,
           stream: request.stream,
         },
-        config.loadBalanceStrategy
+        config.loadBalanceStrategy,
+        undefined,
+        route
       )
     : null
 
@@ -139,11 +183,17 @@ router.post('/completions', async (ctx: Context) => {
 
   const firstCandidate = autoDecision?.candidates[0]
 
+  // 跳过清单透出（与 chat 路由同因）：候选被前置剔除不能静默消失，503 也带得上
+  if (autoDecision && autoDecision.skipped.length > 0) {
+    ctx.set('X-ModelPort-Auto-Skipped', toHeaderValue(autoDecision.skipped.join(',')))
+  }
+
   if (autoDecision && !firstCandidate) {
     ctx.status = 503
     ctx.body = {
       error: {
-        message: 'No available model for auto routing',
+        // 带上路由名：多条路由都可能报这个错，客户端要能看出是哪条没选出候选
+        message: `No available model for route '${autoDecision.routeName}'`,
         type: 'service_unavailable_error',
         code: 'no_available_model',
       },
@@ -185,14 +235,16 @@ router.post('/completions', async (ctx: Context) => {
           actualModel,
           startTime,
           isStream: request.stream || false,
-        }
+        },
+        // 换家预算随 decision 走（与 chat 路由同因）
+        { baseCap: autoDecision.baseCap }
       )
 
       if (!outcome) {
         ctx.status = 503
         ctx.body = {
           error: {
-            message: 'Auto routing produced no forward result',
+            message: `Route '${autoDecision.routeName}' produced no forward result`,
             type: 'service_unavailable_error',
             code: 'no_available_model',
           },
@@ -246,7 +298,7 @@ router.post('/completions', async (ctx: Context) => {
     if (autoDecision) {
       autoRouter.clearAccountCooldown(account.id)
       if (chosenCandidate) {
-        autoRouter.rememberRoute(autoDecision.conversationKey, chosenCandidate)
+        autoRouter.rememberRoute(autoDecision.conversationKey, chosenCandidate, autoDecision.route)
       }
     }
 

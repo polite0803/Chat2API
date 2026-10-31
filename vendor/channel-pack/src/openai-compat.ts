@@ -17,6 +17,7 @@ import {
   isProseTruncatedByStopString,
   isReasoningLoopGuardEnabled,
   isTruncatedArguments,
+  isMissingRequiredArgs,
   normalizeToolArguments,
   readWithIdleTimeout,
   reasoningLoopFailure,
@@ -25,6 +26,7 @@ import {
   splitThinkTaggedContent,
   stripBareThinkCloseTagIfEnabled,
   stripCourseLeakFromHistoryContent,
+  unwrapActionParamsWrapper,
   stripCourseLeakIfEnabled,
 } from './sse.js'
 import { normalizeHarnessMessages } from './message-shape.js'
@@ -350,6 +352,69 @@ export interface ConsumeOpenAiSseOptions {
   restoreToolName?: (name: string) => string
   /** Provider-specific quota errors, including HTTP 200 error envelopes. */
   isQuotaError?: (data: Record<string, unknown>) => boolean
+  /**
+   * 声明了**必填参数**的工具名集合（**调用方名称**口径，与 `restoreToolName`
+   * 的输出对齐）。由 {@link requiredArgsToolsOption} 从请求的 `options.tools`
+   * 算出后传入。
+   *
+   * 见 {@link toolNamesRequiringArgs} 的长注释。缺省（未传或空集）时判据
+   * 整体关闭，finish 判定行为与旧版完全一致（fail-open）。
+   */
+  toolsRequiringArgs?: ReadonlyMap<string, readonly string[]>
+}
+
+/**
+ * 从调用方工具定义里挑出「声明了必填参数」的工具名。
+ *
+ * ## 为什么需要它（2026-10-31 用户报障）
+ *
+ * 上游 flash 模型偶发发出**零参数**的工具调用 —— 参数分片在流式下发中全丢
+ * （与 `isTruncatedArguments` 记录的「丢前缀」同族，只是丢得更彻底），或模型
+ * 本身就没给任何参数。空参数按既有规则补成 `{}` 放行后，harness 的 schema
+ * 校验会拒绝它并报
+ * `MCP Get tool parameter validation failed: params must have required property 'toolName'`
+ * 这类错误 —— 用户在客户端里看到一张报错卡片，而模型收到这种「莫名错误」后
+ * 还容易陷入重试循环（与残缺参数那一case同源，见 `isTruncatedArguments` 注释）。
+ *
+ * 「声明了必填参数的工具 + 空参数」**不可能是合法调用**（必填参数没有默认
+ * 途径），因此可以放心判为不完整，与残缺参数同策：finish 报 `max-tokens`
+ * 丢弃重试，而不是把 `{}` 放行给客户端。
+ *
+ * 2026-10-31 二次报障（02:23，qodercn/dfmodel）：模型给出了**部分参数** ——
+ * `{"description":"Show working tree status"}` 非空、合法 JSON，但缺必填键
+ * `command`，客户端照样报 `required property 'command'`。判据从「空参数」
+ * 升级为「**缺任一必填键**」：集合升级为 `Map<工具名, required键数组>`，
+ * 逐键核对存在性（present 即可，与 harness `required` 语义对齐），见
+ * `sse.ts` 的 `isMissingRequiredArgs`。
+ *
+ * 只收「`required` 为非空数组」的工具：无必填参数的工具（如 `mcp_list`）空
+ * 参数是**合法**的，绝不能拦。判据落在工具**声明**上而不是猜测模型意图上，
+ * 因此不会误伤任何能通过 schema 校验的调用。
+ */
+export function toolNamesRequiringArgs(
+  tools: readonly { name: string; parameters?: Record<string, unknown> }[] | undefined,
+): Map<string, readonly string[]> {
+  const map = new Map<string, readonly string[]>()
+  if (tools === undefined) return map
+  for (const tool of tools) {
+    const required = tool.parameters?.required
+    if (Array.isArray(required) && required.length > 0) {
+      map.set(tool.name, required as readonly string[])
+    }
+  }
+  return map
+}
+
+/**
+ * 适配器调用点通用的展开片段：有必填参数工具才传集合，否则完全省略字段
+ * （缺省 = 判据关闭）。各适配器的 `consumeOpenAiSse` 调用处统一
+ * `...requiredArgsToolsOption(options.tools)` 一行接入。
+ */
+export function requiredArgsToolsOption(
+  tools: readonly { name: string; parameters?: Record<string, unknown> }[] | undefined,
+): { toolsRequiringArgs?: ReadonlyMap<string, readonly string[]> } {
+  const map = toolNamesRequiringArgs(tools)
+  return map.size > 0 ? { toolsRequiringArgs: map } : {}
 }
 
 /**
@@ -440,6 +505,34 @@ export async function* consumeOpenAiSse(
   }>()
   const toolOrder: number[] = []
   const toolIds = new Map<number, string>()
+  /**
+   * 上游 call id → 已有块（2026-10-31 用户报障第三轮：本机 Qoder CN
+   * `invalid_tool_call_id`）。cline reflection 上游会把**同一个调用的分片打在
+   * 多个递增的 wire index 上**（实测 `details={"id":"call-03b5f25f…","index":2}`
+   * —— 前面的分片已在 index 0/1 交付执行，index 2 又带着同一个 id 冒出来）。
+   * 按 index 建块会把这一个调用拆成多个「同 id 工具调用」下发，Qoder 按 id
+   * 查重判流畸形、整个 turn 报废。同 id 只能是同一次调用（tool 结果按 id 配对，
+   * 复用 id 的「并行调用」本来就配不了对），因此按 id 合并进既有块，当作
+   * 参数的延续增量。
+   */
+  const blocksByCallId = new Map<string, { index: number; text: string; callId?: string; name?: string; announced: boolean }>()
+  /**
+   * 工具调用的流式 chunk 缓冲区（`block-start` + `tool-call-delta`）。
+   *
+   * ⚠️ **为什么不能边收边发**（2026-10-31 用户报障第四轮，本机 Qoder CN
+   * `incomplete_tool_replaced`）：必填参数/残缺参数等判据都在 **finish 时刻**
+   * 才能定性，而流式路径是直通转发 —— 分片一旦发出就收不回来。实测
+   * spark-x2.6 发出缺参调用后，客户端已收到调用分片、finish 又被升级成
+   * `max-tokens`（→ `finish_reason:"length"`），Qoder 的 StreamAdapter 把这个
+   * 「带着 length 收场的调用」判成流畸形，整个 turn 报废。
+   *
+   * 缓冲到收尾再决定：finish 是 `tool-calls`/`stop` → 按原顺序补发（工具调用
+   * 分片本来就聚在响应尾部，延迟可忽略）；命中 `max-tokens` 类判据 → 连同
+   * block-end 一起**丢弃**，客户端只看到正文 + 截断收场，按不完整响应重试，
+   * 残缺调用彻底不再外泄。与 `collectOpenAiCompletion`（聚合路径天然看不见
+   * 坏调用）在同一判据下对齐。
+   */
+  const deferredToolChunks: Array<Record<string, unknown>> = []
   let buffer = ''
   let streamEnded = false
   let finishReason: 'stop' | 'tool_calls' | 'length' | undefined
@@ -816,12 +909,18 @@ export async function* consumeOpenAiSse(
           const wireIndex = call.index ?? 0
           if (typeof call.id === 'string' && call.id.length > 0) toolIds.set(wireIndex, call.id)
           const callId = toolIds.get(wireIndex) ?? `call_${wireIndex}`
-          let block = toolCalls.get(wireIndex)
+          // 同 id 合并优先（见 blocksByCallId 注释）：id 已见过的分片一律并入
+          // 既有块，哪怕上游又换了个新 wire index。
+          let block = blocksByCallId.get(callId) ?? toolCalls.get(wireIndex)
           if (block === undefined) {
             block = { index: nextIndex++, text: '', callId, announced: false }
             toolCalls.set(wireIndex, block)
           }
-          block.callId = callId
+          blocksByCallId.set(callId, block)
+          // 宣告后 id 冻结：后续分片即使换 id 也不改写输出（id 抖动同样会让
+          // 严格客户端判 invalid_tool_call_id）。宣告前允许真实 id 稍后到并覆盖
+          // 合成的 `call_<n>` 兜底。
+          if (!block.announced) block.callId = callId
           // 只允许非空名字覆盖：后续分片带空串 "" 会清空首个分片解析出的工具名，
           // 表现为 `unknown tool ""`。
           if (typeof call.function?.name === 'string' && call.function.name.length > 0) {
@@ -850,23 +949,25 @@ export async function* consumeOpenAiSse(
             if (!hasUsableToolName(block.name)) continue
             block.announced = true
             toolOrder.push(block.index)
-            yield { type: 'block-start', index: block.index, blockType: 'tool-call' }
-            yield {
-              type: 'tool-call-delta',
-              index: block.index,
-              id: ToolCallId(callId),
-              name: restoreToolName(block.name!),
-              argumentsDelta: block.text,
-            }
+            deferredToolChunks.push(
+              { type: 'block-start', index: block.index, blockType: 'tool-call' },
+              {
+                type: 'tool-call-delta',
+                index: block.index,
+                id: ToolCallId(block.callId ?? callId),
+                name: restoreToolName(block.name!),
+                argumentsDelta: block.text,
+              },
+            )
             continue
           }
-          yield {
+          deferredToolChunks.push({
             type: 'tool-call-delta',
             index: block.index,
-            id: ToolCallId(callId),
+            id: ToolCallId(block.callId ?? callId),
             ...block.name !== undefined ? { name: restoreToolName(block.name) } : {},
             argumentsDelta: fragment,
-          }
+          })
         }
         if (data.usage) {
           const promptTokens = data.usage.prompt_tokens ?? 0
@@ -930,6 +1031,102 @@ export async function* consumeOpenAiSse(
    * 那种块**不会发射**，也就不是「被截断的正文」。
    */
   let emittedProse = ''
+  // 三种「不完整」都必须报告 max-tokens 而非 tool-calls：
+  // - 'length'：被 max_tokens 显式截断；
+  // - 未收到 finish_reason：连接被中途掐断，参数必然是半截 JSON；
+  // - 参数无法解析：分片丢失（并行工具调用时偶发）。
+  // 报告 tool-calls 会让 harness 执行缺参调用并报 schema 错误，
+  // 模型收到莫名错误后陷入重试循环；报告 max-tokens 则丢弃并重试。
+  // ── {action, params} 包装层解包（2026-10-31 Qoder 团队任务报障）────────
+  // 上游小模型会模仿 Qoder 提示词里工具调用的序列化形状，把参数包进
+  // {"action":"<工具名>","params":{…}} —— 客户端按平铺 schema 校验必报
+  // 「缺 required property」。必须在所有发弃判据**之前**解包：包装层会让
+  // emptyRequiredArgs 误判（required 键嵌在 params 里，顶层看不到）。
+  // 解包后还要把缓冲区里该块的旧增量分片换成一条合并增量（见 flush 处）。
+  const unwrappedToolBlocks = new Set<number>()
+  for (const block of toolCalls.values()) {
+    if (!hasUsableToolName(block.name)) continue
+    const unwrapped = unwrapActionParamsWrapper(restoreToolName(block.name!), block.text)
+    if (unwrapped !== block.text) {
+      block.text = unwrapped
+      unwrappedToolBlocks.add(block.index)
+    }
+  }
+  const argsTruncated = [...toolCalls.values()].some(block => isTruncatedArguments(block.text))
+  /**
+   * 「必填参数工具 + 零参数」判据（背景见 `toolNamesRequiringArgs` 的长注释）。
+   *
+   * ⚠️ 四个细节：
+   * - 名字口径必须过 `restoreToolName`：集合键是**调用方**名称，块上累积的是
+   *   wire 名称（opencode 有改名表）。未传 `restoreToolName` 时是恒等映射，
+   *   loomy / qoder / raccoon / cline 的 wire 名与调用方名一致，天然对齐。
+   * - 与 `isTruncatedArguments` **互斥**：残缺 JSON 走上面那条（原文保留 +
+   *   max-tokens，病因是分片丢了中后段）；这里只收「空串 / 显式 `{}`」两种
+   *   形态 —— 归一化后都是 `{}`，对必填参数工具都是**不可执行的伪合法调用**。
+   * - 名字不可用的块不参与：那些块本就走 `droppedUnnamedCalls` 的丢弃路径。
+   * - **fail-open**：调用方没传集合（或为空集）时整个判据关闭，绝不误伤。
+   */
+  const emptyRequiredArgs = config.toolsRequiringArgs !== undefined && config.toolsRequiringArgs.size > 0
+    && [...toolCalls.values()].some(block => {
+      if (!hasUsableToolName(block.name)) return false
+      const required = config.toolsRequiringArgs!.get(restoreToolName(block.name!))
+      return required !== undefined && isMissingRequiredArgs(block.text, required)
+    })
+  const incompleteTools = finishReason === undefined && toolOrder.length > 0
+  /**
+   * 连接是否**被掐断**：既没有显式 `finish_reason`，也没有收到 `[DONE]`。
+   *
+   * ⚠️ 这是「**没有任何报错就中断**」的根治点（用户报障，2026-09-23）。
+   * 旧判定把「未收到 finish_reason」与「有工具调用」绑在一起：
+   *
+   * ```ts
+   * finishReason === undefined && toolOrder.length > 0
+   * ```
+   *
+   * 于是**断在正文/即将调用工具时被静默接受** —— 直接报 `{kind:'stop'}`，
+   * 而 `stop` 的含义是「模型正常答完」。harness 认为本轮已完成，
+   * 任务就此中断且没有任何报错。
+   *
+   * 判据必须是「**连接结束的方式**」：
+   * - 收到 `[DONE]`（`streamEnded`）或显式 `finish_reason` → 上游宣告结束，合法；
+   * - **两者都没有** → 连接被掐断 → 报 `max-tokens`（不完整、可重试）。
+   *
+   * 真实会话证据：某步骤的 chunk 流只有
+   * `block-start → text-chunks → usage → block-end → finish{kind:'stop'}`，
+   * 正文以冒号「：」结尾（模型正要调工具），全程无 tool-call 分片，
+   * `outputTokens=319` 远未触上限 —— 典型的「断在即将调用工具处」。
+   */
+  const truncatedStream = finishReason === undefined && !streamEnded
+  // ── 缓冲工具调用分片的发弃决策（见 deferredToolChunks 注释）──────────
+  // 与 finish 归类同口径的 max-tokens 类判据：命中即整批丢弃（含 block-end，
+  // 否则客户端会收到「没有 start 的 end」，又是新畸形）。proseCutByStopString /
+  // 无名块兜底等分支命中时 toolOrder 为空，缓冲区本来就是空的，不必列入。
+  // ⚠️ 这些判据必须**先于**分片补发算出 —— 判定所需的流状态此刻已齐备，
+  // 提前声明只是重排，语义与收尾处的 finish 归类完全一致。
+  const discardDeferredToolChunks = finishReason === 'length'
+    || incompleteTools
+    || truncatedStream
+    || argsTruncated
+    || emptyRequiredArgs
+    || loopDetected
+  if (!discardDeferredToolChunks) {
+    for (const chunk of deferredToolChunks) {
+      // 被解包块的旧增量分片整体作废（分片边界是包装原文的），由下方
+      // 单条合并增量替换 —— 否则客户端累加出的参数仍是包装层。
+      if (chunk.type === 'tool-call-delta' && unwrappedToolBlocks.has(chunk.index as number)) continue
+      yield chunk
+    }
+    for (const index of toolOrder) {
+      if (!unwrappedToolBlocks.has(index)) continue
+      const block = [...toolCalls.values()].find(candidate => candidate.index === index)!
+      yield {
+        type: 'tool-call-delta',
+        index,
+        id: ToolCallId(block.callId ?? ''),
+        argumentsDelta: block.text,
+      }
+    }
+  }
   // 按创建顺序关闭每个块
   const textBlock = blocks.find(block => block.kind === 'text')
   for (const index of toolOrder) {
@@ -945,6 +1142,7 @@ export async function* consumeOpenAiSse(
     // 它此刻在承担判定职责。
     if (!hasUsableToolName(block.name)) continue
     blockCount += 1
+    if (discardDeferredToolChunks) continue
     yield {
       type: 'block-end',
       index,
@@ -1050,14 +1248,9 @@ export async function* consumeOpenAiSse(
       yield { type: 'block-end', index: reasoningBlock.index, block: { type: 'reasoning', text: cleanedReasoning } }
     }
   }
-  // 三种「不完整」都必须报告 max-tokens 而非 tool-calls：
-  // - 'length'：被 max_tokens 显式截断；
-  // - 未收到 finish_reason：连接被中途掐断，参数必然是半截 JSON；
-  // - 参数无法解析：分片丢失（并行工具调用时偶发）。
-  // 报告 tool-calls 会让 harness 执行缺参调用并报 schema 错误，
-  // 模型收到莫名错误后陷入重试循环；报告 max-tokens 则丢弃并重试。
-  const argsTruncated = [...toolCalls.values()].some(block => isTruncatedArguments(block.text))
-  const incompleteTools = finishReason === undefined && toolOrder.length > 0
+  // ⚠️ `argsTruncated` / `emptyRequiredArgs` / `incompleteTools` / `truncatedStream`
+  // 已前移至「缓冲发弃决策」处声明（流式分片必须先于 block-end 补发做发弃
+  // 判定），此处直接沿用同名常量，不再重复声明。
   /**
    * 是否丢弃过**名称不可用**的 tool-call 块（见上方 tool_calls 分支）。
    *
@@ -1100,31 +1293,6 @@ export async function* consumeOpenAiSse(
     }
     // 空响应体：连接建立后立刻结束，属不完整 → 交由下面的 max-tokens 处理。
   }
-
-  /**
-   * 连接是否**被掐断**：既没有显式 `finish_reason`，也没有收到 `[DONE]`。
-   *
-   * ⚠️ 这是「**没有任何报错就中断**」的根治点（用户报障，2026-09-23）。
-   * 旧判定把「未收到 finish_reason」与「有工具调用」绑在一起：
-   *
-   * ```ts
-   * finishReason === undefined && toolOrder.length > 0
-   * ```
-   *
-   * 于是**断在正文/即将调用工具时被静默接受** —— 直接报 `{kind:'stop'}`，
-   * 而 `stop` 的含义是「模型正常答完」。harness 认为本轮已完成，
-   * 任务就此中断且没有任何报错。
-   *
-   * 判据必须是「**连接结束的方式**」：
-   * - 收到 `[DONE]`（`streamEnded`）或显式 `finish_reason` → 上游宣告结束，合法；
-   * - **两者都没有** → 连接被掐断 → 报 `max-tokens`（不完整、可重试）。
-   *
-   * 真实会话证据：某步骤的 chunk 流只有
-   * `block-start → text-chunks → usage → block-end → finish{kind:'stop'}`，
-   * 正文以冒号「：」结尾（模型正要调工具），全程无 tool-call 分片，
-   * `outputTokens=319` 远未触上限 —— 典型的「断在即将调用工具处」。
-   */
-  const truncatedStream = finishReason === undefined && !streamEnded
 
   /**
    * 正文是否被**上游停止串**掐断（见 `isProseTruncatedByStopString`）。
@@ -1188,6 +1356,7 @@ export async function* consumeOpenAiSse(
     || incompleteTools
     || truncatedStream
     || argsTruncated
+    || emptyRequiredArgs
     || proseCutByStopString
     // 丢弃了无名 tool-call、且**没有**任何可用调用留下来时，本步否则会以
     // `stop` 收场 —— 模型本意要调工具、harness 却认为「正常答完了」，

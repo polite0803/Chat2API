@@ -8,6 +8,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { contextWindowOf } from '../../src/main/store/modelServing.ts'
+import { advertisedContextFloorOf, UNANNOTATED_CONTEXT_FLOOR } from '../../src/main/proxy/autoRouting.ts'
 
 // 能力表来自磁盘上的 JSON，所以"字段长歪"是真实输入而不是假想：这里刻意用
 // `Record<string, unknown>` 装它，再在唯一一处调用点转型，避免把脏数据写进类型里。
@@ -50,4 +51,23 @@ test('通配目录名也能命中', () => {
 test('多个模式同时命中时取最小窗口：少报可用，多报会被上游拒', () => {
   // `gpt-mini-x` 同时匹配 `gpt-*`(1M) 与 `gpt-mini-*`(262144)。
   assert.equal(window('gpt-mini-x'), 262144)
+})
+
+// 路由条目（`auto` 与用户自建路由）没有上游目录可查，广告的是**候选里最小的窗口**。
+// 它必须是下界：客户端按这个数安排发出的字节，而路由可能落到任何候选上。
+test('路由广告取候选最小窗口，未标注的按放行判据同一个下界参与', () => {
+  assert.equal(advertisedContextFloorOf([200_000, 32_768, 128_000]), 32_768)
+  assert.equal(advertisedContextFloorOf([200_000, undefined]), UNANNOTATED_CONTEXT_FLOOR)
+  // 标注值比下界还小时，下界不能把它顶上去
+  assert.equal(advertisedContextFloorOf([8_192, undefined]), 8_192)
+})
+
+test('0 / 负数 / 非数字的标注等同未标注（参与下界，绝不顶大）', () => {
+  assert.equal(advertisedContextFloorOf([0, 200_000]), UNANNOTATED_CONTEXT_FLOOR)
+  assert.equal(advertisedContextFloorOf([-1, 200_000]), UNANNOTATED_CONTEXT_FLOOR)
+  assert.equal(advertisedContextFloorOf(['abc' as unknown as number, 200_000]), UNANNOTATED_CONTEXT_FLOOR)
+})
+
+test('空池省略键：没有候选就没有可说的，不写默认窗口', () => {
+  assert.equal(advertisedContextFloorOf([]), undefined)
 })

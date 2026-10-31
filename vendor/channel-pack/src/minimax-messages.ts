@@ -65,7 +65,7 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { collectHarnessSystem, normalizeHarnessMessages } from './message-shape.js'
-import { resolveToolPairing } from './sse.js'
+import { resolveToolPairing, isMissingRequiredArgs, isTruncatedArguments } from './sse.js'
 
 /**
  * 构造 Anthropic Messages 请求体。
@@ -444,6 +444,17 @@ export interface ConsumeMinimaxSseOptions {
   body: ReadableStream<Uint8Array>
   /** 外部中止信号。 */
   signal?: AbortSignal
+  /**
+   * 声明了**必填参数**的工具 → 必填键数组（调用方名称口径）。
+   *
+   * 与 `openai-compat.ts` 的 `toolsRequiringArgs` 同一族判据（2026-10-31 用户
+   * 报障：`mcp_get` / `Activate Skill` / `Bash` 等必填参数工具被上游 flash
+   * 模型以**零参数**或**部分参数**（缺必填键）调用，放行后在客户端撞上
+   * schema 校验报错卡片）。「缺任一必填键」的调用不可能是合法调用，finish
+   * 由 `tool-calls` 升级为 `max-tokens` 丢弃重试。缺省/空表时判据关闭
+   * （fail-open）。
+   */
+  toolsRequiringArgs?: ReadonlyMap<string, readonly string[]>
 }
 
 /**
@@ -476,6 +487,20 @@ export async function* consumeMinimaxSse(
   let stopReason: unknown
   let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 }
   let sawAnyChunk = false
+  /** 已收口的工具调用（`content_block_stop` 时从 `blocks` 摘出），finish 判定用。 */
+  const completedToolCalls: { name: string; args: string }[] = []
+  /**
+   * 工具块分片的**发弃缓冲区**（2026-10-31 审计项，与 `openai-compat.ts` 的
+   * `deferredToolChunks` 同款病同款修法）：工具块的 block-start / delta /
+   * block-end 不直接下发，先进缓冲区，流读完后再按判据决定发还是弃。
+   *
+   * 为什么必须缓冲：缺参/残缺/流被掐断都要到 finish 时刻才能定性，而本
+   * 生成器是直通 yield —— 分片一旦发出就无法回收，客户端（Qoder 严格
+   * StreamAdapter）会收到「带着 length 收场的半截工具调用」判
+   * `incomplete_tool_replaced` 把整个 turn 报废。正文/思考块不缓冲：
+   * 它们的判据（空响应、循环）在 abort 时刻就已定性。
+   */
+  const deferredToolChunks: StreamChunk[] = []
 
   /**
    * 处理一行 SSE。
@@ -549,7 +574,8 @@ export async function* consumeMinimaxSse(
         const name = typeof b.name === 'string' ? b.name : ''
         blocks.set(index, { type: 'tool-call', text: '', toolId: id, toolName: name, toolArgs: '' })
         sawAnyChunk = true
-        yield { type: 'block-start', index, blockType: 'tool-call' }
+        // 工具块分片先缓冲（见 deferredToolChunks 注释），finish 时统一发弃。
+        deferredToolChunks.push({ type: 'block-start', index, blockType: 'tool-call' })
       }
       return
     }
@@ -567,7 +593,8 @@ export async function* consumeMinimaxSse(
         yield { type: 'reasoning-delta', index, text: d.thinking }
       } else if (d.type === 'input_json_delta' && typeof d.partial_json === 'string') {
         if (state !== undefined) state.toolArgs += d.partial_json
-        yield {
+        // 工具块分片先缓冲（见 deferredToolChunks 注释），finish 时统一发弃。
+        deferredToolChunks.push({
           type: 'tool-call-delta',
           index,
           id: ToolCallId(state?.toolId ?? ''),
@@ -578,7 +605,7 @@ export async function* consumeMinimaxSse(
           // 被网关判成「invalid function call」，整条会话报废。
           ...state?.toolName !== undefined && state.toolName.length > 0 ? { name: state.toolName } : {},
           argumentsDelta: d.partial_json,
-        }
+        })
       }
       // ⚠️ `signature_delta` 刻意**不处理**：它是 thinking 块的签名，
       // 不是正文。当初把它当文本会往回答里注入一串十六进制。
@@ -600,8 +627,15 @@ export async function* consumeMinimaxSse(
           name: state.toolName ?? '',
           arguments: state.toolArgs,
         }
+        completedToolCalls.push({ name: state.toolName ?? '', args: state.toolArgs })
       }
       blocks.delete(index)
+      // 工具块的 block-end 同样走缓冲（发弃时要连同 block-end 一起抑制，
+      // 否则客户端收到「没有 block-start 的 block-end」又是一种畸形）。
+      if (block.type === 'tool-call') {
+        deferredToolChunks.push({ type: 'block-end', index, block })
+        return
+      }
       yield { type: 'block-end', index, block }
       return
     }
@@ -648,5 +682,33 @@ export async function* consumeMinimaxSse(
     throw new Error('minimax: 模型未返回任何内容块')
   }
   yield { type: 'usage', usage }
-  yield { type: 'finish', reason: mapMinimaxStopReason(stopReason) }
+  const baseReason = mapMinimaxStopReason(stopReason)
+  /**
+   * 「缺任一必填键」判据（详见 `ConsumeMinimaxSseOptions.toolsRequiringArgs`
+   * 与 `openai-compat.ts` 的 `toolNamesRequiringArgs` 注释）。只在 `tool-calls`
+   * finish 上升级；残缺 JSON 归 `isMissingRequiredArgs` 内部的既有链路口径，
+   * 不在这里重复归因；无必填参数的工具空参数是合法的，绝不拦。
+   */
+  const emptyRequiredArgs = baseReason.kind === 'tool-calls'
+    && options.toolsRequiringArgs !== undefined && options.toolsRequiringArgs.size > 0
+    && completedToolCalls.some(call => {
+      if (call.name.length === 0) return false
+      const required = options.toolsRequiringArgs!.get(call.name)
+      return required !== undefined && isMissingRequiredArgs(call.args, required)
+    })
+  /**
+   * 截断判据（2026-10-31 审计补齐，与 `openai-compat.ts` 收尾发弃同口径）：
+   * - `argsTruncated`：已收口调用里有残缺 JSON（上游半途被掐）；
+   * - `truncatedStream`：上游没发 `message_delta`（stop_reason 缺失）就断了。
+   *   `mapMinimaxStopReason` 会把缺失编成 `stop`，但那只该对**空响应**兜底 ——
+   *   有工具分片却无 stop_reason 就是被掐断，按 `max-tokens` 收场让客户端重试。
+   */
+  const argsTruncated = completedToolCalls.some(call => isTruncatedArguments(call.args))
+  const truncatedStream = stopReason === undefined && deferredToolChunks.length > 0
+  const discardToolChunks = argsTruncated || emptyRequiredArgs || truncatedStream
+  if (!discardToolChunks) {
+    // 发：缓冲的工具块分片原序补发（必须在 finish 之前，块序才完整）。
+    for (const chunk of deferredToolChunks) yield chunk
+  }
+  yield { type: 'finish', reason: discardToolChunks ? { kind: 'max-tokens' } : baseReason }
 }

@@ -10,13 +10,14 @@ import {
 } from '../../src/main/providers/aggregate/registry.ts'
 
 test('the catalogue carries the entries that can actually be wired', () => {
-  assert.equal(AGGREGATE_REGISTRY.length, 74)
+  assert.equal(AGGREGATE_REGISTRY.length, 79)
   // 473 transcribed, minus 7 retired upstream on 2026-10-29 (3 anthropic + 4 xai),
   // minus the withdrawn mistral_codestral entry (its single model went with it),
   // plus the Agnes CN switch (agnes-2.0-flash -> agnes-3.0-flash + agnes-2.5-flash),
   // plus the Qiniu Conatus campaign entry (qiniu/conatus-free),
-  // plus the SenseNova Token Plan entry (6 models).
-  assert.equal(AGGREGATE_REGISTRY.reduce((sum, entry) => sum + entry.models.length, 0), 473)
+  // plus the SenseNova Token Plan entry (6 models),
+  // plus the 2026-10-30 freellmpool port (1 + 11 + 5 + 4 + 6 = 27 models).
+  assert.equal(AGGREGATE_REGISTRY.reduce((sum, entry) => sum + entry.models.length, 0), 500)
 
   // Browser-login account channels are retired; the responses-only relay is not wired.
   for (const excluded of ['openai', 'github_copilot', 'fleetrelay_t1']) {
@@ -92,6 +93,39 @@ test('kilo is key-less and every entry needing a key says where to get one', () 
     if (entry.authKind !== 'apiKey') continue
     assert.ok(entry.authUrl, `${entry.id} must link to its key page`)
   }
+})
+
+/**
+ * 2026-10-30 从 freellmpool（0xzr/freellmpool, MIT）移植的五家。去重后只进了
+ * 它有而本目录没有的供应商；免验证的两家自动开通，其余三家要 key。
+ */
+test('the freellmpool port: keyless pair auto-provisions, keyed trio does not', () => {
+  const pollinations = getAggregateEntry('pollinations')!
+  assert.equal(pollinations.authKind, 'none')
+  assert.equal(pollinations.autoProvision, true)
+  assert.equal(pollinations.baseUrl, 'https://text.pollinations.ai/openai')
+  // 同一后端的别名不进基线，免得自动路由一后端多路重复扇出。
+  assert.deepEqual(pollinations.models.map(m => m.id), ['openai-fast'])
+  assert.equal(pollinations.modelsUrl, 'https://text.pollinations.ai/openai/models')
+
+  const ovh = getAggregateEntry('ovh')!
+  assert.equal(ovh.authKind, 'none')
+  assert.equal(ovh.autoProvision, true)
+  assert.equal(ovh.baseUrl, 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1')
+  assert.ok(ovh.models.some(model => model.id === 'gpt-oss-120b'))
+  // 上游停用/仅 pin 的行不进基线。
+  assert.ok(!ovh.models.some(model => model.id === 'Qwen3-32B'))
+  assert.ok(!ovh.models.some(model => model.id === 'Qwen3.8-27B'))
+
+  for (const id of ['requesty', 'aion', 'modelscope']) {
+    const entry = getAggregateEntry(id)!
+    assert.equal(entry.authKind, 'apiKey', `${id} needs a key`)
+    assert.notEqual(entry.autoProvision, true, `${id} must not auto-provision`)
+    assert.ok(entry.authUrl && entry.envVar, `${id} must say where to get its key`)
+  }
+  assert.equal(getAggregateEntry('requesty')!.baseUrl, 'https://router.requesty.ai/v1')
+  assert.equal(getAggregateEntry('aion')!.baseUrl, 'https://api.aionlabs.ai/v1')
+  assert.equal(getAggregateEntry('modelscope')!.baseUrl, 'https://api-inference.modelscope.cn/v1')
 })
 
 test('entries without a usable default endpoint stay visible with a null baseUrl', () => {

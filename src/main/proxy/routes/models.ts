@@ -9,7 +9,8 @@ import { ModelsResponse, ModelInfo } from '../types'
 import { loadBalancer } from '../loadbalancer'
 import { storeManager } from '../../store/store'
 import { modelMapper } from '../modelMapper'
-import { AUTO_MODEL_ID } from '../autoRouter'
+import { autoRouter } from '../autoRouter'
+import { enabledModelRoutes, findModelRoute } from '../../store/modelRoutes'
 import { aliasMappingKeys, contextWindowOf, matchesCatalogueName } from '../../store/modelServing'
 
 const router = new Router({ prefix: '/v1' })
@@ -30,22 +31,50 @@ function providerCatalogueNames(): Set<string> {
 }
 
 /**
+ * 合成条目：路由不是模型，没有上游目录可查，所以带的是**候选里最小的那个窗口**
+ * （`autoRouter::advertisedContextFloor`，未标注按 64000 参与）—— 这是可证的下界，
+ * 不是编的数：路由会落到任意候选上，广告比某个候选更大的窗口就是让它把请求发给
+ * 装不下的那一家。池策略只会**剔掉**候选（剔掉小窗的会让真实下界更大），所以用
+ * 未筛池算出的数只会偏保守，不会偏大。空池省略键。
+ * owned_by 沿用 legacy 的 `auto-router`：所有路由都由同一个路由引擎服务，客户端
+ * 按 owned_by 分组时不该把它们拆开。
+ */
+function routeEntry(name: string, createdAtSeconds: number, contextFloor?: number): ModelInfo {
+  return {
+    id: name,
+    object: 'model',
+    created: createdAtSeconds,
+    owned_by: 'auto-router',
+    ...(contextFloor === undefined ? {} : { context_window: contextFloor }),
+  }
+}
+
+/**
  * Get all available models
+ *
+ * 去重按**大小写不敏感**：路由名在解析时是大小写不敏感的（`Fast` 与 `fast` 是同
+ * 一条），广告里出现两条只差大小写的同名条目会让客户端按 id 建 Map 时互相覆盖，
+ * 而按 id 精确匹配的调用方根本分不出该发哪一条。顺序：路由 **优先于** 同名模型
+ * （请求解析就是这个优先级，广告必须与之一致，否则 `/v1/models` 会否认自己能服务
+ * 一个请求已经能用的名字）。
  */
 router.get('/models', async (ctx: Context) => {
   const providers = storeManager.getProviders().filter(p => p.enabled)
   const models: ModelInfo[] = []
-  const addedModels = new Set<string>()
+  const addedNames = new Set<string>()
+  const now = Math.floor(Date.now() / 1000)
 
-  // 虚拟模型：请求时由 autoRouter 在全部可用供应商/模型中挑选目标
-  if (storeManager.getConfig().autoRouting?.enabled !== false) {
-    addedModels.add(AUTO_MODEL_ID)
-    models.push({
-      id: AUTO_MODEL_ID,
-      object: 'model',
-      created: Math.floor(Date.now() / 1000),
-      owned_by: 'auto-router',
-    })
+  // 虚拟模型：每条**已启用**的路由一项，由 autoRouter 按那条路由的配置在全部
+  // 可用供应商/模型中挑目标。停用的不广告；`auto` 被删了就不再出现（迁移判据
+  // 见 store.ts::normalizeRoutes —— 键存在即永不重放迁移）。
+  // 排序由 enabledModelRoutes 显式给出，不依赖 Record 的迭代顺序（纯数字名如
+  // `2026` 会被 JS 整数键提升而插到最前）。
+  const config = storeManager.getConfig()
+  const routeFloor = autoRouter.advertisedContextFloor()
+  for (const route of enabledModelRoutes(config.routes)) {
+    if (addedNames.has(route.name)) continue
+    addedNames.add(route.name)
+    models.push(routeEntry(route.name, now, routeFloor))
   }
 
   for (const provider of providers) {
@@ -58,8 +87,9 @@ router.get('/models', async (ctx: Context) => {
 
     const effectiveModels = storeManager.getEffectiveModels(provider.id)
     for (const model of effectiveModels) {
-      if (!addedModels.has(model.displayName)) {
-        addedModels.add(model.displayName)
+      const canonical = model.displayName.trim().toLowerCase()
+      if (!addedNames.has(canonical)) {
+        addedNames.add(canonical)
         // 只有上游报过窗口才发这个键；用户自建/聚合未标注的都保持省略。
         const window = contextWindowOf(provider.modelCapabilities, model.displayName)
         models.push({
@@ -73,14 +103,14 @@ router.get('/models', async (ctx: Context) => {
     }
   }
 
-  const config = storeManager.getConfig()
   for (const requestModel of aliasMappingKeys(config.modelMappings, providerCatalogueNames())) {
-    if (!addedModels.has(requestModel)) {
-      addedModels.add(requestModel)
+    const canonical = requestModel.trim().toLowerCase()
+    if (!addedNames.has(canonical)) {
+      addedNames.add(canonical)
       models.push({
         id: requestModel,
         object: 'model',
-        created: Math.floor(Date.now() / 1000),
+        created: now,
         owned_by: 'model-mapping',
       })
     }
@@ -97,13 +127,20 @@ router.get('/models', async (ctx: Context) => {
 
 /**
  * Get specified model info
+ *
+ * 顺序与 `/v1/models`、与请求解析都一致：路由优先。legacy 的 `auto` 单模型分支
+ * 已被「路由」这一条通用路径吃掉（迁移保证表里默认就有 `auto`），所以这里不再
+ * 留第二份「auto 是否在服务」的真值。
  */
 router.get('/models/:model', async (ctx: Context) => {
   const modelId = ctx.params.model
+  const config = storeManager.getConfig()
 
-  if (modelId.trim().toLowerCase() === AUTO_MODEL_ID) {
-    // 自动路由关闭时，`auto` 既不在列表里，也不应该被单模型查询命中
-    if (storeManager.getConfig().autoRouting?.enabled === false) {
+  const route = findModelRoute(config.routes, modelId)
+  if (route !== undefined) {
+    // 停用的路由不广告，单查也不许冒充在服；被删的路由压根不会走到这里（表里没有），
+    // 会自然落到下面的模型/别名查找，最后 404 —— 那正是「这个名字不再被路由」。
+    if (!route.enabled) {
       ctx.status = 404
       ctx.body = {
         error: {
@@ -117,16 +154,14 @@ router.get('/models/:model', async (ctx: Context) => {
     }
 
     ctx.set('Content-Type', 'application/json')
-    ctx.body = {
-      id: AUTO_MODEL_ID,
-      object: 'model',
-      created: Math.floor(Date.now() / 1000),
-      owned_by: 'auto-router',
-    }
+    ctx.body = routeEntry(
+      route.name,
+      Math.floor(Date.now() / 1000),
+      autoRouter.advertisedContextFloor()
+    )
     return
   }
 
-  const config = storeManager.getConfig()
   const mappings = config.modelMappings || {}
   if (mappings[modelId] && !providerCatalogueNames().has(modelId)) {
     ctx.set('Content-Type', 'application/json')

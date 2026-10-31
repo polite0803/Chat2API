@@ -137,3 +137,153 @@ test('minimax 的工具调用参数照常透传（name 的修复没有吞掉 arg
 
   assert.equal(argumentsText, '{"code":"002837"}')
 })
+
+/** 思考块(0) + 工具块(1)：2026-10-31 本机 Qoder 报障的真实块序（incomplete_tool_replaced）。 */
+const THINKING_THEN_TOOL_SSE = [
+  'event: message_start',
+  'data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}',
+  '',
+  'event: content_block_start',
+  'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"let me list"}}',
+  '',
+  'event: content_block_stop',
+  'data: {"type":"content_block_stop","index":0}',
+  '',
+  'event: content_block_start',
+  'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_02","name":"mcp_list","input":{}}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}',
+  '',
+  'event: content_block_stop',
+  'data: {"type":"content_block_stop","index":1}',
+  '',
+  'event: message_delta',
+  'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}',
+  '',
+  'event: message_stop',
+  '',
+  '',
+].join('\n')
+
+test('思考块占用内部 index 0 时，tool_calls 必须重编号为密集 0（不能凭空 index:1）', async (t) => {
+  const { consumeMinimaxSse, toOpenAiSse } = await loadVendorBundle(t)
+
+  const chunks = []
+  for await (const chunk of consumeMinimaxSse({ body: sseStream(THINKING_THEN_TOOL_SSE) })) {
+    chunks.push(chunk)
+  }
+
+  const frames = []
+  for await (const frame of toOpenAiSse(
+    (async function* () { yield* chunks })(),
+    'chatcmpl-test',
+    'minimax/model',
+  )) {
+    frames.push(frame)
+  }
+
+  const toolDeltas = parseSseFrames(frames.join(''))
+    .flatMap(frame => frame.choices?.[0]?.delta?.tool_calls ?? [])
+
+  assert.ok(toolDeltas.length > 0, '必须下发 tool_calls')
+  for (const call of toolDeltas) {
+    assert.equal(call.index, 0, `tool_calls index 必须是密集 0，收到 ${call.index}`)
+  }
+  assert.equal(toolDeltas[0].function.name, 'mcp_list')
+})
+
+/** 缺必填键的工具调用：finish 判据命中 → 缓冲发弃（2026-10-31 审计补齐）。 */
+const MISSING_REQUIRED_TOOL_SSE = [
+  'event: message_start',
+  'data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}',
+  '',
+  'event: content_block_start',
+  'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_10","name":"Bash","input":{}}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"description\\":\\"列出文件\\"}"}}',
+  '',
+  'event: content_block_stop',
+  'data: {"type":"content_block_stop","index":0}',
+  '',
+  'event: message_delta',
+  'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}',
+  '',
+  'event: message_stop',
+  '',
+  '',
+].join('\n')
+
+/** 流被掐断：有工具分片但没有 message_delta（stop_reason 缺失）。 */
+const TRUNCATED_TOOL_SSE = [
+  'event: message_start',
+  'data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}',
+  '',
+  'event: content_block_start',
+  'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_11","name":"Bash","input":{}}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"command\\":\\"ls"}}',
+  '',
+  'event: content_block_stop',
+  'data: {"type":"content_block_stop","index":0}',
+  '',
+  '',
+].join('\n')
+
+async function projectMinimax(t, sseText, options = {}) {
+  const { consumeMinimaxSse, toOpenAiSse } = await loadVendorBundle(t)
+  const chunks = []
+  for await (const chunk of consumeMinimaxSse({ body: sseStream(sseText), ...options })) {
+    chunks.push(chunk)
+  }
+  const frames = []
+  for await (const frame of toOpenAiSse(
+    (async function* () { yield* chunks })(),
+    'chatcmpl-test',
+    'minimax/model',
+  )) {
+    frames.push(frame)
+  }
+  return parseSseFrames(frames.join(''))
+}
+
+test('缺必填键的工具调用：分片缓冲发弃，客户端只见 length 收场（无 tool_calls）', async (t) => {
+  const frames = await projectMinimax(t, MISSING_REQUIRED_TOOL_SSE, {
+    toolsRequiringArgs: new Map([['Bash', ['command']]]),
+  })
+
+  const toolDeltas = frames.flatMap(frame => frame.choices?.[0]?.delta?.tool_calls ?? [])
+  assert.equal(toolDeltas.length, 0, `命中缺参判据后不得下发任何 tool_calls 分片，收到 ${JSON.stringify(toolDeltas)}`)
+
+  const finish = frames.find(frame => frame.choices?.[0]?.finish_reason != null)
+  assert.equal(finish?.choices?.[0]?.finish_reason, 'length', 'finish 必须升级为 length 让客户端重试')
+})
+
+test('流被掐断（无 stop_reason）：工具分片缓冲发弃，finish 升级为 length', async (t) => {
+  const frames = await projectMinimax(t, TRUNCATED_TOOL_SSE)
+
+  const toolDeltas = frames.flatMap(frame => frame.choices?.[0]?.delta?.tool_calls ?? [])
+  assert.equal(toolDeltas.length, 0, `截断流不得下发任何 tool_calls 分片，收到 ${JSON.stringify(toolDeltas)}`)
+
+  const finish = frames.find(frame => frame.choices?.[0]?.finish_reason != null)
+  assert.equal(finish?.choices?.[0]?.finish_reason, 'length')
+})
+
+test('判据未命中：缓冲的分片照常原序补发（block-start → deltas → block-end）', async (t) => {
+  const frames = await projectMinimax(t, MISSING_REQUIRED_TOOL_SSE, {
+    toolsRequiringArgs: new Map([['Bash', ['description']]]), // description 存在 → 放行
+  })
+
+  const toolDeltas = frames.flatMap(frame => frame.choices?.[0]?.delta?.tool_calls ?? [])
+  assert.ok(toolDeltas.length > 0, '判据未命中时必须下发工具分片')
+  const argumentsText = toolDeltas.map(call => call.function?.arguments ?? '').join('')
+  assert.equal(argumentsText, '{"description":"列出文件"}')
+
+  const finish = frames.find(frame => frame.choices?.[0]?.finish_reason != null)
+  assert.equal(finish?.choices?.[0]?.finish_reason, 'tool_calls')
+})

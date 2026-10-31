@@ -67,7 +67,10 @@ test('failover across providers uses one shared loop', () => {
     'only one candidate loop may exist')
   assert.match(forwarder, /private async forwardFirstReachable<T extends ChainCandidate>\(/,
     'the loop is a shared private method')
-  assert.match(forwarder, /return this\.forwardFirstReachable\(request, candidates, context\)/,
+  // 两个入口都必须是「把同一个循环 + 一份换家预算交出去」。`context` 后面多出来的
+  // 第四个参数是 signature 变化（baseCap 不再由循环自己读全局 autoRouting），
+  // 钉点的意图不变：不许长出第二个候选循环。
+  assert.match(forwarder, /return this\.forwardFirstReachable\(request, candidates, context,/,
     'both entry points delegate to it')
   assert.match(forwarder, /async forwardChainCompletion\(/, 'the chain entry point exists')
 
@@ -114,8 +117,8 @@ test('both exits feed the quota learner from what upstream already sent back', (
     'the success branch learns from the rate-limit headers')
 
   const autoRouter = readFileSync('src/main/proxy/autoRouter.ts', 'utf-8')
-  assert.match(autoRouter, /if \(quotaBlockReason\(provider, account\.id, model\.actualModelId\)\) \{\r?\n\s*continue/,
-    'exhausted aggregate candidates must not enter the ranking at all')
+  assert.match(autoRouter, /const quotaBlocked = quotaBlockReason\(provider, account\.id, model\.actualModelId\)\r?\n\s*if \(quotaBlocked !== undefined\) \{\r?\n\s*skipped\.add\(`\$\{provider\.id\}\/\$\{model\.displayName\}:\$\{quotaBlocked\}`\)\r?\n\s*continue/,
+    'exhausted aggregate candidates must not enter the ranking at all (and their skip reason must be recorded)')
 
   const gate = readFileSync('src/main/proxy/quota/gate.ts', 'utf-8')
   assert.match(gate, /if \(provider\.type !== 'aggregate'\) return undefined/,

@@ -562,10 +562,10 @@ export async function toResponsesGenerateOptions(
   if (toolChoice !== undefined && toolChoice !== 'auto' && toolChoice !== 'none') {
     throw new OpenAiGatewayError('only tool_choice auto and none are supported')
   }
-  const tools = convertTools(toChatTools(body.tools, onDrop))
-  if (toolChoice === 'none' && tools !== undefined && tools.length > 0) {
-    throw unsupported('tool_choice none with tools cannot be represented by DSH')
-  }
+  // tool_choice:'none' + tools 与 Chat 路径同判据（见 messages.ts）：OpenAI 规范
+  // 合法组合，DSH 无法表达 tool_choice，丢弃 tools 是唯一忠实的降级 —— 回 400
+  // 会让客户端整轮报废，与上面 namespace 降级 auto 同一取舍。
+  const tools = toolChoice === 'none' ? undefined : convertTools(toChatTools(body.tools, onDrop))
   const temperature = body.temperature === undefined ? undefined
     : typeof body.temperature === 'number' && Number.isFinite(body.temperature) ? body.temperature
       : (() => { throw new OpenAiGatewayError('temperature must be a finite number') })()

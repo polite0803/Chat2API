@@ -7,6 +7,7 @@ import { createTrayManager, TrayManager } from './tray/TrayManager'
 import { registerIpcHandlers } from './ipc/handlers'
 import { UpdaterManager } from './updater'
 import { storeManager } from './store/store'
+import { aggregateProviderManager } from './providers/aggregate'
 import { detectHiddenLaunch, reconcileAutoStart } from './autostartHost'
 import { opencodeService } from './opencode/service'
 
@@ -137,6 +138,12 @@ async function setupApp(): Promise<void> {
   })
 
   await registerIpcHandlers(mainWindow)
+
+  // 免验证（keyless）聚合条目自动开通：建记录、启用并拉取上游模型清单。
+  // 异步执行不阻塞启动，失败只告警；存储初始化失败时直接跳过。
+  if (!storeManager.hasInitializationError()) {
+    void aggregateProviderManager.autoProvisionKeyless()
+  }
 
   trayManager = createTrayManager(mainWindow)
 

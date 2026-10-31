@@ -288,6 +288,49 @@ class AggregateProviderManager {
     }
     storeManager.deleteProvider(id)
     this.writeMappings(id, {})
+    // 用户显式删除的免验证条目记入黑名单：自动开通不再复活它。
+    // 只对真正标了 autoProvision 的条目落盘，普通条目不因此多写一次配置。
+    if (getAggregateEntry(id)?.autoProvision) {
+      const dismissed = new Set(storeManager.getConfig().dismissedAutoProviders ?? [])
+      if (!dismissed.has(id)) {
+        dismissed.add(id)
+        storeManager.updateConfig({ dismissedAutoProviders: [...dismissed] })
+      }
+    }
+  }
+
+  /**
+   * 启动期自动开通免验证条目（autoProvision 且 authKind 'none'）：没有记录的
+   * 直接建记录并启用 —— 免 key 本就无凭据可填，静态目录先行兜底 —— 随后并入
+   * 上游模型清单。只在首次创建时同步一次清单，之后尊重用户裁剪（删除/停用某
+   * 些模型不会被下次启动偷偷加回来，想要刷新走面板上的在线同步）。用户删过的
+   * 条目在黑名单里，绝不复活。全程失败只告警，不阻塞启动。
+   */
+  async autoProvisionKeyless(): Promise<void> {
+    let dismissed: Set<string>
+    try {
+      dismissed = new Set(storeManager.getConfig().dismissedAutoProviders ?? [])
+    } catch {
+      return // 存储不可用：什么都做不了，也不要往启动路径上抛错
+    }
+    for (const entry of AGGREGATE_REGISTRY) {
+      if (entry.authKind !== 'none' || !entry.autoProvision || dismissed.has(entry.id)) continue
+      try {
+        const existing = storeManager.getProviderById(entry.id)
+        if (existing && existing.type === 'aggregate') continue
+        this.save({ id: entry.id, enabled: true })
+        console.log(`[Aggregate] auto-provisioned keyless entry: ${entry.id}`)
+        const synced = await this.syncModels(entry.id)
+        if (!synced.success) {
+          console.warn(`[Aggregate] auto sync skipped for ${entry.id}: ${synced.reason ?? 'unknown'}`)
+        }
+      } catch (error) {
+        console.warn(
+          `[Aggregate] auto-provision failed for ${entry.id}:`,
+          error instanceof Error ? error.message : error
+        )
+      }
+    }
   }
 
   /** Probes the catalogue's model list and reports what the endpoint answered. */

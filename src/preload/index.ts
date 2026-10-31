@@ -17,7 +17,16 @@ import type {
   RequestLogEntry,
   AppLogTrendPoint,
   ModelsFetchFailure,
+  ModelRoute,
+  ModelCapabilityHint,
+  RoutePreviewResult,
+  RoutePreviewSample,
 } from '../shared/types'
+import type {
+  RouteListResult,
+  RouteMutationResult,
+  RouteRemovalResult,
+} from '../shared/modelRouteName'
 import type {
   AggregateDetail,
   AggregateListResult,
@@ -159,6 +168,16 @@ const providersAPI = {
     error?: string
   }> => 
     ipcRenderer.invoke(IpcChannels.PROVIDERS_RESET_MODELS, providerId),
+
+  getModelMarks: (): Promise<Record<string, Record<string, ModelCapabilityHint>>> =>
+    ipcRenderer.invoke(IpcChannels.PROVIDERS_GET_MODEL_MARKS),
+
+  setModelMark: (providerId: string, displayName: string, mark: ModelCapabilityHint | null): Promise<{
+    success: boolean
+    marks: Record<string, Record<string, ModelCapabilityHint>>
+    error?: string
+  }> =>
+    ipcRenderer.invoke(IpcChannels.PROVIDERS_SET_MODEL_MARK, providerId, displayName, mark),
 }
 
 const accountsAPI = {
@@ -508,6 +527,35 @@ const configAPI = {
   },
 }
 
+/**
+ * 多路由 CRUD（`AppConfig.routes`）。四条方法与 `routes:list|create|update|delete`
+ * 一一对应，返回形状与 `channels:*` 同风格：`{ok:true,…} | {ok:false,error:{code,message}}`，
+ * 错误以可读文本到达界面（不在 IPC 层变成 undefined 或异常）。
+ *
+ * 三个写方法成功时都带回归一后的整表，界面不需要再拉一次 `list`；随后主进程广播
+ * `CONFIG_CHANGED`（载荷同样是带 `routes` 的完整配置），所以订阅了 `config.onConfigChanged`
+ * 的页面也会一起刷新。
+ */
+const routesAPI = {
+  list: (): Promise<RouteListResult> =>
+    ipcRenderer.invoke(IpcChannels.ROUTES_LIST),
+
+  create: (input: Partial<ModelRoute> & { name: string }): Promise<RouteMutationResult> =>
+    ipcRenderer.invoke(IpcChannels.ROUTES_CREATE, input),
+
+  // `currentName` 是现在盘上的规范名；`patch.name` 才是改名。
+  update: (currentName: string, patch: Partial<ModelRoute>): Promise<RouteMutationResult> =>
+    ipcRenderer.invoke(IpcChannels.ROUTES_UPDATE, currentName, patch),
+
+  // 命名跟随 `providers:delete` / `accounts:delete` → `delete()`，与通道名一一对应。
+  delete: (name: string): Promise<RouteRemovalResult> =>
+    ipcRenderer.invoke(IpcChannels.ROUTES_DELETE, name),
+
+  // 只算不写：用和生产请求同一条采集/策略/手动增删管线，返回逐模型状态。
+  preview: (route: ModelRoute, sample?: RoutePreviewSample): Promise<RoutePreviewResult> =>
+    ipcRenderer.invoke(IpcChannels.ROUTES_PREVIEW, route, sample),
+}
+
 interface SessionConfig {
   mode: 'single'
   sessionTimeout: number
@@ -751,6 +799,7 @@ const electronAPI = {
   statistics: statisticsAPI,
   app: appAPI,
   config: configAPI,
+  routes: routesAPI,
   session: sessionAPI,
   managementApi: managementApiAPI,
   contextManagement: contextManagementAPI,

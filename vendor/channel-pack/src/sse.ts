@@ -307,6 +307,87 @@ export function isTruncatedArguments(raw: string): boolean {
 }
 
 /**
+ * 「必填参数缺失」判据（2026-10-31 用户报障第二弹：Bash 被以
+ * `{"description":"Show working tree status"}` 这类**部分参数**调用 ——
+ * 非空、合法 JSON，但缺 `command`，客户端照样报
+ * `params must have required property 'command'`）。
+ *
+ * 判定：解析参数包后核对 `required` 键**存在性**（present 即可，不校验值 ——
+ * 与 harness 的 `required` 语义对齐）。返回 true = 本次调用不可能通过 schema
+ * 校验，调用方应按不完整响应处理（finish 报 max-tokens 丢弃重试）。
+ *
+ * 边界：
+ * - `required` 为空 → false（无必填，任何参数包都合法）；
+ * - 残缺 JSON → false（走 `isTruncatedArguments` 既有链路，别重复归因）；
+ * - 空白/`{}` → true（必填一个都没有）；
+ * - 解析出 null/数组/标量 → true（非对象参数包不可能满足必填）。
+ */
+export function isMissingRequiredArgs(raw: string, required: readonly string[]): boolean {
+  if (required.length === 0) return false
+  if (isTruncatedArguments(raw)) return false
+  const trimmed = raw.trim()
+  if (trimmed.length === 0) return true
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return false
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return true
+  const obj = parsed as Record<string, unknown>
+  return required.some(key => !(key in obj))
+}
+
+/**
+ * 解开 `{action, params}` 包装层参数（2026-10-31 用户报障）。
+ *
+ * ## 缺陷背景
+ *
+ * Qoder 团队任务报 `create_team_task tool parameter validation failed: params
+ * must have required property 'squadId'`，而它显示的输入里 squadId 明明存在 ——
+ * 嵌在 `params` 里。上游小模型把工具调用模仿成了 **Qoder 提示词里工具调用的
+ * 序列化形状**（`{"action":"…","params":{…}}`），而 Qoder 的 schema 校验的是
+ * **平铺顶层**参数 → 顶层「缺」squadId → 校验失败。
+ *
+ * ## 为什么「校正」而不是「丢弃重试」
+ *
+ * 与空参数/残缺参数不同，包装层的**内容完整且语义无歧义**（action 与工具名
+ * 一致，params 就是真参数包）。丢弃只会让模型重试时再次模仿包装层 —— 白烧
+ * 额度的死循环。解包是确定性的、可逆的语义保持变换。
+ *
+ * ## 误伤防线（三条全过才解包）
+ *
+ * 1. 顶层**恰好**两个键 `{action, params}` —— 真实采用包装 schema 的工具
+ *    通常还有别的键，不会命中；
+ * 2. `action` 与工具名一致（大小写不敏感）—— 模型模仿自己名字的回声是
+ *    包装行为的签名；合法包装 schema 的 action 取值与工具名同名的概率
+ *    忽略不计；
+ * 3. `params` 是纯对象。
+ *
+ * 任何条件不满足都原样返回 —— 残缺 JSON 交给既有 `isTruncatedArguments`
+ * 链路归因，不在此重复判。
+ */
+export function unwrapActionParamsWrapper(toolName: string, raw: string): string {
+  const trimmed = raw.trim()
+  if (trimmed.length === 0 || isTruncatedArguments(trimmed)) return raw
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return raw
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return raw
+  const obj = parsed as Record<string, unknown>
+  const keys = Object.keys(obj)
+  if (keys.length !== 2 || !('action' in obj) || !('params' in obj)) return raw
+  if (typeof obj.action !== 'string') return raw
+  if (obj.action.trim().toLowerCase() !== toolName.trim().toLowerCase()) return raw
+  const params = obj.params
+  if (params === null || typeof params !== 'object' || Array.isArray(params)) return raw
+  return JSON.stringify(params)
+}
+
+/**
  * 思考死循环中止的**错误码**。
  *
  * ## 为什么不复用 `max-tokens`（真实缺陷，Gitee !IKIZNK）

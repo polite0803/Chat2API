@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Local electron binary cache (used by build.electronDist, ~110MB)
+.electron-cache/
+
 # Build outputs
 out/
 dist/

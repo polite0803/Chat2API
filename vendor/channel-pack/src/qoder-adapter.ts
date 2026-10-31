@@ -45,6 +45,7 @@ import {
   httpErrorCode,
   isTransportError,
   ModelQueuedError,
+  requiredArgsToolsOption,
   serializeMessages,
 } from './openai-compat.js'
 import {
@@ -1196,6 +1197,9 @@ export class QoderAdapter extends LlmAdapter {
           firstTokenTimeoutMs: resolveFirstTokenTimeoutMs(),
           chunkTimeoutMs: resolveChunkTimeoutMs(),
           ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
+          // 「必填参数工具 + 零参数」判据：finish 报 max-tokens 丢弃重试，
+          // 不放行 `{}` 伪合法调用（2026-10-31 用户报障，见 openai-compat.ts）。
+          ...requiredArgsToolsOption(options.tools),
         },
       )
       const iterator = inner[Symbol.asyncIterator]()

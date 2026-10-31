@@ -20,6 +20,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { isSupportedProvider } from './channel-pack-store.js'
 import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { AccountPool } from './account-pool.js'
+import { allAccountsRateLimitedForModel } from './account-pool.js'
 import { isGatewayEnabled } from './openai-gateway/config.js'
 import { collectGatewayModelDetails, collectGatewayModels, toGatewayModelIds, type GatewayModelSource } from './openai-gateway/models.js'
 import type { GatewayEffortView } from './openai-gateway/effort-view.js'
@@ -190,6 +191,9 @@ import type {
   RpcModelSetDisabledManyResponse,
   RpcModelClearDeadRequest,
   RpcModelClearDeadResponse,
+  RpcModelRateLimitsRequest,
+  RpcModelRateLimitsResponse,
+  ModelRateLimitStatus,
   RpcProviderStatusRequest,
   RpcProviderStatusResponse,
   RpcProviderSetEnabledRequest,
@@ -3523,6 +3527,51 @@ function registerChannelPackEndpoints(
           }
         }
         const value: RpcProviderStatusResponse = { statuses }
+        return { ok: true, value }
+      }
+
+      /**
+       * 查询某供应商一批模型当前是否「全部启用账号都在限流中」（宿主选路预检）。
+       *
+       * ## 它服务谁（用户报障 2026-10-30）
+       *
+       * 宿主（ModelPort 主进程）的 auto 换家循环只看 HTTP 层成败，而 worker 内部
+       * 账号池的**模型级限流**（loomy spark-x2.6 当日额度用尽、解禁在次日 00:00）
+       * 以 LlmError(QUOTA_EXCEEDED) 抛出 —— 宿主选路时毫不知情，把请求发进必败
+       * 渠道。此 rpc 把「这个模型现在发必败」提前告知宿主：全部限流才上报（与
+       * `allAccountsRateLimitedForModel` 同判据），部分限流不报（还有账号可用，
+       * worker 选号会跳过受限的）。
+       *
+       * 全程同步读内存副本（`pool.listAccountsByProvider` + 账号上的
+       * `modelRateLimits` 时间戳），无网络请求、无凭据解析，可放心高频调用；
+       * 调用方（宿主）仍应自行做 TTL 缓存。
+       */
+      case 'model.rateLimits': {
+        const req = payload as RpcModelRateLimitsRequest
+        if (typeof req.provider !== 'string' || req.provider.length === 0
+          || !Array.isArray(req.models) || req.models.some((id) => typeof id !== 'string')) {
+          return { ok: false, error: { code: 'bad-request', message: 'provider/models 参数不合法' } }
+        }
+        if (!isSupportedProvider(req.provider)) {
+          return { ok: true, value: { rateLimits: {} } }
+        }
+        const rateLimits: Record<string, ModelRateLimitStatus> = {}
+        const enabledAccounts = pool
+          .listAccountsByProvider(req.provider)
+          .filter((entry) => entry.enabled !== false)
+        for (const modelId of req.models) {
+          // 宿主的 actualModel 带 provider 前缀（`loomy/spark-x2.6`），而转发路径
+          // 上 dsh-llm 框架按 adapter 前缀路由时会剥掉它 —— 这里必须同口径剥掉
+          // 再查限流键，否则永远查不到（2026-10-30 预检漏拦的根因）。
+          const rawModelId = modelId.startsWith(`${req.provider}/`)
+            ? modelId.slice(req.provider.length + 1)
+            : modelId
+          const limited = allAccountsRateLimitedForModel(enabledAccounts, rawModelId)
+          if (limited !== undefined) {
+            rateLimits[modelId] = { limited: true, resetAtMs: limited.resetAtMs }
+          }
+        }
+        const value: RpcModelRateLimitsResponse = { rateLimits }
         return { ok: true, value }
       }
 

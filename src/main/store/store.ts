@@ -32,6 +32,8 @@ import {
   ProviderModelOverrides,
   DEFAULT_USER_MODEL_OVERRIDES,
   UserModelOverrides,
+  DEFAULT_USER_MODEL_MARKS,
+  UserModelMarks,
   CustomModel,
   FetchedModel,
   DEFAULT_REQUEST_LOG_CONFIG,
@@ -60,6 +62,24 @@ import { normalizeToolCallingConfig } from '../../shared/toolCalling'
 import { applyServed, buildModelCatalogue, namespaceModelOverrides } from './modelServing'
 import { DEFAULT_AUTO_ROUTING_CONFIG, RETIRED_PROVIDER_IDS } from '../../shared/types'
 import { normalizeAutoRoutingConfig } from './autoRoutingConfig'
+import {
+  allModelRoutes,
+  checkPoolStrategyIds,
+  checkRouteModelRefs,
+  checkRouteName,
+  findModelRoute,
+  isRouteStrategyValue,
+  normalizeModelRoutes,
+  routesFromLegacyAutoRouting,
+} from './modelRoutes'
+import type { ModelCapabilityHint, ModelRoute } from '../../shared/types'
+import { normalizeModelMark } from './modelMarks'
+import type {
+  ModelRouteError,
+  ModelRouteMutation,
+  ModelRouteRemoval,
+} from '../../shared/modelRouteName'
+import { validateRouteNameInput } from '../../shared/modelRouteName'
 import { normalizeCompressionConfig } from './compressionConfig'
 import { normalizeOutputSteeringConfig } from './outputSteeringConfig'
 import type { AppLogTrendPoint, AutoRoutingConfig } from '../../shared/types'
@@ -431,6 +451,7 @@ class StoreManager {
       // Per-day token counters start empty; an upgrade simply has no history.
       tokenUsage: {},
       userModelOverrides: DEFAULT_USER_MODEL_OVERRIDES,
+      userModelMarks: DEFAULT_USER_MODEL_MARKS,
     }
   }
 
@@ -491,9 +512,45 @@ class StoreManager {
       toolCallingConfig: normalizeToolCallingConfig(rawToolCallingConfig),
       toolPromptConfig: undefined,
       autoRouting: normalizeAutoRoutingConfig(rawConfig.autoRouting),
+      routes: this.normalizeRoutes(config, rawConfig),
       compression: normalizeCompressionConfig(rawConfig.compression),
       outputSteering: normalizeOutputSteeringConfig(rawConfig.outputSteering),
     }
+  }
+
+  /**
+   * 路由表的读取侧归一 + 一次性迁移。
+   *
+   * ⚠️ 判据必须是**原始存储对象**（`config`，即 `store.get('config')` 的那个对象）上
+   * 有没有 `routes` 这个键，而不是 `rawConfig`：`normalizeConfig` 先 spread
+   * `DEFAULT_CONFIG`，spread 之后的对象永远有这个键（或者永远没有），
+   * 「键不存在 = 旧数据」这个信息在那一步就丢了。`DEFAULT_CONFIG` 也刻意**不预置**
+   * 这个键（见 store/types.ts 里的注释），所以 `|| DEFAULT_CONFIG` 兜底与
+   * `resetConfig()` 走的都是「键不存在」分支 —— 全新安装同样会得到一条 `auto` 路由。
+   *
+   * 为什么按**键存在性**而不是按「表为空」：按空迁移的话，用户把路由删光以后
+   * （routes === `{}`）每一次读取都会重新造出 `auto`，直接违反「删除后这个名字
+   * 不再被路由」。键一旦存在（哪怕是 `{}`）就永不迁移，同时满足幂等与删除语义。
+   *
+   * 归一放读取侧而不是只放 `updateConfig`：renderer 的 `saveAppConfig` 走通用
+   * `STORE_SET` 整对象 raw 写（ipc/handlers.ts），**绕过** updateConfig 的归一与
+   * 深合并，所以非法条目一定要在读回来时被安全丢弃（绝不抛异常把整个 config 读挂）。
+   */
+  private normalizeRoutes(
+    raw: Partial<AppConfig> | undefined,
+    merged: AppConfig
+  ): Record<string, ModelRoute> {
+    const options = { fallbackStrategy: merged.loadBalanceStrategy }
+    const rawIsObject = raw !== null && typeof raw === 'object'
+    const hasRoutesKey = rawIsObject && Object.prototype.hasOwnProperty.call(raw, 'routes')
+
+    if (!hasRoutesKey) {
+      // `merged.autoRouting` 就是 legacy 那份配置（存储里有就用存储的，否则出厂默认），
+      // 迁移只读它，绝不新增第三条真值源。
+      return routesFromLegacyAutoRouting(merged.autoRouting, options)
+    }
+
+    return normalizeModelRoutes((raw as { routes?: unknown }).routes, options)
   }
 
   private initializeDefaultModelMappings(): void {
@@ -1063,14 +1120,48 @@ class StoreManager {
 
   /**
    * Set Application Configuration
+   *
+   * **写入边界的归一通道**：通用 IPC `store:set`（`ipc/handlers.ts`）让 renderer
+   * 把整个 config 对象原样落盘，那条路**绕过** `updateConfig` 的归一与深合并。
+   * 于是「一次不带 `routes` 键的整对象写」会把 `routes` 从盘上抹掉，而下一次读取
+   * （`normalizeConfig` → `normalizeRoutes`）的迁移判据正是「原始存储对象有没有
+   * `routes` 键」—— 键没了就重新触发 legacy 迁移，把用户已经删掉的 `auto` 路由复活，
+   * 直接违反验收 A。所以 `key === 'config'` 的整对象写必须先过同一条归一：
+   * - (a) `normalizeConfig` 无条件输出 `routes` 键，落盘对象从此永远带已归一的表；
+   * - (b) 归一只发生在写入侧，读取侧（`getConfig`）的迁移分支保持唯一，不留第二次迁移；
+   * - (c) 运行时副作用照旧在这里落（日志容量、请求日志开关、开机自启），与
+   *   `updateConfig` 同一套，所以「不重启即生效」不被绕过；
+   * - (d) 迁移仍然幂等：`routes` 键一旦存在（哪怕是 `{}`）就永不重放。
+   *
+   * 入参来自 renderer，形状不可信，所以是 `unknown`：非对象按 `{}` 处理（与读取侧
+   * 的 `|| DEFAULT_CONFIG` 兜底同形），非法的 routes 条目由读取侧安全丢弃的规则
+   * 在这里同样生效（`normalizeModelRoutes` 不抛异常）。
+   *
+   * ⚠️ 光「归一再落盘」还不够，探针实测（`model="auto"` 已删除、盘上是 `{fast}`）：
+   * 整对象写来的那份没有 `routes` 键，`normalizeConfig` 的迁移判据就在入参上，
+   * 于是**写入时**就把迁移又跑了一遍、`auto` 当场复活。所以 `routes` 键在这条路上
+   * **永远由 store 做主**：入参带不带 `routes`、带的表新不新，落盘的都是**当前已归一的
+   * 表**（`previous.routes`），整对象 raw 写从此不具备「抹掉/替换路由」的能力。
+   * 理由：renderer 的 `proxyStore.saveAppConfig` 发的正是整份镜像，而镜像可能已陈旧
+   * （开页之后另一条通道新建过路由 —— `routes:create` 落盘了新表，镜像还停在挂载时
+   * 那一刻），照单全收就会静默删掉刚建好的路由，击穿「实时提供使用」。路由的写入
+   * 只走专用通道：IPC `routes:*` 与 `updateConfig`（管理 API 的 routes 整表写入也经它，
+   * 那里有 `validateRoutesForWrite` 的硬校验）。读取侧的迁移分支照旧唯一（首次读旧
+   * `data.json` 仍然会迁移），漏键不复活、键存在不重放的语义不变。
+   *
+   * 返回归一后的配置，调用方（IPC handler）拿它广播，UI 看到的与盘上的是同一份。
    */
-  setConfig(config: AppConfig): void {
+  setConfig(config: unknown): AppConfig {
     this.ensureInitialized()
     const previous = this.getConfig()
-    const normalized = this.normalizeConfig(config)
+    const rawIsObject = config !== null && typeof config === 'object' && !Array.isArray(config)
+    const incoming = (rawIsObject ? config : {}) as Partial<AppConfig>
+    const normalized = this.normalizeConfig({ ...incoming, routes: previous.routes ?? {} })
     this.store!.set('config', normalized)
+    this.appLogManager?.setMaxEntries(this.getMaxLogEntries(normalized))
     this.applyRequestLogConfig(normalized.requestLogConfig)
     this.applyAutoStart(previous, normalized)
+    return normalized
   }
 
   /**
@@ -1124,6 +1215,11 @@ class StoreManager {
       })
     }
 
+    // routes 走 `{ ...currentConfig, ...updates }` 的**整表替换**（就在上面），
+    // 这里刻意不做逐键深合并：池策略是有序序列，按字段合并会把用户刚删掉的策略
+    // 又拼回来。要改一条请用 `routes:update`（IPC）或 `storeManager.updateRoute()`
+    // —— 它们读回现表、只改那一条、再整表写。`updates.routes = {}` 也是合法写入：
+    // 键存在且为空 = 「用户删光了路由」，读取侧不会因此把 `auto` 迁移回来。
     const normalized = this.normalizeConfig(newConfig)
     this.store!.set('config', normalized)
     this.appLogManager?.setMaxEntries(this.getMaxLogEntries(normalized))
@@ -1134,6 +1230,11 @@ class StoreManager {
 
   /**
    * Reset Configuration to Default Values
+   *
+   * 落盘的仍是 raw `DEFAULT_CONFIG`（**没有** `routes` 键），所以重置后读取侧会走
+   * 一次「键不存在」的迁移分支，得到一条出厂默认的 `auto` 路由。返回值刻意不是
+   * `DEFAULT_CONFIG` 本身：调用方（IPC `config:update` 广播、管理 API）要拿到与
+   * `getConfig()` 同形的对象，否则 UI 会看到一份没有 routes 的配置并以为「路由全没了」。
    */
   resetConfig(): AppConfig {
     this.ensureInitialized()
@@ -1142,7 +1243,210 @@ class StoreManager {
     this.appLogManager?.setMaxEntries(this.getMaxLogEntries(DEFAULT_CONFIG))
     this.applyRequestLogConfig(DEFAULT_CONFIG.requestLogConfig)
     this.applyAutoStart(previous, DEFAULT_CONFIG)
-    return DEFAULT_CONFIG
+    return this.getConfig()
+  }
+
+  // ==================== Model Route Operations ====================
+
+  /**
+   * 当前路由表（已归一）。键就是规范化后的路由名。
+   */
+  getModelRoutes(): Record<string, ModelRoute> {
+    return this.getConfig().routes ?? {}
+  }
+
+  /**
+   * 路由列表（含停用的），按名字排序 —— IPC `routes:list` 的返回值。
+   * 刻意不返回 Record：Record 的迭代顺序会被 JS 整数键提升打乱（`2026` 排最前），
+   * UI 拿到的顺序就会和 `/v1/models` 不一致。
+   */
+  listModelRoutes(): ModelRoute[] {
+    return allModelRoutes(this.getModelRoutes())
+  }
+
+  /**
+   * 请求解析：`request.model` 命中的路由，**不看 `enabled`**（停用的路由要能被认出，
+   * 好报「这条路由已停用」而不是「没有这个模型的账号」）。路由名优先于同名模型。
+   */
+  getModelRoute(requestedModel: string): ModelRoute | undefined {
+    return findModelRoute(this.getModelRoutes(), requestedModel)
+  }
+
+  /**
+   * 已经被占用的路由名（大小写不敏感比较由调用方负责）：
+   * - `modelNames`：**每个**供应商目录里的展示名，含已停用但仍留在目录里的名字
+   *   （`getModelCatalogue` 是 `getEffectiveModels` 的超集，后者只是「在服务」那一片），
+   *   以及供应商自己映射表里的键；
+   * - `aliases`：全局 `config.modelMappings` 的键（用户自建别名）。
+   * 这两路来源合起来就是「一个路由名会不会让请求解析分叉」的全部答案。
+   */
+  getRouteNameOccupants(): { modelNames: string[]; aliases: string[] } {
+    this.ensureInitialized()
+
+    const modelNames = new Set<string>()
+    for (const provider of this.getProviders()) {
+      for (const model of this.getModelCatalogue(provider.id)) {
+        modelNames.add(model.displayName)
+      }
+      for (const name of Object.keys(provider.modelMappings || {})) {
+        modelNames.add(name)
+      }
+    }
+
+    const aliases = new Set<string>(Object.keys(this.getConfig().modelMappings || {}))
+
+    return { modelNames: [...modelNames], aliases: [...aliases] }
+  }
+
+  /**
+   * 新建路由（R2）。名字与池策略在写入前严格校验，其余字段按既有兜底归一。
+   * 返回 `{ok:false, error}` 而不是抛异常：错误要原样进 IPC 给 UI 显示。
+   */
+  createRoute(input: Partial<ModelRoute> & { name: string }): ModelRouteMutation {
+    this.ensureInitialized()
+
+    const validated = validateRouteNameInput(input.name)
+    if (!validated.ok) return { ok: false, error: validated.error }
+    const name = validated.name
+
+    const routes = this.getModelRoutes()
+    const occupants = this.getRouteNameOccupants()
+    const conflict = checkRouteName({
+      routes,
+      modelNameOccupants: occupants.modelNames,
+      aliasOccupants: occupants.aliases,
+      name,
+    })
+    if (conflict !== undefined) return { ok: false, error: conflict }
+
+    const writeError = this.checkRouteFieldWrites(input)
+    if (writeError !== undefined) return { ok: false, error: writeError }
+
+    const config = this.getConfig()
+    const next = normalizeModelRoutes(
+      { ...routes, [name]: { ...routes[name], ...input, name } },
+      { fallbackStrategy: config.loadBalanceStrategy }
+    )
+    const written = this.updateConfig({ routes: next })
+    const route = written.routes?.[name]
+    if (route === undefined) {
+      return {
+        ok: false,
+        error: { code: 'invalid_input', message: `Route '${name}' was dropped by normalisation` },
+      }
+    }
+
+    this.addLog('info', `Route created: ${name}`, { data: { name } })
+    return { ok: true, route, routes: written.routes ?? {} }
+  }
+
+  /**
+   * 编辑路由（R2）：`currentName` 是现在的名字，`patch.name` 是**改名**。
+   *
+   * 改名才做名字冲突校验：一个已经生效的路由不会因为后来同步进来一个同名模型
+   * 而失效或被迫改名（请求解析里路由名优先），所以只改别的字段时不许再拿模型名
+   * 拒绝这次保存，否则这类用户的配置从此永久写不进去。
+   */
+  updateRoute(currentName: string, patch: Partial<ModelRoute>): ModelRouteMutation {
+    this.ensureInitialized()
+
+    const current = validateRouteNameInput(currentName)
+    if (!current.ok) return { ok: false, error: current.error }
+
+    const routes = this.getModelRoutes()
+    const existing = routes[current.name]
+    if (existing === undefined) {
+      return {
+        ok: false,
+        error: { code: 'not_found', message: `Route '${current.name}' does not exist` },
+      }
+    }
+
+    const nextName = patch.name === undefined
+      ? current.name
+      : (() => { const v = validateRouteNameInput(patch.name); return v.ok ? v.name : '' })()
+    if (patch.name !== undefined && nextName.length === 0) {
+      const invalid = validateRouteNameInput(patch.name)
+      return { ok: false, error: invalid.ok ? { code: 'invalid_name', message: 'Invalid route name' } : invalid.error }
+    }
+
+    const renaming = nextName !== current.name
+    if (renaming) {
+      const occupants = this.getRouteNameOccupants()
+      const conflict = checkRouteName({
+        routes,
+        modelNameOccupants: occupants.modelNames,
+        aliasOccupants: occupants.aliases,
+        name: nextName,
+        excluding: current.name,
+      })
+      if (conflict !== undefined) return { ok: false, error: conflict }
+    }
+
+    const writeError = this.checkRouteFieldWrites(patch)
+    if (writeError !== undefined) return { ok: false, error: writeError }
+
+    const config = this.getConfig()
+    const merged = { ...routes }
+    delete merged[current.name]
+    merged[nextName] = { ...existing, ...patch, name: nextName }
+    const normalized = normalizeModelRoutes(merged, { fallbackStrategy: config.loadBalanceStrategy })
+    const written = this.updateConfig({ routes: normalized })
+    const route = written.routes?.[nextName]
+    if (route === undefined) {
+      return {
+        ok: false,
+        error: { code: 'invalid_input', message: `Route '${nextName}' was dropped by normalisation` },
+      }
+    }
+
+    this.addLog('info', `Route updated: ${nextName}`, { data: { name: nextName } })
+    return { ok: true, route, routes: written.routes ?? {} }
+  }
+
+  /**
+   * 删除路由（R2 + 验收 A）：删掉之后这个名字**不再被路由**，也不会被迁移复活
+   * —— 迁移判据是「原始存储对象上有没有 `routes` 键」，而删除写入的是 `{}`
+   * （键存在，值为空）。停用的路由不广告，删除的路由连条目都没有。
+   */
+  deleteRoute(name: string): ModelRouteRemoval {
+    this.ensureInitialized()
+
+    const validated = validateRouteNameInput(name)
+    if (!validated.ok) return { ok: false, error: validated.error }
+
+    const routes = this.getModelRoutes()
+    const existing = routes[validated.name]
+    if (existing === undefined) {
+      return {
+        ok: false,
+        error: { code: 'not_found', message: `Route '${validated.name}' does not exist` },
+      }
+    }
+
+    const next = { ...routes }
+    delete next[validated.name]
+    const written = this.updateConfig({ routes: next })
+
+    this.addLog('info', `Route deleted: ${validated.name}`, { data: { name: validated.name } })
+    return { ok: true, removed: existing, routes: written.routes ?? {} }
+  }
+
+  /**
+   * 写入侧的字段严格校验（读取侧是回落，这里是报错）：池策略 id 与打分口径。
+   * `prefer` 不在此列 —— 「未知即 balanced」是既有契约，逐路由复用保持同一兜底。
+   */
+  private checkRouteFieldWrites(input: Partial<ModelRoute>): ModelRouteError | undefined {
+    const poolError = checkPoolStrategyIds(input.poolStrategies)
+    if (poolError !== undefined) return poolError
+    if (input.strategy !== undefined && !isRouteStrategyValue(input.strategy)) {
+      return { code: 'invalid_input', message: `Unknown route strategy: ${JSON.stringify(input.strategy)}` }
+    }
+    const includeError = checkRouteModelRefs('includeModels', input.includeModels)
+    if (includeError !== undefined) return includeError
+    const excludeError = checkRouteModelRefs('excludeModels', input.excludeModels)
+    if (excludeError !== undefined) return excludeError
+    return undefined
   }
 
   // ==================== Log Operations ====================
@@ -1766,6 +2070,62 @@ class StoreManager {
   private setUserModelOverrides(overrides: UserModelOverrides): void {
     this.ensureInitialized()
     this.store!.set('userModelOverrides', overrides)
+  }
+
+  /**
+   * 全部手工能力标注（providerId -> displayName -> hint）。
+   *
+   * 与 `userModelOverrides` 分开存储，所以模型列表同步、重置都不会碰它 ——
+   * 用户纠正过的一条错误标注不能在下次在线刷新后悄悄消失。
+   */
+  getUserModelMarks(): UserModelMarks {
+    this.ensureInitialized()
+    return this.store!.get('userModelMarks') || DEFAULT_USER_MODEL_MARKS
+  }
+
+  /**
+   * 写入/清除一条手工标注。`mark` 为 `null` 或归一后没有有效字段表示**清除**，
+   * 即回到自动标注。返回写入后的全量标注表，UI 直接替换本地副本。
+   *
+   * 校验两层：供应商必须存在、模型必须在该供应商目录里（含已停用）。
+   * 名字或供应商 id 打错时不报错就等于「保存成功但永不生效」，这里直接拒绝。
+   */
+  setUserModelMark(
+    providerId: string,
+    displayName: string,
+    mark: ModelCapabilityHint | null
+  ): UserModelMarks {
+    this.ensureInitialized()
+
+    if (!this.getProviderById(providerId)) {
+      throw new Error(`Provider not found: ${providerId}`)
+    }
+    const name = typeof displayName === 'string' ? displayName.trim() : ''
+    if (name.length === 0) {
+      throw new Error('Model display name is required')
+    }
+    if (!this.getModelCatalogue(providerId).some(model => model.displayName === name)) {
+      throw new Error(`Model not in the catalogue of ${providerId}: ${name}`)
+    }
+
+    const current = this.getUserModelMarks()
+    const forProvider: Record<string, ModelCapabilityHint> = { ...(current[providerId] ?? {}) }
+    const normalized = mark === null ? undefined : normalizeModelMark(mark)
+    if (normalized === undefined) {
+      delete forProvider[name]
+    } else {
+      forProvider[name] = normalized
+    }
+
+    const next: UserModelMarks = { ...current }
+    if (Object.keys(forProvider).length === 0) {
+      delete next[providerId]
+    } else {
+      next[providerId] = forProvider
+    }
+
+    this.store!.set('userModelMarks', next)
+    return next
   }
 
   /**

@@ -1,0 +1,543 @@
+/**
+ * 多路由（`AppConfig.routes`）的归一化、一次性迁移与请求解析。
+ *
+ * 为什么在 store 层而不是 `proxy/autoRouting.ts`：`autoRouting.ts` 是纯决策层
+ * （不读 store、不认识 `auto` 这个名字），路由概念只允许出现在它外面这一层。
+ * 本文件同样不 import electron，所以 `node --test` 可以直接钉住迁移与归一语义。
+ *
+ * 三条不可变规则：
+ * - 每个函数都返回**新对象/新数组**，绝不原地改入参（AGENTS.md CRITICAL）；
+ * - 读取侧（`normalizeModelRoutes`）遇到非法条目**安全丢弃**，绝不抛异常 ——
+ *   一次手坏的 data.json 不能把整个 config 读挂（那会让代理起不来）；
+ * - 写入侧（`checkRouteName` / `validateRoutesForWrite`）返回**可读错误**，
+ *   IPC 与管理 API 共用同一套错误码。
+ */
+import type { AutoRoutingConfig, LoadBalanceStrategy, ModelRoute, RouteModelRef } from '../../shared/types.ts'
+import { isAutoPoolStrategyId } from '../../shared/types.ts'
+import { normalizeAutoRoutingConfig } from './autoRoutingConfig.ts'
+import type { ModelRouteError } from '../../shared/modelRouteName.ts'
+import {
+  canonicalRouteName,
+  findRouteNameConflict,
+  isCanonicalRouteName,
+  validateRouteNameInput,
+} from '../../shared/modelRouteName.ts'
+
+/** 迁移生成的那条路由的名字：legacy 单 `auto` 模型降级为一条普通可编辑可删除的路由。 */
+export const LEGACY_AUTO_ROUTE_NAME = 'auto'
+
+/** 路由缺省打分口径：与 `DEFAULT_CONFIG.loadBalanceStrategy`、`rankCandidates` 同值。 */
+const DEFAULT_ROUTE_STRATEGY: LoadBalanceStrategy = 'round-robin'
+
+const LOAD_BALANCE_STRATEGIES: readonly LoadBalanceStrategy[] = [
+  'round-robin',
+  'fill-first',
+  'failover',
+  'smart',
+  'pace',
+]
+
+/**
+ * 写入侧的 `strategy` 校验。读取侧对非法值一律回落（见 `strategyOf`），但新建/编辑
+ * 时静默回落等于「选了 pace、存下来变成 round-robin」。
+ * ⚠️ 与 `prefer` 有意不同：`prefer` 的「未知即回落 balanced」是既有契约
+ * （tests/store/auto-routing-config.test.ts 钉着），逐路由复用时必须保持同一兜底。
+ */
+export function isRouteStrategyValue(value: unknown): value is LoadBalanceStrategy {
+  return typeof value === 'string' && LOAD_BALANCE_STRATEGIES.includes(value as LoadBalanceStrategy)
+}
+
+export interface NormalizeRoutesOptions {
+  /**
+   * 路由没写或写了非法 `strategy` 时回落到的口径。调用方传
+   * `config.loadBalanceStrategy`：那正是今天 `auto` 用的打分口径，
+   * 于是「手坏的 strategy」不会把请求打到另一个权重表上。
+   */
+  fallbackStrategy?: LoadBalanceStrategy
+}
+
+function strategyOf(raw: unknown, options: NormalizeRoutesOptions): LoadBalanceStrategy {
+  if (typeof raw === 'string' && LOAD_BALANCE_STRATEGIES.includes(raw as LoadBalanceStrategy)) {
+    return raw as LoadBalanceStrategy
+  }
+  return options.fallbackStrategy ?? DEFAULT_ROUTE_STRATEGY
+}
+
+/** 单条手动增删引用的上限：够覆盖整个目录，又不给手写 data.json 留无限增长的余地 */
+const MAX_MANUAL_MODEL_REFS = 2000
+
+/**
+ * 归一一条路由的手工增删列表。规则与其它字段相反：**非法条目整条丢弃**而不是
+ * 补默认值 —— 一条 `{providerId: '', displayName: ''}` 补成什么都只会指向错误模型。
+ * 去重按 `providerId + displayName` 的大小写不敏感形式，保留第一次出现的大小写
+ * （展示名是对上游模型表的精确键，不能因为去重被改小写）。
+ */
+export function normalizeRouteModelRefs(input: unknown): RouteModelRef[] {
+  if (!Array.isArray(input)) return []
+
+  const out: RouteModelRef[] = []
+  const seen = new Set<string>()
+  for (const entry of input as unknown[]) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const rawProvider = (entry as { providerId?: unknown }).providerId
+    const rawName = (entry as { displayName?: unknown }).displayName
+    if (typeof rawProvider !== 'string' || typeof rawName !== 'string') continue
+    const providerId = rawProvider.trim()
+    const displayName = rawName.trim()
+    if (providerId.length === 0 || displayName.length === 0) continue
+
+    const key = `${providerId.toLowerCase()}\u0000${displayName.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ providerId, displayName })
+    if (out.length >= MAX_MANUAL_MODEL_REFS) break
+  }
+  return out
+}
+
+/**
+ * 写入侧的手工增删校验：只校验**结构**，不校验模型是否还存在。
+ *
+ * 不按目录拒绝的理由：一条路由可能引用了用户刚刚停用的模型，若按目录拒绝，
+ * 之后任何一次无关的编辑都会因为这条陈旧引用而永久 400。真正取不回的引用
+ * 由候选池预览列为 `unresolved`，用户在那里删掉即可。
+ */
+export function checkRouteModelRefs(field: 'includeModels' | 'excludeModels', input: unknown): ModelRouteError | undefined {
+  if (input === undefined) return undefined
+  if (!Array.isArray(input)) {
+    return { code: 'invalid_input', message: `Route field '${field}' must be an array` }
+  }
+  for (const entry of input as unknown[]) {
+    const providerId = (entry as { providerId?: unknown } | null)?.providerId
+    const displayName = (entry as { displayName?: unknown } | null)?.displayName
+    if (typeof providerId !== 'string' || providerId.trim().length === 0
+      || typeof displayName !== 'string' || displayName.trim().length === 0) {
+      return {
+        code: 'invalid_input',
+        message: `Route field '${field}' entries need a non-empty providerId and displayName`,
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * 逐条归一：per-route 字段一律走既有的 `normalizeAutoRoutingConfig`，
+ * 保持与 legacy **同一兜底**（maxAttempts 1–5、stickyMinutes 0–1440、
+ * 未知 prefer→balanced、非法 pool strategy id 剔除、undefined→出厂默认）。
+ * 这里不复用它的 `enabled`：那是 legacy 的「auto 模型开关」，与路由的启用位语义不同。
+ */
+function normalizeRouteFields(name: string, entry: Record<string, unknown>, options: NormalizeRoutesOptions): ModelRoute {
+  // 只把**存在**的键交给归一化：缺省键要落到 `normalizeAutoRoutingConfig` 自己的
+  // 出厂默认（`{...DEFAULT, ...input}`），写成 `maxAttempts: undefined` 会把默认值
+  // 覆盖成 undefined，然后靠 Number(undefined)→NaN 分支兜住 —— 那就不再是同一条兜底路径。
+  const auto = normalizeAutoRoutingConfig({
+    ...(entry.maxAttempts !== undefined ? { maxAttempts: entry.maxAttempts } : {}),
+    ...(entry.stickyMinutes !== undefined ? { stickyMinutes: entry.stickyMinutes } : {}),
+    ...(entry.prefer !== undefined ? { prefer: entry.prefer } : {}),
+    ...(entry.poolStrategies !== undefined ? { poolStrategies: entry.poolStrategies } : {}),
+  } as Partial<AutoRoutingConfig>)
+
+  return {
+    name,
+    enabled: entry.enabled !== false,
+    strategy: strategyOf(entry.strategy, options),
+    prefer: auto.prefer,
+    maxAttempts: auto.maxAttempts,
+    stickyMinutes: auto.stickyMinutes,
+    poolStrategies: auto.poolStrategies,
+    // 缺省键归一成空数组而不是 `undefined`：读侧每条路由同形，消费方不用区分
+    // 「没配手动增删」与「配了空列表」。
+    includeModels: normalizeRouteModelRefs(entry.includeModels),
+    excludeModels: normalizeRouteModelRefs(entry.excludeModels),
+  }
+}
+
+/**
+ * 读取侧归一（`normalizeConfig` 调用）。规则：
+ * - 入参不是对象 → `{}`（首次迁移由调用方负责，见 `routesFromLegacyAutoRouting`）；
+ * - **键即名字**：存储键规范化后必须还是它自己且落在 `[a-z0-9_-]{1,64}`，否则整条丢弃；
+ *   `name` 字段与键不一致时以键为准并把 `name` 修成键 —— 请求解析、/v1/models、
+ *   sticky 键都按「键 == name」读，留着两套写法就会分叉；
+ * - 大小写不敏感重复 → 保留**排序后靠前**的那个（不依赖 Record 的插入顺序：
+ *   纯数字名如 `2026` 会被 JS 整数键提升而先迭代）；
+ * - 逐条字段归一，非法值走兜底而不是丢整条；
+ * - 不查模型目录：路由名与同名模型的冲突按「路由优先」处理，不是丢弃路由。
+ */
+export function normalizeModelRoutes(
+  input: unknown,
+  options: NormalizeRoutesOptions = {}
+): Record<string, ModelRoute> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {}
+
+  const entries = input as Record<string, unknown>
+  const out: Record<string, ModelRoute> = {}
+
+  for (const rawKey of Object.keys(entries).sort((a, b) => a.localeCompare(b))) {
+    const key = canonicalRouteName(rawKey)
+    if (!isCanonicalRouteName(key) || key !== rawKey) continue
+
+    const entry = entries[rawKey]
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+
+    // 重复与非法键都已经按排序取舍：先到先得，后来者丢弃（不静默覆盖用户的一条路由）
+    if (out[key] !== undefined) continue
+
+    out[key] = normalizeRouteFields(key, entry as Record<string, unknown>, options)
+  }
+
+  return out
+}
+
+/**
+ * 一次性迁移：legacy `config.autoRouting` → 名为 `auto` 的路由。
+ *
+ * 判据在调用方（`store.ts::normalizeConfig`）**看原始存储对象有没有 `routes` 这个键**，
+ * 而不是「routes 是不是空」：按空迁移会让用户删光路由后的每一次读取都重新造出 `auto`，
+ * 直接违反「删除后这个名字不再被路由」。键一旦存在（哪怕是 `{}`）就永不迁移，
+ * 于是这条迁移天然幂等。
+ *
+ * `enabled` 取 legacy 的开关值：用户关掉过 auto 就不能在升级后被悄悄打开。
+ * `strategy` 取当时的 `loadBalanceStrategy`：那正是今天 auto 用的打分口径。
+ */
+export function routesFromLegacyAutoRouting(
+  autoRouting: unknown,
+  options: NormalizeRoutesOptions = {}
+): Record<string, ModelRoute> {
+  const legacy = normalizeAutoRoutingConfig(
+    (autoRouting && typeof autoRouting === 'object' ? autoRouting : {}) as Partial<AutoRoutingConfig>
+  )
+
+  return {
+    [LEGACY_AUTO_ROUTE_NAME]: normalizeRouteFields(
+      LEGACY_AUTO_ROUTE_NAME,
+      {
+        enabled: legacy.enabled,
+        prefer: legacy.prefer,
+        maxAttempts: legacy.maxAttempts,
+        stickyMinutes: legacy.stickyMinutes,
+        poolStrategies: legacy.poolStrategies,
+      },
+      options
+    ),
+  }
+}
+
+/**
+ * 请求解析：把 `request.model` 解析成一条路由（大小写不敏感、trim）。
+ *
+ * 返回**不看 `enabled`** 的那一条：停用名要能被上层认出并给出可读错误，
+ * 而不是掉进「按普通模型名解析 → 503 no_available_account」那条完全无关的分支。
+ * 广告位（`/v1/models`）用的是 `enabledModelRoutes()`，那里才过滤。
+ *
+ * 优先级：路由名 **优先于** 同名模型（与今天 `auto` 的判定顺序一致）。
+ */
+export function findModelRoute(
+  routes: Record<string, ModelRoute> | undefined,
+  requestedModel: unknown
+): ModelRoute | undefined {
+  if (!routes) return undefined
+  const name = canonicalRouteName(requestedModel)
+  if (name.length === 0) return undefined
+
+  const direct = routes[name]
+  if (direct !== undefined && direct.name === name) return direct
+
+  for (const route of Object.values(routes)) {
+    if (route === undefined) continue
+    if (canonicalRouteName(route.name) === name) return route
+  }
+  return undefined
+}
+
+/**
+ * 全部路由（含停用的），按名字排序 —— `routes:list` 的返回值。
+ * 排序理由与 `enabledModelRoutes` 相同：不许依赖 Record 的迭代顺序。
+ */
+export function allModelRoutes(routes: Record<string, ModelRoute> | undefined): ModelRoute[] {
+  if (!routes) return []
+  return Object.values(routes)
+    .filter((route): route is ModelRoute => route !== undefined)
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * 在服的路由，按名字排序 —— `/v1/models` 的广告位顺序必须稳定，
+ * 所以这里显式排序，不依赖 Record 的迭代顺序（整数键提升会让 `2026` 排到最前）。
+ */
+export function enabledModelRoutes(routes: Record<string, ModelRoute> | undefined): ModelRoute[] {
+  if (!routes) return []
+  return Object.values(routes)
+    .filter((route): route is ModelRoute => route !== undefined && route.enabled)
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** 一次请求对路由表的判定结果（chat / completions 两条入口共用）。 */
+export type RouteRequestOutcome =
+  /** 命中且在服：按这条路由跑 */
+  | { kind: 'routable'; route: ModelRoute }
+  /** 命中但已停用：必须是可读的「路由已停用」，不能掉进具名模型路径 */
+  | { kind: 'disabled'; route: ModelRoute }
+  /** 这不是一个（在服或已停用的）路由名：按普通模型名解析（映射、聚合链、具名账号） */
+  | { kind: 'not-a-route' }
+
+/**
+ * 请求解析的门禁：路由名 **优先于** 同名模型，判定顺序与错误可读性都在这里定一次，
+ * 两条入口（`/v1/chat/completions`、`/v1/completions`）不许各写一套。
+ *
+ * 表里查不到就是 `not-a-route`，**保留虚拟名也不例外**（今天只有 legacy 的 `auto`）。
+ * 这是拍板过的语义：删除 `auto` 之后 `/v1/models` 不再广告它，`model="auto"` 退回
+ * 普通模型名解析 —— 没有同名模型时拿到的是既有的未知模型错误（具名路径的
+ * `503 no_available_account`），不是新的 404，也不是 500。
+ *
+ * 为什么不在这里为保留名另立一条「路由不存在」分支（本文件曾有过 `missing` 那一条）：
+ * - `code: 'route_not_found'` 已经是 **URL 路径没挂载** 的意思
+ *   （`proxy/routeErrorPolicy.ts`，被 `tests/api/route-error-policy.test.ts`、
+ *   `tests/api/rejection-log.test.ts` 钉着，与模型名无关）。同一个 code 装两种语义，
+ *   客户端按 code 分流时必然踩串，所以这两个语义不许共存于一个 code；
+ * - 「保留名删不掉就等于回退 legacy 全局 `autoRouting`」这个担忧与本分支无关：
+ *   回退的唯一入口是 `autoRouter.select()` 的 `route ?? legacy` 兜底，而调用方只在
+ *   outcome 为 `routable` 时才进 auto 路由（见 chat.ts / completions.ts 的
+ *   `route = kind === 'routable' ? route : undefined`）。`not-a-route` 根本不走那一步。
+ *
+ * 保留的是 `disabled`：存在但被用户停用的名字仍然给可读错误（`route_disabled`），
+ * 不许退化成无关的 `no_available_account`。
+ */
+export function resolveRouteRequest(
+  routes: Record<string, ModelRoute> | undefined,
+  requestedModel: unknown
+): RouteRequestOutcome {
+  const route = findModelRoute(routes, requestedModel)
+  if (route !== undefined) {
+    return route.enabled ? { kind: 'routable', route } : { kind: 'disabled', route }
+  }
+
+  return { kind: 'not-a-route' }
+}
+
+/** 写入校验的上下文：谁占着名字、表里已有什么。 */
+export interface RouteNameContext {
+  /** 正在持久化的路由表（改名的那条已通过 `excluding` 排除） */
+  routes: Record<string, ModelRoute>
+  /** 所有供应商目录里的展示名（**含已停用但仍在目录里的**）与供应商内部映射名 */
+  modelNameOccupants: string[]
+  /** 全局 `config.modelMappings` 的键（用户自建别名） */
+  aliasOccupants: string[]
+  /** 新建/编辑时的规范名 */
+  name: string
+  /** 改名时旧的规范名；新建时省略 */
+  excluding?: string
+}
+
+/**
+ * 单个名字的写入校验：字符集 → routes 内唯一 → 模型名冲突 → 别名冲突。
+ * 顺序有意如此：字符集不过就别提其他（错误文案要指对问题）。
+ */
+export function checkRouteName(context: RouteNameContext): ModelRouteError | undefined {
+  const validated = validateRouteNameInput(context.name)
+  if (!validated.ok) return validated.error
+
+  const { name } = validated
+  const excluding = canonicalRouteName(context.excluding ?? '')
+
+  for (const existing of Object.values(context.routes)) {
+    if (existing === undefined) continue
+    const existingName = canonicalRouteName(existing.name)
+    if (existingName.length === 0 || existingName === excluding) continue
+    if (existingName === name) {
+      return { code: 'duplicate_name', message: `A route named '${name}' already exists` }
+    }
+  }
+
+  const modelHit = findRouteNameConflict(name, context.modelNameOccupants)
+  if (modelHit !== undefined) {
+    return {
+      code: 'conflicts_model',
+      message: `Route name '${name}' collides with the served model '${modelHit}'`,
+    }
+  }
+
+  const aliasHit = findRouteNameConflict(name, context.aliasOccupants)
+  if (aliasHit !== undefined) {
+    return {
+      code: 'conflicts_alias',
+      message: `Route name '${name}' collides with the model alias '${aliasHit}'`,
+    }
+  }
+
+  return undefined
+}
+
+/**
+ * 写入侧的池策略校验：读取侧丢掉非法 id 就够了，但**新建/编辑**时用户是明确点了
+ * 「保存」的，静默丢掉就是「我明明勾了三项怎么只剩两项」。非法 id 报可读错误。
+ */
+export function checkPoolStrategyIds(input: unknown): ModelRouteError | undefined {
+  if (input === undefined) return undefined
+  if (!Array.isArray(input)) {
+    return { code: 'invalid_input', message: "Route field 'poolStrategies' must be an array" }
+  }
+  for (const entry of input as unknown[]) {
+    const id = (entry as { id?: unknown } | null)?.id
+    if (typeof id !== 'string' || !isAutoPoolStrategyId(id)) {
+      return { code: 'unknown_pool_strategy', message: `Unknown pool strategy id: ${JSON.stringify(id)}` }
+    }
+  }
+  return undefined
+}
+
+/** 表里已经存在的规范名：这些是「已生效」的名字，不再拿同名模型去拒绝。 */
+function persistedRouteNames(routes: Record<string, ModelRoute> | undefined): Set<string> {
+  const names = new Set<string>()
+  for (const route of Object.values(routes || {})) {
+    const name = canonicalRouteName(route?.name)
+    if (name.length > 0) names.add(name)
+  }
+  for (const key of Object.keys(routes || {})) {
+    const name = canonicalRouteName(key)
+    if (name.length > 0) names.add(name)
+  }
+  return names
+}
+
+/**
+ * 整表写入校验（管理 API `PUT /v1/management/config[/:key]` 与 IPC 共用）。
+ *
+ * 只拒绝**结构非法**与**新出现**的名字冲突：已经在表里的名字是「已生效的路由」，
+ * 之后同步进来一个同名模型不改变它的行为（请求解析按路由优先），所以不能因此
+ * 让每一次配置写入永久 400。
+ *
+ * 名字规则与 `routes:*` IPC 同源（同一个 `validateRouteNameInput`），并且把
+ * 「键必须等于其规范形」升级为硬校验：读侧会丢弃非规范键（脏盘容错，不许削弱），
+ * 写侧若放行它们就是「200 成功 + 条目凭空消失」。trim+小写后的规范形与输入不同
+ * （`Auto`、` Fast `）→ 400，消息里带具体键与它的规范形。
+ */
+export function validateRoutesForWrite(
+  input: unknown,
+  current: Record<string, ModelRoute> | undefined,
+  occupants: { modelNames: string[]; aliases: string[] }
+): string[] {
+  const errors: string[] = []
+
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return ['routes must be an object keyed by route name']
+  }
+
+  const known = persistedRouteNames(current)
+  const entries = input as Record<string, unknown>
+
+  for (const rawKey of Object.keys(entries).sort((a, b) => a.localeCompare(b))) {
+    const validated = validateRouteNameInput(rawKey)
+    if (!validated.ok) {
+      errors.push(`routes.${JSON.stringify(rawKey)}: ${validated.error.message}`)
+      continue
+    }
+    // 键必须**等于其规范形**：`routes:*` IPC 在落盘前就规范化（键天生是规范形），而读取侧
+    // (`normalizeModelRoutes`) 会把「键 != canonicalRouteName(键)」的条目静默丢弃。整表写
+    // 若不拒这一步，`Auto`/`a b` 这类键就会「保存成功但列表里永远没有」——写侧与读侧必须
+    // 共用同一套名字规则，这里就是共用的那一条硬校验（消息点名具体键并给出规范形）。
+    if (validated.name !== rawKey) {
+      errors.push(
+        `routes.${JSON.stringify(rawKey)}: the key must equal its canonical name '${validated.name}' ` +
+        '(trimmed and lowercase; non-canonical keys are dropped by the reader)'
+      )
+      continue
+    }
+    const name = validated.name
+
+    const entry = entries[rawKey]
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      errors.push(`routes.${name}: must be an object`)
+      continue
+    }
+
+    const record = entry as Record<string, unknown>
+    const entryName = canonicalRouteName(record.name)
+    if (entryName.length > 0 && entryName !== name) {
+      errors.push(`routes.${name}: its 'name' field ('${record.name}') must match the key`)
+    }
+    if (record.enabled !== undefined && typeof record.enabled !== 'boolean') {
+      errors.push(`routes.${name}: 'enabled' must be a boolean`)
+    }
+    if (record.strategy !== undefined && !isRouteStrategyValue(record.strategy)) {
+      errors.push(`routes.${name}: 'strategy' must be one of ${LOAD_BALANCE_STRATEGIES.join(', ')}`)
+    }
+    if (record.poolStrategies !== undefined) {
+      if (!Array.isArray(record.poolStrategies)) {
+        errors.push(`routes.${name}: 'poolStrategies' must be an array`)
+      } else {
+        for (const strategy of record.poolStrategies as unknown[]) {
+          const id = (strategy as { id?: unknown } | null)?.id
+          if (typeof id !== 'string' || !isAutoPoolStrategyId(id)) {
+            errors.push(`routes.${name}: unknown pool strategy id ${JSON.stringify(id)}`)
+          }
+        }
+      }
+    }
+    for (const field of ['includeModels', 'excludeModels'] as const) {
+      const refError = checkRouteModelRefs(field, record[field])
+      if (refError !== undefined) {
+        errors.push(`routes.${name}: ${refError.message}`)
+      }
+    }
+
+    if (known.has(name)) continue
+
+    const modelHit = findRouteNameConflict(name, occupants.modelNames)
+    if (modelHit !== undefined) {
+      errors.push(`routes.${name}: collides with the served model '${modelHit}'`)
+      continue
+    }
+    const aliasHit = findRouteNameConflict(name, occupants.aliases)
+    if (aliasHit !== undefined) {
+      errors.push(`routes.${name}: collides with the model alias '${aliasHit}'`)
+    }
+  }
+
+  const lowercased = new Map<string, string>()
+  for (const key of Object.keys(entries)) {
+    const name = canonicalRouteName(key)
+    if (name.length === 0) continue
+    const previous = lowercased.get(name)
+    if (previous !== undefined && previous !== key) {
+      errors.push(`routes.${key}: duplicates routes.${previous} (names compare case-insensitively)`)
+    }
+    lowercased.set(name, key)
+  }
+
+  return errors
+}
+
+/**
+ * 组装一次写入后的新表（CRUD 与 `PUT /v1/management/config` 共用）。
+ *
+ * `base` 是现有表（**已经归一**）、`incoming` 是这次提交的表：同名条目按
+ * 字段合并（PATCH 语义，路由的池策略整体替换而不是追加），随后再过一遍归一，
+ * 因此返回的表与读取侧归一的结果完全同形 —— 落盘与读出不会再有两个版本。
+ */
+export function mergeRouteTables(
+  base: Record<string, ModelRoute>,
+  incoming: Record<string, ModelRoute>
+): Record<string, ModelRoute> {
+  const merged: Record<string, ModelRoute> = { ...base }
+
+  for (const [key, route] of Object.entries(incoming)) {
+    const name = canonicalRouteName(key)
+    if (!isCanonicalRouteName(name)) continue
+    const previous = merged[name]
+    merged[name] = previous === undefined
+      ? { ...route, name }
+      : {
+          ...previous,
+          ...route,
+          name,
+          poolStrategies: route.poolStrategies ?? previous.poolStrategies,
+          // 手动增删是「整表替换」的列表，不是可拼接的集合：省略表示沿用，
+          // 空数组表示用户清空了它 —— 这两种必须能区分。
+          includeModels: route.includeModels ?? previous.includeModels,
+          excludeModels: route.excludeModels ?? previous.excludeModels,
+        }
+  }
+
+  return merged
+}

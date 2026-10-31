@@ -11,6 +11,7 @@
 import { PassThrough } from 'node:stream'
 import axios from 'axios'
 import type { Account, Provider } from '../../store/types'
+import { DEFAULT_MAX_OUTPUT_TOKENS } from '../utils/outputCap.ts'
 import type {
   ChatCompletionMessageToolCall,
   ChatCompletionRequest,
@@ -19,8 +20,13 @@ import type {
 } from '../types'
 
 const ANTHROPIC_VERSION = '2023-06-01'
-/** Anthropic requires this field even when the client omits it. */
-const DEFAULT_MAX_TOKENS = 4096
+/**
+ * Anthropic requires `max_tokens` even when the client omits it. The live value
+ * normally arrives already filled in by `ensureAnthropicOutputCap` (client cap,
+ * per-model parameter, then the `defaultMaxOutputTokens` setting); this constant
+ * is only the last resort for callers that build a request bypassing the forwarder.
+ */
+const DEFAULT_MAX_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
 
 type AnthropicBlock =
   | { type: 'text'; text: string }
@@ -340,6 +346,18 @@ export function convertAnthropicResponse(payload: any, displayModel: string): Re
   }
 }
 
+/** True when accumulated tool arguments parse as a complete JSON object (empty string counts as {}). */
+function isCompleteJson(args: string): boolean {
+  const trimmed = args.trim()
+  if (trimmed === '') return true
+  try {
+    const parsed = JSON.parse(trimmed)
+    return typeof parsed === 'object' && parsed !== null
+  } catch {
+    return false
+  }
+}
+
 /**
  * Turns the Anthropic SSE stream into OpenAI chat.completion.chunk frames and
  * terminates with exactly one `[DONE]`.
@@ -361,8 +379,17 @@ export function convertAnthropicStream(
   let startedUsage: { input_tokens?: number; output_tokens?: number } = {}
   let toolCalls = 0
   let activeToolIndex: number | null = null
+  // 2026-10-31 audit (same disease as the channel-pack projection): tool-call
+  // fragments are staged, not written immediately. Truncation — upstream cut
+  // before stop_reason, max_tokens landing mid-call, partial JSON args — can
+  // only be decided at finish time, and a half-emitted tool call makes strict
+  // clients (Qoder StreamAdapter) abort the whole turn as malformed.
+  let sawStopReason = false
+  const stagedToolFrames: string[] = []
+  const toolArgs = new Map<number, string>()
 
   const write = (delta: Record<string, unknown>, finish: string | null = null, includeUsage = false) => {
+    if (finishSent) return
     const payload: Record<string, unknown> = {
       id,
       object: 'chat.completion.chunk',
@@ -372,6 +399,18 @@ export function convertAnthropicStream(
     }
     if (includeUsage && usage) payload.usage = usage
     output.write(`data: ${JSON.stringify(payload)}\n\n`)
+  }
+
+  // Serialize a tool fragment into the staging buffer; flushed at finish.
+  const stageTool = (delta: Record<string, unknown>) => {
+    if (finishSent) return
+    stagedToolFrames.push(`data: ${JSON.stringify({
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: displayModel,
+      choices: [{ index: 0, delta, finish_reason: null }],
+    })}\n\n`)
   }
 
   const handleEvent = (event: string, data: string) => {
@@ -397,7 +436,8 @@ export function convertAnthropicStream(
       if (block?.type === 'tool_use') {
         activeToolIndex = toolCalls
         toolCalls += 1
-        write({
+        toolArgs.set(activeToolIndex, '')
+        stageTool({
           tool_calls: [{
             index: activeToolIndex,
             id: block.id,
@@ -419,7 +459,8 @@ export function convertAnthropicStream(
         write({ reasoning_content: delta.thinking })
       } else if (delta?.type === 'input_json_delta' && delta.partial_json) {
         const index = activeToolIndex ?? Math.max(toolCalls - 1, 0)
-        write({
+        toolArgs.set(index, (toolArgs.get(index) ?? '') + delta.partial_json)
+        stageTool({
           tool_calls: [{ index, function: { arguments: delta.partial_json } }],
         })
       }
@@ -428,6 +469,7 @@ export function convertAnthropicStream(
 
     if (event === 'message_delta') {
       if (parsed?.delta?.stop_reason) {
+        sawStopReason = true
         finishReason = mapStopReason(parsed.delta.stop_reason)
       }
       if (parsed?.usage) startedUsage = { ...startedUsage, ...parsed.usage }
@@ -436,7 +478,14 @@ export function convertAnthropicStream(
     }
 
     if (event === 'error') {
-      output.write(`data: ${JSON.stringify({ error: parsed?.error ?? { message: 'Anthropic stream error' } })}\n\n`)
+      // Terminate the stream exactly like the source-error path below: one
+      // error frame + [DONE], no trailing finish chunk afterwards.
+      if (!finishSent) {
+        finishSent = true
+        output.write(`data: ${JSON.stringify({ error: parsed?.error ?? { message: 'Anthropic stream error' } })}\n\n`)
+        output.write('data: [DONE]\n\n')
+        output.end()
+      }
       return
     }
   }
@@ -461,12 +510,27 @@ export function convertAnthropicStream(
 
   const finish = () => {
     if (finishSent) return
-    finishSent = true
+    // Role fallback first, then the discard decision and the final chunk —
+    // the finishSent latch goes down LAST, because write() refuses anything
+    // past it.
     if (!roleSent) write({ role: 'assistant', content: '' })
+    // 2026-10-31 audit: drop staged tool fragments when the call cannot be
+    // legal — partial JSON args, upstream cut before any stop_reason, or
+    // max_tokens landing mid-call — and upgrade the finish to "length" so
+    // clients retry instead of executing a half call.
+    const argsTruncated = [...toolArgs.values()].some(args => args !== '' && !isCompleteJson(args))
+    const discardTools = argsTruncated
+      || (stagedToolFrames.length > 0 && (!sawStopReason || finishReason === 'length'))
+    if (discardTools) {
+      finishReason = 'length'
+    } else {
+      for (const frame of stagedToolFrames) output.write(frame)
+    }
     usage = usage ?? openAiUsage(startedUsage)
     write({}, finishReason, true)
     output.write('data: [DONE]\n\n')
     output.end()
+    finishSent = true
   }
 
   source.on('end', finish)

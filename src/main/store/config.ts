@@ -12,6 +12,7 @@ import {
   DEFAULT_CONFIG,
 } from './types'
 import { normalizeToolCallingConfig } from '../../shared/toolCalling'
+import { validateRoutesForWrite } from './modelRoutes'
 import { isLoopbackHost } from '../proxy/authPolicy'
 
 /**
@@ -368,7 +369,26 @@ export class ConfigManager {
         errors.push('toolCallingConfig.clientAdapterId must be one of: standard-openai-tools, cherry-studio-mcp')
       }
     }
-    
+
+    // routes：这里过去**完全不看**，于是脏表会被读取侧的 `normalizeModelRoutes`
+    // **静默丢条目**（键非法、条目不是对象 → 整条消失），用户看到的是一句「保存成功」
+    // 和一条不见了的路由。写入侧必须报错，静默丢弃只允许发生在读取侧对付手坏的盘。
+    //
+    // 校验只复用既有那一个口径 `validateRoutesForWrite`（它与 IPC 的 `routes:*`
+    // 共用），里面已经包含 `checkRouteName` 的三条规则（字符集 / routes 内大小写
+    // 不敏感唯一 / 与在服模型名、用户别名的冲突）与 `checkPoolStrategyIds` 的池
+    // 策略 id 检查；在这里再调一遍 `checkRouteName` 只会造出第二个口径。
+    // 它刻意只拒绝**新出现**的名字冲突：已生效的路由不因后来同步进同名模型而写不进去。
+    if (config.routes !== undefined) {
+      // 存储没起来时这里抛，由调用方（管理 API 的 try/catch）变成 500 + 原因；
+      // 不在校验函数里吞掉，否则「表读不到」会被显示成「你的表是空的」。
+      errors.push(...validateRoutesForWrite(
+        config.routes,
+        storeManager.getModelRoutes(),
+        storeManager.getRouteNameOccupants()
+      ))
+    }
+
     return {
       valid: errors.length === 0,
       errors,

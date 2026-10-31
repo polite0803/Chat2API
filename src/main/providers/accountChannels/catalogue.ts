@@ -43,6 +43,9 @@ export const ACCOUNT_CHANNELS: readonly ChannelDefinition[] = [
     vendor: 'Cline',
     loginKind: 'device-code',
     description: '设备码授权 Cline，按订阅额度（不是余额）计费。',
+    // 上游 Vercel AI Gateway 硬限 tools ≤ 128，超限 400（以流内错误帧浮现，
+    // 换家循环拦不到，用户报障 2026-10-30）——auto 选候选时前置跳过。
+    maxTools: 128,
   },
   {
     id: 'loomy',

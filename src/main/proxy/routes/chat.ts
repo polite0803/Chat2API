@@ -13,19 +13,24 @@ import { requestForwarder, isFailoverEligibleStatus } from '../forwarder'
 import { streamHandler } from '../stream'
 import { proxyStatusManager } from '../status'
 import { modelMapper } from '../modelMapper'
-import { autoRouter, isAutoModel } from '../autoRouter'
+import { autoRouter } from '../autoRouter'
 import type { AutoCandidate, AutoRouteDecision } from '../autoRouter'
+import { resolveRouteRequest } from '../../store/modelRoutes'
 import type { RequestLogEntry } from '../../../shared/types'
 import { buildStreamErrorFrame, mapUpstreamError, retryAfterHeader } from '../errorMapping'
 import { findUnsupportedParameter, unsupportedParameterError } from '../parameterPolicy'
 import { createToolViolationTap } from '../utils/toolViolationTap'
 import { normalizeMessageRoles } from '../utils/messageRoles'
+import { normalizeOutputCap } from '../utils/outputCap'
 import { toHeaderValue, routeHeaderValue } from '../utils/headerValue'
 import { readStreamOutcome } from '../utils/streamOutcome'
+import { accountChannelManager } from '../../providers/accountChannels/manager'
 import { storeManager } from '../../store/store'
 import { AUTO_PREFERENCES, type AutoPreference } from '../../../shared/types'
 import { readOrEstimateUsage, usageInputText, type UsageReading } from '../quota/usage'
 import { learnFromErrorBody, learnFromHeaders } from '../quota/observations'
+import { rejectionEntryFromContext } from '../rejectionLog'
+import { clientHeaderValue, identifyClientByUserAgent } from '../../../shared/clientProfile'
 import { takeCompressionReport } from '../compression'
 import { takeDuplication } from '../compression/duplication.ts'
 import { takeConversationTurn } from '../compression/survivorship.ts'
@@ -44,6 +49,9 @@ function autoLogRecord(
 ): RequestLogEntry['auto'] | undefined {
   if (!decision) return undefined
   return {
+    // 路由名（legacy 路径为 `auto`）：日志与仪表盘要能区分「哪条路由跑的」，
+    // 光看 prefer/reason 分不出来。字段是新增的可选键，老日志没有它照旧渲染。
+    route: decision.routeName,
     prefer: decision.prefer,
     reason: decision.reason,
     attempts,
@@ -176,6 +184,10 @@ router.post('/completions', async (ctx: Context) => {
   const startTime = Date.now()
   const requestId = generateRequestId()
   ctx.set('X-Request-Id', requestId)
+  // 按 UA 归类调用方：只用于日志与响应头（Trae / WorkBuddy / Qoder / dsh …），
+  // 不参与选路。识别失败不报错，落到 other + 原始产品名。
+  const client = identifyClientByUserAgent(ctx.headers['user-agent'])
+  ctx.set('X-ModelPort-Client', clientHeaderValue(client))
   const clientIP = getClientIP(ctx)
 
   let request: ChatCompletionRequest
@@ -220,11 +232,10 @@ router.post('/completions', async (ctx: Context) => {
     return
   }
 
-  request = { ...request, messages: normalizeMessageRoles(request.messages) }
+  request = normalizeOutputCap({ ...request, messages: normalizeMessageRoles(request.messages) })
 
-  // 客户端请求的输出上限，口径与渠道包一致（max_completion_tokens 优先）；没给就不记。
-  const requestedMax = (request as { max_completion_tokens?: unknown }).max_completion_tokens ?? request.max_tokens
-  const requestedMaxTokens = typeof requestedMax === 'number' ? requestedMax : undefined
+  // 客户端请求的输出上限；入口已把 max_completion_tokens 折进 max_tokens，这里只读一个字段。
+  const requestedMaxTokens = typeof request.max_tokens === 'number' ? request.max_tokens : undefined
 
   request.requestId = requestId
 
@@ -269,9 +280,101 @@ router.post('/completions', async (ctx: Context) => {
   }
 
   const config = storeManager.getConfig()
-  const autoDecision = isAutoModel(request.model) && config.autoRouting?.enabled !== false
-    ? autoRouter.select(request, config.loadBalanceStrategy, autoPreferenceFromHeader(ctx))
+
+  // 路由优先：`request.model` 先在路由表里查（trim + 小写、大小写不敏感）。
+  // 命中就是「点名一条路由」，同名模型不再参与解析 —— 与今天 `auto` 抢占同名
+  // 模型的顺序一致，只是名字从此来自用户。没命中才走具名模型/聚合链。
+  // 判定顺序（含「停用路由」这一条可读错误）在 store/modelRoutes.ts 的
+  // `resolveRouteRequest` 里定一次，两条入口共用。
+  //
+  // 实时性：`getConfig()` 每请求现读，所以新建/改名/停用/删除路由**不需要重启
+  // 代理**，下一个请求就按新表解析。两处进程内陈旧态是例外（粘性表在
+  // autoRouter 头注释、渠道模型目录 30s 缓存在 accountChannels/manager.ts）。
+  const routeOutcome = resolveRouteRequest(config.routes, request.model)
+
+  // 路由名透出。写在**解析出路由的那一刻**，所以它在任何 return 之前：停用路由
+  // 的 404、候选被剔光的 503 都带得上「这是哪条路由的答复」，流式分支更早于首块
+  // commit（响应头一旦发出就补不上，见下面 Auto-Skipped 的同款教训）。
+  // 名字是 `[a-z0-9_-]` 规范形，仍然过 toHeaderValue：持久化条目的 `name` 来自
+  // 磁盘，任何读侧归一之外的手坏都不该把一个成功请求变成 500（ERR_INVALID_CHAR）。
+  if (routeOutcome.kind === 'routable' || routeOutcome.kind === 'disabled') {
+    ctx.set('X-ModelPort-Route-Name', toHeaderValue(routeOutcome.route.name))
+  }
+
+  // 点名了一条存在但已停用的路由：给可读错误，别掉进「按普通模型名找账号」
+  // 的分支变成 `no_available_account` —— 那会让用户以为模型掉了而不是路由关了。
+  // 同时**留痕**：这条 404 到不了任何供应商，若不进请求日志（与 server.ts 的
+  // recordRejectedRequest 同一份条目形状），客户端狂打停用路由在面板上读作「无流量」。
+  if (routeOutcome.kind === 'disabled') {
+    const disabledMessage = `Route '${routeOutcome.route.name}' is disabled`
+    ctx.status = 404
+    ctx.body = {
+      error: {
+        message: disabledMessage,
+        type: 'invalid_request_error',
+        param: 'model',
+        code: 'route_disabled',
+      },
+    }
+    const rejected = rejectionEntryFromContext(ctx, 404, 'route_disabled', disabledMessage)
+    rejected.client = client
+    storeManager.addRequestLog(rejected)
+    storeManager.recordRequestInStats(false, rejected.latency, rejected.model || undefined)
+    return
+  }
+
+  // `not-a-route`（包括「点名 `auto` 但那条路由已被删除」）在这里**没有分支**：
+  // 拍板语义是退回普通模型名解析，所以它走下面 `!autoDecision` 的具名路径，
+  // 没有同名模型时拿到既有的 `503 no_available_account`（不是 404、更不是 500）。
+  // 这里曾经为保留名报 `code:'route_not_found'`，与 URL 层未挂载（routeErrorPolicy.ts）
+  // 共用一个 code 装两种语义，已删；`route ?? legacy` 的兜底只在 `routable` 时被调用，
+  // 因此删除 `auto` 后不可能回退去读 legacy 全局 `autoRouting`。
+  const route = routeOutcome.kind === 'routable' ? routeOutcome.route : undefined
+  const autoDecision = route !== undefined
+    ? autoRouter.select(request, config.loadBalanceStrategy, autoPreferenceFromHeader(ctx), route)
     : null
+
+  // 限流预检：worker 内部账号池的模型级限流（loomy spark-x2.6 当日额度用尽、
+  // 次日解禁）只存在于渠道 worker 内存，全账号受限时请求以 QUOTA_EXCEEDED 必败
+  // —— 换家循环拿到的是 HTTP 失败，无法区分「渠道此刻不可服务」与账号故障。
+  // 在发请求前逐渠道查询（走 worker 内存副本 rpc，TTL 缓存 60s）并把必败模型
+  // 的候选剔掉（用户报障 2026-10-30，与 maxTools 前置跳过同一思路）。
+  if (autoDecision && autoDecision.candidates.length > 0) {
+    const modelIdsByChannel = new Map<string, Set<string>>()
+    for (const candidate of autoDecision.candidates) {
+      if (candidate.provider.type !== 'account') continue
+      let ids = modelIdsByChannel.get(candidate.provider.id)
+      if (ids === undefined) {
+        ids = new Set<string>()
+        modelIdsByChannel.set(candidate.provider.id, ids)
+      }
+      ids.add(candidate.actualModel)
+    }
+    const rateLimitsByChannel = new Map<string, Record<string, { limited: true; resetAtMs: number }>>()
+    for (const [channelId, modelIds] of modelIdsByChannel) {
+      rateLimitsByChannel.set(channelId, await accountChannelManager.modelRateLimits(channelId, [...modelIds]))
+    }
+    autoDecision.candidates = autoDecision.candidates.filter(candidate => {
+      if (candidate.provider.type !== 'account') return true
+      const table = rateLimitsByChannel.get(candidate.provider.id)
+      const limited = table === undefined ? undefined : table[candidate.actualModel]
+      if (limited === undefined) return true
+      // 跳过原因透出（PLAN P0-2）：客户端据此提示「已跳过 xx（额度 x 分钟后复位）」，
+      // 而不是看着候选静默消失。
+      const resetMinutes = Math.max(1, Math.ceil((limited.resetAtMs - Date.now()) / 60_000))
+      autoDecision.skipped.push(
+        `${candidate.provider.id}/${candidate.displayName}:quota_reset_in_${resetMinutes}m`
+      )
+      return false
+    })
+  }
+
+  // 跳过清单透出：与 X-ModelPort-Auto-Degraded 并列。必须写在任何 return 之前
+  // —— 候选被剔光导致 503 时正是最需要解释的场景。动态部分（供应商名可能是
+  // 中文）一律过 toHeaderValue。
+  if (autoDecision && autoDecision.skipped.length > 0) {
+    ctx.set('X-ModelPort-Auto-Skipped', toHeaderValue(autoDecision.skipped.join(',')))
+  }
 
   let selection: AccountSelection | null = null
   let chainCandidates: AccountSelection[] = []
@@ -325,7 +428,8 @@ router.post('/completions', async (ctx: Context) => {
     ctx.status = 503
     ctx.body = {
       error: {
-        message: `No available model for auto routing${autoDecision.profile.needsVision ? ' (vision required)' : ''}`,
+        // 带上路由名（多条路由都可能报这个错，客户端要能看出是哪条没选出候选）
+        message: `No available model for route '${autoDecision.routeName}'${autoDecision.profile.needsVision ? ' (vision required)' : ''}`,
         type: 'service_unavailable_error',
         param: null,
         code: 'no_available_model',
@@ -383,14 +487,17 @@ router.post('/completions', async (ctx: Context) => {
       const outcome = await requestForwarder.forwardAutoCompletion(
         request,
         autoDecision.candidates,
-        context
+        context,
+        // 换家预算随 decision 走：这条路由的 maxAttempts，而不是转发层自己去读
+        // 全局 legacy `autoRouting.maxAttempts`。
+        { baseCap: autoDecision.baseCap }
       )
 
       if (!outcome) {
         ctx.status = 503
         ctx.body = {
           error: {
-            message: 'Auto routing produced no forward result',
+            message: `Route '${autoDecision.routeName}' produced no forward result`,
             type: 'service_unavailable_error',
             param: null,
             code: 'no_available_model',
@@ -549,6 +656,7 @@ router.post('/completions', async (ctx: Context) => {
         accountName: account.name,
         requestBody: JSON.stringify(request),
         userInput,
+        client,
         auto: autoLogRecord(autoDecision, autoAttempts),
         compression: compressionReport,
         duplication,
@@ -573,7 +681,7 @@ router.post('/completions', async (ctx: Context) => {
     learnQuotaCaps(provider, result.headers)
 
     if (autoDecision && chosenCandidate) {
-      autoRouter.rememberRoute(autoDecision.conversationKey, chosenCandidate)
+      autoRouter.rememberRoute(autoDecision.conversationKey, chosenCandidate, autoDecision.route)
     }
 
     proxyStatusManager.recordRequestSuccess(latency)
@@ -619,6 +727,7 @@ router.post('/completions', async (ctx: Context) => {
         accountName: account.name,
         requestBody: JSON.stringify(request),
         userInput,
+        client,
         auto: autoLogRecord(autoDecision, autoAttempts),
         compression: compressionReport,
         duplication,
@@ -649,6 +758,7 @@ router.post('/completions', async (ctx: Context) => {
         accountName: account.name,
         requestBody: JSON.stringify(request),
         userInput,
+        client,
         auto: autoLogRecord(autoDecision, autoAttempts),
         compression: compressionReport,
         duplication,

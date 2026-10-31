@@ -43,3 +43,9 @@ test('model names are namespaced by the channel id', () => {
   assert.equal(getChannelDefinition('qoder')?.name, 'Qoder')
   assert.equal(getChannelDefinition('nope'), undefined)
 })
+
+test('渠道 tools 硬上限：cline 必须声明 maxTools=128（用户报障 2026-10-30）', () => {
+  // cline 上游走 Vercel AI Gateway，超限 400 以 HTTP 200 的流内错误帧浮现，
+  // 换家循环拦不到 —— auto 候选前置跳过依赖这个声明，漏了就会复发。
+  assert.equal(getChannelDefinition('cline')?.maxTools, 128)
+})

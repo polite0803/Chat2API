@@ -6,15 +6,32 @@
  * 以「流内错误帧」浮现 —— auto 的换家机制看不到，整场失败。修复后：
  * 1. 账号渠道流式路径等「首块 vs 首错」，建流阶段的失败转成普通 ForwardResult；
  * 2. 工具数超限类 400 判为可换家（渠道装不下，账号本身无过）。
+ *
+ * PLAN-auto-routing-freellmapi P0-1/P0-2 追加：
+ * 3. 换家按错误类分级（账号故障类 3 家封顶；排队/额度/限流类放宽到 6 家）；
+ * 4. 换家有墙钟总预算（90s），预算耗尽返回最后失败；
+ * 5. 前置剔除的候选透出为 X-ModelPort-Auto-Skipped。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { PassThrough } from 'stream'
 
-import { firstStreamEvent, isFailoverEligibleStatus, isToolOverflowError } from '../../src/main/proxy/failover.ts'
+import {
+  AUTO_RECOVERABLE_EXTRA_ATTEMPTS,
+  AUTO_WALL_CLOCK_BUDGET_MS,
+  FIRST_EVENT_TIMEOUT_MS,
+  firstStreamEvent,
+  isFailoverEligibleStatus,
+  isRecoverableChannelFailure,
+  isToolOverflowError,
+  probeSseHead,
+  shouldTryNextAutoCandidate,
+} from '../../src/main/proxy/failover.ts'
 
 const forwarderSource = readFileSync('src/main/proxy/forwarder.ts', 'utf-8')
+const autoRouterSource = readFileSync('src/main/proxy/autoRouter.ts', 'utf-8')
+const chatRouteSource = readFileSync('src/main/proxy/routes/chat.ts', 'utf-8')
 
 test('工具数超限识别：命中用户报障的上游原文', () => {
   // 用户报障原文（cline / Vercel AI Gateway 400 的 error.message 片段）
@@ -82,6 +99,129 @@ test('firstStreamEvent：未产出任何数据就关闭（含无错误销毁）�
   assert.equal((await pendingEnded).kind, 'closed')
 })
 
+test('firstStreamEvent：等首事件超时判为 timeout（渠道假死要能进换家循环）', async () => {
+  // 假死证据（用户报障 2026-10-30）：qoder/qfmodel 三次 HTTP 200 零字节挂
+  // 165s / 285s / 625s —— 墙钟预算只在尝试之间检查，单次悬挂时永远等不到
+  // 检查点，所以「等首事件」本身必须有上限。
+  assert.equal(FIRST_EVENT_TIMEOUT_MS, 60_000, '等首事件超时钉在 60s')
+
+  const stream = new PassThrough()
+  const first = await firstStreamEvent(stream, 20)
+  assert.equal(first.kind, 'timeout')
+
+  // 超时结算后监听必须摘干净：流不被消费、不破坏，处置权留给调用方
+  // （forwarder 负责 destroy）。迟到的数据不得让已结算的 promise 二次触发。
+  stream.write('data: late\n\n')
+  const late = stream.read()
+  assert.ok(late !== null, '超时后流应保持未消费状态')
+})
+
+test('probeSseHead：HTTP 200 流内的错误帧判为 error，message 取自帧内（cline 场景）', async () => {
+  const stream = new PassThrough()
+  const pending = probeSseHead(
+    stream,
+    'data: {"error":{"message":"cline: Failed to create stream: inference request failed: failed to generate stream from Vercel: failed to invoke model \'reflection/beam-free\' with streaming: request failed with status 400: Invalid value for \'tools\': maximum number of items is 128.","statusCode":400}}\n\n'
+  )
+  // 错误帧就是首块：嗅探应同步判定，无需等待更多数据
+  const probe = await pending
+  assert.equal(probe.kind, 'error')
+  if (probe.kind !== 'error') return
+  assert.match(probe.message, /maximum number of items is 128/)
+})
+
+test('probeSseHead：错误帧后紧跟 [DONE] 与 end 也不改判', async () => {
+  const stream = new PassThrough()
+  const pending = probeSseHead(stream, 'data: {"error":{"message":"boom"}}\n\n')
+  stream.write('data: [DONE]\n\n')
+  stream.end()
+  const probe = await pending
+  assert.equal(probe.kind, 'error')
+})
+
+test('probeSseHead：OpenAI 规范形状的错误帧（choices:[] + error）也必须判 error（2026-10-31 报障）', async () => {
+  // 03:30:14 实发帧：渠道投影的错误帧带 choices:[]（OpenAI 中流错误规范形状），
+  // 旧判定 `'choices' in record` 先命中 → 被当内容帧放行 → auto 换家失明 →
+  // 错误帧透传给 Qoder 踩中其 outerProvider 崩溃。
+  const stream = new PassThrough()
+  const firstChunk = 'data: {"id":"chatcmpl-mvvd9z4l-mlsczv","object":"chat.completion.chunk","created":1793388614,"model":"cline/reflection/beam-free","choices":[],"error":{"message":"cline: inference request failed","type":"server_error","code":"SERVER"}}\n\n'
+  const pending = probeSseHead(stream, firstChunk)
+  stream.write('data: [DONE]\n\n')
+  stream.end()
+  const probe = await pending
+  assert.equal(probe.kind, 'error', '带 choices:[] 的错误帧不得被判成内容帧')
+  if (probe.kind !== 'error') return
+  assert.match(probe.message, /inference request failed/)
+})
+
+test('probeSseHead：正常 role 首帧立即放行，缓冲块原样带回', async () => {
+  const stream = new PassThrough()
+  const firstChunk = 'data: {"id":"chatcmpl-1","choices":[{"delta":{"role":"assistant","content":""}}]}\n\n'
+  const pending = probeSseHead(stream, firstChunk)
+  const probe = await pending
+  assert.equal(probe.kind, 'ok')
+  if (probe.kind !== 'ok') return
+  assert.equal(probe.buffered.length, 1)
+  assert.equal(probe.buffered[0], firstChunk)
+})
+
+test('probeSseHead：注释帧与半帧跨块后见到内容帧判 ok，buffered 不丢块', async () => {
+  const stream = new PassThrough()
+  const pending = probeSseHead(stream, ': ping\n\ndata: {"choices":[{"del')
+  const probePromise = pending.then((probe) => {
+    assert.equal(probe.kind, 'ok')
+    if (probe.kind !== 'ok') return
+    assert.equal(probe.buffered.length, 2)
+  })
+  stream.write('ta":{"content":"hi"}}]}\n\n')
+  await probePromise
+})
+
+test('probeSseHead：流在内容帧之前 end（纯 [DONE] / 空）判为 error 参与换家', async () => {
+  const doneOnly = new PassThrough()
+  const pendingDone = probeSseHead(doneOnly, 'data: [DONE]\n\n')
+  doneOnly.end()
+  assert.equal((await pendingDone).kind, 'error')
+
+  const empty = new PassThrough()
+  const pendingEmpty = probeSseHead(empty, '')
+  empty.end()
+  assert.equal((await pendingEmpty).kind, 'error')
+})
+
+test('forwarder 的流式路径必须先嗅探头部再转发（HTTP 200 流内错误帧要能进换家循环）', () => {
+  assert.match(
+    forwarderSource,
+    /const probe = await probeSseHead\(upstream, first\.chunk\)/,
+    'account-channel streaming must probe the SSE head before piping to the client',
+  )
+})
+
+test('autoRouter 必须按渠道 maxTools 前置跳过装不下的渠道（cline ≤ 128）', () => {
+  const source = readFileSync('src/main/proxy/autoRouter.ts', 'utf-8')
+  // P1-4 之后渠道定义先取一次（能力位与 maxTools 同一循环共用），再查 maxTools。
+  assert.match(
+    source,
+    /getChannelDefinition\(provider\.id\)/,
+    'auto candidate selection must consult the channel definition before sending upstream',
+  )
+  assert.match(
+    source,
+    /channelDefinition\?\.maxTools/,
+    'auto candidate selection must skip channels whose tools limit is exceeded before sending upstream',
+  )
+})
+
+test('worker 的 model.rateLimits rpc 必须剥 provider 前缀再查限流键', () => {
+  // 宿主 actualModel 形如 loomy/spark-x2.6，worker 限流键是裸名 spark-x2.6 ——
+  // 不剥前缀预检永远查不到（2026-10-30 限流预检漏拦的根因）。
+  const source = readFileSync('vendor/channel-pack/src/channel-pack-rpc.ts', 'utf-8')
+  assert.match(
+    source,
+    /modelId\.startsWith\(`\$\{req\.provider\}\/`\)/,
+    'model.rateLimits handler must strip the provider prefix before looking up rate-limit keys',
+  )
+})
+
 test('forwarder 的换家判据必须接上：超限 400 参与换家，普通 400 仍然直接失败', () => {
   // 钉调用点：forwardFirstReachable 在 4xx 判定之前先查工具超限
   assert.match(
@@ -100,5 +240,128 @@ test('forwarder 的流式路径必须等首事件再定成败（建流失败要�
     forwarderSource,
     /const first = await firstStreamEvent\(upstream\)/,
     'account-channel streaming must await the first stream event before declaring success',
+  )
+})
+
+test('forwarder 的流式路径必须处理等首事件超时（假死渠道不能悬住换家循环）', () => {
+  // 超时分支必须存在且先销毁源流（触发 openStream 的 close → cancel，
+  // 渠道 worker 才会中止上游请求，配额不被白烧到自然结束）。
+  assert.match(
+    forwarderSource,
+    /first\.kind === 'timeout'/,
+    'account-channel streaming must treat a first-event timeout as a failure',
+  )
+  assert.match(
+    forwarderSource,
+    /status: 504/,
+    'a first-event timeout must map to 504 so the failover loop keeps trying',
+  )
+})
+
+/* ---------------- PLAN P0-1：分级尝试上限 + 墙钟预算 ---------------- */
+
+test('可恢复类失败识别：各家渠道的排队/额度原文命中', () => {
+  // 排队：ModelQueuedError 的 message 与原始排队 JSON 体
+  assert.ok(isRecoverableChannelFailure('模型排队中'))
+  assert.ok(isRecoverableChannelFailure('{"code":"10605","message":"{\\"isQueued\\":true}"}'))
+  // 额度：qoder 110 / buddy 所有账号受限 / 通用 quota 文案
+  assert.ok(isRecoverableChannelFailure('qoder: Billing daily count exceeded (110/model_error)'))
+  assert.ok(isRecoverableChannelFailure('loomy: 模型 spark-x2.6 所有账号均受限，请稍后再试'))
+  assert.ok(isRecoverableChannelFailure('insufficient_quota: You exceeded your current quota'))
+})
+
+test('可恢复类失败识别：窄口径，账号故障与无关文案不得误判', () => {
+  assert.equal(isRecoverableChannelFailure(undefined), false)
+  assert.equal(isRecoverableChannelFailure(''), false)
+  // 账号故障类：5xx / 网络错误 —— 这些要走账号故障类的紧上限
+  assert.equal(isRecoverableChannelFailure('Internal Server Error'), false)
+  assert.equal(isRecoverableChannelFailure('socket hang up'), false)
+  assert.equal(isRecoverableChannelFailure('Request failed with status code 502'), false)
+  // 工具数超限走自己的分支，不属于可恢复渠道失败
+  assert.equal(isRecoverableChannelFailure("Invalid value for 'tools': maximum number of items is 128."), false)
+})
+
+test('分级尝试上限：纯账号故障撞基础上限收手；排队/额度类放行到扩展上限', () => {
+  const base = { baseCap: 3, extendedCap: 6, elapsedMs: 0, budgetMs: AUTO_WALL_CLOCK_BUDGET_MS }
+  // 连续 3 次 5xx：第 4 家不再试（与旧行为一致）
+  assert.equal(shouldTryNextAutoCandidate({ ...base, attempts: 3, accountFailures: 3 }), false)
+  // 连续排队/额度失败：不占账号故障上限，第 4~6 家继续试
+  assert.equal(shouldTryNextAutoCandidate({ ...base, attempts: 3, accountFailures: 0 }), true)
+  assert.equal(shouldTryNextAutoCandidate({ ...base, attempts: 5, accountFailures: 1 }), true)
+  // 扩展上限到顶：总尝试不超过候选列表长度
+  assert.equal(shouldTryNextAutoCandidate({ ...base, attempts: 6, accountFailures: 0 }), false)
+  // 混合序列：1 次额度失败 + 3 次 5xx → 账号故障撞满，收手
+  assert.equal(shouldTryNextAutoCandidate({ ...base, attempts: 4, accountFailures: 3 }), false)
+})
+
+test('墙钟预算：预算耗尽停止换家，但首个候选永远要试', () => {
+  const base = { attempts: 3, accountFailures: 1, baseCap: 3, extendedCap: 6, budgetMs: AUTO_WALL_CLOCK_BUDGET_MS }
+  assert.equal(AUTO_WALL_CLOCK_BUDGET_MS, 90_000, '换家墙钟预算钉在 90s')
+  // 未超预算：继续换家
+  assert.equal(shouldTryNextAutoCandidate({ ...base, elapsedMs: 89_999 }), true)
+  // 超预算：停止（返回最后失败，而不是零结果）
+  assert.equal(shouldTryNextAutoCandidate({ ...base, elapsedMs: 90_000 }), false)
+  // 首个候选不受预算约束：预检等前置步骤耗光预算时，零尝试会变成莫名 503
+  assert.equal(shouldTryNextAutoCandidate({
+    attempts: 0,
+    accountFailures: 0,
+    baseCap: 3,
+    extendedCap: 6,
+    elapsedMs: 120_000,
+    budgetMs: AUTO_WALL_CLOCK_BUDGET_MS,
+  }), true)
+})
+
+test('forwarder 的换家循环必须按分级上限与墙钟预算收口（源码钉点）', () => {
+  // 循环头调用分级判据
+  assert.match(
+    forwarderSource,
+    /shouldTryNextAutoCandidate\(\{/,
+    'forwardFirstReachable must consult the tiered-attempt predicate before each extra attempt',
+  )
+  // 账号故障类计数：可恢复类失败不得计入
+  assert.match(
+    forwarderSource,
+    /result\.status !== 429 && !isRecoverableChannelFailure\(result\.error\)/,
+    'only non-recoverable failures may count toward the account-failure cap',
+  )
+})
+
+test('autoRouter 候选必须放宽到基础上限 + 可恢复余量（源码钉点）', () => {
+  assert.match(
+    autoRouterSource,
+    /candidates\.slice\(0, maxAttempts \+ AUTO_RECOVERABLE_EXTRA_ATTEMPTS\)/,
+    'select must hand the forwarder the extended candidate tail for recoverable failures',
+  )
+  assert.equal(AUTO_RECOVERABLE_EXTRA_ATTEMPTS, 3, '默认 3 + 3 = 6 家')
+})
+
+/* ---------------- PLAN P0-2：跳过原因透出 ---------------- */
+
+test('autoRouter 必须收集 maxTools 与额度门控的剔除原因（源码钉点）', () => {
+  assert.match(
+    autoRouterSource,
+    /skipped\.add\(`\$\{provider\.id\}:tools_limit`\)/,
+    'maxTools-excluded channels must be recorded as skipped',
+  )
+  assert.match(
+    autoRouterSource,
+    /skipped\.add\(`\$\{provider\.id\}\/\$\{model\.displayName\}:\$\{quotaBlocked\}`\)/,
+    'quota-gated candidates must be recorded as skipped with the block reason',
+  )
+})
+
+test('chat 路由必须把跳过清单写进 X-ModelPort-Auto-Skipped（源码钉点）', () => {
+  // 限流预检剔除时要记录原因（带复位时间）
+  assert.match(
+    chatRouteSource,
+    /quota_reset_in_\$\{resetMinutes\}m/,
+    'rate-limit pre-check drops must record the reset ETA as the skip reason',
+  )
+  // 头必须在任何 return 之前写（候选被剔光的 503 也带得上解释）
+  assert.match(
+    chatRouteSource,
+    /ctx\.set\('X-ModelPort-Auto-Skipped', toHeaderValue\(autoDecision\.skipped\.join\(','\)\)\)/,
+    'the skipped list must be surfaced as X-ModelPort-Auto-Skipped',
   )
 })

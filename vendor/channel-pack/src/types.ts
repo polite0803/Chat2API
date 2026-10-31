@@ -912,6 +912,26 @@ export interface RpcProviderStatusResponse {
   statuses: Record<string, ProviderStatus>
 }
 
+/** 单个模型的限流状态（供宿主在选路前判断「该模型现在必败吗」）。 */
+export interface ModelRateLimitStatus {
+  /** 该模型当前全部启用账号都在限流中（发请求必失败）。 */
+  limited: true
+  /** 最早的解禁时刻（毫秒 epoch）；宿主可据此设置模型级冷却。 */
+  resetAtMs: number
+}
+
+/** RPC: 查询某供应商一批模型当前是否「全部账号限流」的请求 */
+export interface RpcModelRateLimitsRequest {
+  provider: string
+  /** 要查询的模型 id 列表（宿主的 auto 候选模型，通常只有 1~2 个）。 */
+  models: string[]
+}
+
+/** RPC: 模型限流查询响应。未限流 / 未知的模型不出现在结果里。 */
+export interface RpcModelRateLimitsResponse {
+  rateLimits: Record<string, ModelRateLimitStatus>
+}
+
 /**
  * RPC: 供应商级一键开关请求。
  *

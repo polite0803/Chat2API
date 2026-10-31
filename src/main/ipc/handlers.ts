@@ -14,6 +14,8 @@ import { oauthManager } from '../oauth/manager'
 import { fetchProviderModels } from '../providers/modelCatalog'
 import { opencodeService } from '../opencode/service.ts'
 import { proxyServer } from '../proxy/server'
+import { autoRouter } from '../proxy/autoRouter'
+import type { RoutePreviewResult, RoutePreviewSample } from '../proxy/autoRouter'
 import { proxyStatusManager } from '../proxy/status'
 import { sessionManager } from '../proxy/sessionManager'
 import { TrayManager } from '../tray/TrayManager'
@@ -22,7 +24,8 @@ import { generateManagementSecret } from '../proxy/middleware/managementAuth'
 import { runToolCallingSmoke } from '../proxy/toolCalling/diagnostics'
 import { UpdaterManager } from '../updater'
 import { setTitleBarTheme } from '../window/manager'
-import type { Provider, Account, ProxyStatus, ProviderCheckResult, OAuthResult, AuthType, CredentialField, LogLevel, LogEntry, ProviderVendor } from '../../shared/types'
+import type { Provider, Account, ProxyStatus, ProviderCheckResult, OAuthResult, AuthType, CredentialField, LogLevel, LogEntry, ProviderVendor, ModelRoute, ModelCapabilityHint } from '../../shared/types'
+import type { RouteListResult, RouteMutationResult, RouteRemovalResult } from '../../shared/modelRouteName'
 import type { SessionConfig, SessionRecord, ManagementApiConfig, AppConfig } from '../store/types'
 import type { ProviderType } from '../oauth/types'
 import type { ModelsFetchFailure } from '../store/types'
@@ -45,6 +48,32 @@ function aggregateSyncFailureReason(reason?: string): ModelsFetchFailure {
       return 'no_active_account'
     default:
       return 'unsupported'
+  }
+}
+
+/**
+ * `CONFIG_CHANGED` 的广播：`config:update` 与 `routes:*` 的写入路径共用同一份载荷
+ * —— 归一后的完整 `AppConfig`（一定带 `routes` 键；`store:set('config')` 发的是
+ * 同形的那份，见那条分支）。
+ * UI 收到就把整份配置（含路由表）换掉，不需要重读、也不需要重启代理。
+ */
+function broadcastConfigChanged(config: AppConfig): void {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (!win.isDestroyed()) {
+      win.webContents.send(IpcChannels.CONFIG_CHANGED, config)
+    }
+  })
+}
+
+/**
+ * 存储层没起来时的可读错误（`routes:*` 用）：`storeManager` 的 CRUD 会直接抛，
+ * IPC 边界不许把裸异常扔给 renderer —— 那条协议错误在界面上显示成一句英文栈提示，
+ * 用户看不出是「存储初始化失败」。
+ */
+function routeStorageError(error: unknown): { code: 'storage_unavailable'; message: string } {
+  return {
+    code: 'storage_unavailable',
+    message: error instanceof Error ? error.message : 'Storage is not available',
   }
 }
 
@@ -198,15 +227,85 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
 
   ipcMain.handle(IpcChannels.CONFIG_UPDATE, async (_, updates: Partial<AppConfig>) => {
     const newConfig = storeManager.updateConfig(updates)
-    
-    BrowserWindow.getAllWindows().forEach((win) => {
-      if (!win.isDestroyed()) {
-        win.webContents.send(IpcChannels.CONFIG_CHANGED, newConfig)
-      }
-    })
-    
+
+    broadcastConfigChanged(newConfig)
+
     return true
   })
+
+  // ==================== 多路由 CRUD（R2）====================
+  //
+  // 返回形状与 `channels:*` 那批同风格：`{ok:true,…} | {ok:false,error:{code,message}}`。
+  // 错误**以可读文本返回**而不是抛裸异常：UI 要把「名字撞了已服务的模型」「池策略
+  // id 未知」原样显示出来，协议错误只会让用户以为按钮没反应。
+  //
+  // 三条写通道成功后广播 `CONFIG_CHANGED`（载荷是归一后的整份配置，一定带 `routes`），
+  // renderer 立刻刷新路由表 —— 与「删除/停用路由不需要重启代理」是同一件事的两面：
+  // 请求侧每请求现读 `getConfig()`，界面侧靠这条广播同步。
+  //
+  // 名字/池策略校验全在 store 层（`storeManager.createRoute` 等 → `checkRouteName`
+  // /`checkPoolStrategyIds`），这里不许长第二份口径。
+
+  ipcMain.handle(IpcChannels.ROUTES_LIST, async (): Promise<RouteListResult> => {
+    try {
+      return { ok: true, routes: storeManager.listModelRoutes() }
+    } catch (error) {
+      return { ok: false, error: routeStorageError(error) }
+    }
+  })
+
+  ipcMain.handle(
+    IpcChannels.ROUTES_CREATE,
+    async (_, input: Partial<ModelRoute> & { name: string }): Promise<RouteMutationResult> => {
+      try {
+        const result = storeManager.createRoute(input)
+        if (!result.ok) return result
+        broadcastConfigChanged(storeManager.getConfig())
+        return result
+      } catch (error) {
+        return { ok: false, error: routeStorageError(error) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IpcChannels.ROUTES_UPDATE,
+    async (_, currentName: string, patch: Partial<ModelRoute>): Promise<RouteMutationResult> => {
+      try {
+        const result = storeManager.updateRoute(currentName, patch)
+        if (!result.ok) return result
+        broadcastConfigChanged(storeManager.getConfig())
+        return result
+      } catch (error) {
+        return { ok: false, error: routeStorageError(error) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IpcChannels.ROUTES_DELETE,
+    async (_, name: string): Promise<RouteRemovalResult> => {
+      try {
+        const result = storeManager.deleteRoute(name)
+        if (!result.ok) return result
+        broadcastConfigChanged(storeManager.getConfig())
+        return result
+      } catch (error) {
+        return { ok: false, error: routeStorageError(error) }
+      }
+    },
+  )
+
+  /**
+   * 路由池预览。入参是**草稿**路由（还没保存的那份），所以不能从 store 读配置 ——
+   * 用户要看到的是「按下保存后会怎样」。只读：不扣冷却、不请求上游、不写状态。
+   */
+  ipcMain.handle(
+    IpcChannels.ROUTES_PREVIEW,
+    async (_, route: ModelRoute, sample?: RoutePreviewSample): Promise<RoutePreviewResult> => {
+      return autoRouter.preview(route, sample ?? {})
+    },
+  )
 
   ipcMain.handle(IpcChannels.STORE_GET, async (_, key: string): Promise<unknown> => {
     if (key === 'logs') {
@@ -221,15 +320,28 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
       storeManager.replaceLogs(Array.isArray(value) ? value as LogEntry[] : [])
       return
     }
-    const store = storeManager.getStore()
-    store?.set(key as 'providers' | 'accounts' | 'config' | 'logs', value as never)
+    // `config` 是唯一有归一契约的整对象键：通用 raw 写会绕过 `updateConfig`，把
+    // `routes` 键从盘上抹掉，下一次读取就会重放 legacy 迁移、把用户已删的 `auto`
+    // 复活。所以这条路走 `storeManager.setConfig`（先归一再落盘，见该方法注释）：
+    // 其中 `routes` 键**永远取盘上现表**，renderer 那份镜像（可能陈旧）不再具备
+    // 抹掉路由的能力——路由只由 `routes:*` 专用通道与 `updateConfig` 负责。
+    // 广播的也是归一后的那份 —— UI 收到的与盘上的必须同形。
+    //
+    // 这条广播是 Header 的代理地址徽标等的唯一刷新来源（`tests/renderer/
+    // header-proxy-address.test.mjs` 用源码文本钉住「store:set('config') 也发
+    // CONFIG_CHANGED」），所以发送语句留在本分支里、不折进 helper：钉的那段文本
+    // 就是这条链路真正在跑的那段代码。
     if (key === 'config') {
+      const normalized = storeManager.setConfig(value)
       BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) {
-          win.webContents.send(IpcChannels.CONFIG_CHANGED, value)
+          win.webContents.send(IpcChannels.CONFIG_CHANGED, normalized)
         }
       })
+      return
     }
+    const store = storeManager.getStore()
+    store?.set(key as 'providers' | 'accounts' | 'config' | 'logs', value as never)
   })
 
   ipcMain.handle(IpcChannels.STORE_DELETE, async (_, key: string): Promise<void> => {
@@ -495,6 +607,26 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
       }
     }
   })
+
+  ipcMain.handle(IpcChannels.PROVIDERS_GET_MODEL_MARKS, async () => {
+    return storeManager.getUserModelMarks()
+  })
+
+  ipcMain.handle(
+    IpcChannels.PROVIDERS_SET_MODEL_MARK,
+    async (_, providerId: string, displayName: string, mark: ModelCapabilityHint | null) => {
+      try {
+        return { success: true, marks: storeManager.setUserModelMark(providerId, displayName, mark) }
+      } catch (error) {
+        console.error('[IPC] Failed to set model mark:', error)
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to set model mark',
+          marks: storeManager.getUserModelMarks(),
+        }
+      }
+    }
+  )
 
   ipcMain.handle(IpcChannels.AGGREGATE_LIST, async () => {
     return aggregateProviderManager.list()

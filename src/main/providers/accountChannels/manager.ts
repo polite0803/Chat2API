@@ -66,6 +66,7 @@ class AccountChannelManager {
   private syncing: Promise<void> | null = null
   private modelsCache: ModelsCache | null = null
   private onChanged: (() => void) | null = null
+  private rateLimitCache = new Map<string, { value: Record<string, { limited: true; resetAtMs: number }>; expiresAt: number }>()
 
   private get dataDir(): string {
     return join(homedir(), '.modelport')
@@ -242,6 +243,62 @@ class AccountChannelManager {
       }
     })
     return { reported, accounts, ...reported > 0 ? { remaining: Math.round(total * 100) / 100 } : {} }
+  }
+
+  /**
+   * 查询某渠道一批模型当前是否「全部启用账号都在限流中」（auto 选路预检）。
+   *
+   * ## 背景（用户报障 2026-10-30）
+   *
+   * worker 内部账号池有**模型级限流**（loomy spark-x2.6 当日额度用尽、次日
+   * 00:00 解禁），全账号受限时请求以 LlmError(QUOTA_EXCEEDED) 失败 —— 而该
+   * 状态只存在于 worker 内存，主进程选路时毫不知情，auto 会把请求发进必败
+   * 渠道。auto 在发请求前用本方法预检：全限流的模型候选直接跳过。
+   *
+   * ## 缓存
+   *
+   * rpc 走 worker 内存副本（无网络、无凭据解析），但仍做 TTL 缓存对齐余额
+   * 门控策略：成功 60s、失败 5s —— 选路热路径每个渠道每分钟最多一次 IPC，
+   * 且限流状态本来就是分钟级粒度。账号启停/重置时用 {@link clearRateLimitCache}
+   * 立即失效。失败返回空表（fail-open：查不到就放行，不拦正常流量）。
+   */
+  async modelRateLimits(id: string, modelIds: string[]): Promise<Record<string, { limited: true; resetAtMs: number }>> {
+    if (getChannelDefinition(id) === undefined || modelIds.length === 0) {
+      return {}
+    }
+    const key = `${id}::${[...new Set(modelIds)].sort().join('|')}`
+    const cached = this.rateLimitCache.get(key)
+    if (cached !== undefined && Date.now() < cached.expiresAt) {
+      return cached.value
+    }
+    try {
+      const bridge = await this.bridgeOrThrow()
+      const result = await bridge.rpc('model.rateLimits', { provider: id, models: modelIds })
+      const value = result.ok
+        ? (result.value as { rateLimits?: Record<string, { limited: true; resetAtMs: number }> } | undefined)?.rateLimits
+        : undefined
+      const table = value !== null && typeof value === 'object' ? value : {}
+      this.rateLimitCache.set(key, { value: table, expiresAt: Date.now() + (result.ok ? 60_000 : 5_000) })
+      return table
+    } catch {
+      const table: Record<string, { limited: true; resetAtMs: number }> = {}
+      this.rateLimitCache.set(key, { value: table, expiresAt: Date.now() + 5_000 })
+      return table
+    }
+  }
+
+  /** 账号启停/重置/换号后立即失效该渠道的限流预检缓存。 */
+  clearRateLimitCache(id?: string): void {
+    if (id === undefined) {
+      this.rateLimitCache.clear()
+      return
+    }
+    const prefix = `${id}::`
+    for (const key of this.rateLimitCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.rateLimitCache.delete(key)
+      }
+    }
   }
 
   /**

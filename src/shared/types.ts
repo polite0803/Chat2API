@@ -1,5 +1,7 @@
 import type { AggregateWire } from './aggregate'
-import type { ChannelLoginKind } from './channels'
+import type { ChannelLoginKind, CostBucket } from './channels'
+import type { AggregateCostClass } from './aggregateCost'
+import type { ClientIdentity } from './clientProfile'
 
 export type { AggregateWire }
 
@@ -66,6 +68,9 @@ export type CapabilityState = 'yes' | 'no' | 'unknown'
 
 export type AutoModelTier = 'fast' | 'balanced' | 'strong'
 
+/** 模型声明的输入模态；模型没有声明时整个字段缺失（不是空数组）。 */
+export type InputModality = 'text' | 'image' | 'audio' | 'video' | 'pdf'
+
 /**
  * One model's routing annotation, keyed by display name inside
  * `Provider.modelCapabilities`.
@@ -74,15 +79,142 @@ export type AutoModelTier = 'fast' | 'balanced' | 'strong'
  * `weight` / `free` come from the account-channel catalogue (the multiplier
  * that upstream prints in the display name); builtin and aggregate providers
  * leave them unset because neither publishes a per-model cost.
+ *
+ * The same shape stores the user's manual corrections (`userModelMarks`).
+ * Manual values are merged *on top of* whatever the source sync wrote, so a
+ * wrong or missing automatic mark is always fixable without touching code.
  */
 export interface ModelCapabilityHint {
   tier?: AutoModelTier
   vision?: Exclude<CapabilityState, 'unknown'>
   tools?: Exclude<CapabilityState, 'unknown'>
+  /** Evidence-based reasoning flag; absent means unknown (not "no"). */
+  reasoning?: Exclude<CapabilityState, 'unknown'>
+  /** Declared input modalities; absent means unknown (not text-only). */
+  modalities?: InputModality[]
   contextTokens?: number
   /** Credit multiplier reported by the channel pack; absent means unreported */
   weight?: number
   free?: boolean
+}
+
+/** Where one resolved capability field came from, highest evidence first. */
+export type CapabilitySource =
+  | 'manual'
+  | 'provider-record'
+  | 'aggregate-official'
+  | 'static'
+  | 'provider-default'
+  | 'third-party'
+  | 'heuristic'
+  | 'unknown'
+
+/**
+ * A resolved capability plus the provenance of each field.
+ *
+ * Provenance exists because the routing strategies are only as honest as their
+ * marks: the route editor shows "vision = yes (provider default)" so a user can
+ * tell an assumption from evidence and correct it manually.
+ */
+export interface ModelCapability {
+  tier: AutoModelTier
+  /** true when the tier came from a mark, false when it was guessed from the name */
+  tierEvidenced: boolean
+  vision: CapabilityState
+  tools: CapabilityState
+  reasoning: CapabilityState
+  /** Declared input modalities; absent means the source said nothing. */
+  modalities?: InputModality[]
+  /** 上下文窗口；`undefined` 表示未知（不是 0） */
+  contextTokens?: number
+  sources: {
+    tier: CapabilitySource
+    vision: CapabilitySource
+    tools: CapabilitySource
+    reasoning: CapabilitySource
+    modalities: CapabilitySource
+    contextTokens: CapabilitySource
+  }
+}
+
+/**
+ * One manual include/exclude entry on a route.
+ *
+ * Provider-qualified on purpose: two providers can expose the same display
+ * name, and removing "one model" must not silently remove the other one.
+ */
+export interface RouteModelRef {
+  providerId: string
+  displayName: string
+}
+
+/** 空池原因。前三个是请求画像缺能力，后两个是路由配置把池筛光。 */
+export type RoutePoolMissingReason =
+  | 'vision'
+  | 'tools'
+  | 'context'
+  | 'pool_strategy'
+  | 'manual_filter'
+
+/** 路由编辑器里「预览」用的请求画像；只影响能力硬过滤与上下文判定。 */
+export interface RoutePreviewSample {
+  needsVision?: boolean
+  needsTools?: boolean
+  estimatedTokens?: number
+}
+
+/**
+ * 预览里一个模型（不是账号）的最终状态：
+ * - `kept` 策略筛完仍在池里；`included` 手动加回；`excluded` 手动移除；
+ * - `filtered` 被某条池策略筛掉；`unavailable` 当前画像会把它硬过滤掉。
+ */
+export type RoutePreviewStatus = 'kept' | 'included' | 'excluded' | 'filtered' | 'unavailable'
+
+export interface RoutePreviewModel {
+  providerId: string
+  providerName: string
+  displayName: string
+  accountCount: number
+  status: RoutePreviewStatus
+  /** status='filtered'：第一条把它筛掉的池策略 */
+  filteredBy?: AutoPoolStrategyId
+  /** status='unavailable'：请求画像会把它硬过滤掉的原因 */
+  unavailableReason?: 'vision' | 'tools' | 'context'
+  capability: ModelCapability
+  costBucket?: CostBucket
+  costClass?: AggregateCostClass
+}
+
+export interface RoutePreviewResult {
+  routeName: string
+  profile: {
+    needsVision: boolean
+    needsTools: boolean
+    estimatedTokens: number
+    complexity: 'simple' | 'standard' | 'complex'
+    stream: boolean
+  }
+  /** 每条策略执行后的保留数（按配置顺序） */
+  strategies: { id: AutoPoolStrategyId; kept: number }[]
+  models: RoutePreviewModel[]
+  counts: {
+    /** 经过前置剔除后仍在候选里的模型数 */
+    candidates: number
+    afterStrategies: number
+    afterManual: number
+    /** 会被请求画像硬过滤掉的模型数 */
+    unavailable: number
+  }
+  manual: {
+    included: number
+    excluded: number
+    /** 引用了不存在/已停用模型的 include 条目 */
+    unresolved: RouteModelRef[]
+  }
+  /** 空池原因；非空时 `models` 里全部不是 `kept`/`included` */
+  missing: RoutePoolMissingReason[]
+  /** 前置剔除（额度打满/渠道工具上限），原样透出 */
+  skipped: string[]
 }
 
 /**
@@ -102,6 +234,13 @@ export interface AutoRoutingConfig {
   stickyMinutes: number
   /** Default optimisation target; `X-Auto-Prefer` overrides it per request. */
   prefer: AutoPreference
+  /**
+   * Static model-pool filters the user pre-chooses. Evaluated left-to-right with
+   * the per-entry operator; an empty array means no filtering at all (the pool
+   * is exactly what the user kept served, as before). An unknown id is dropped
+   * on normalisation, never a request failure.
+   */
+  poolStrategies: AutoPoolStrategy[]
 }
 
 export const DEFAULT_AUTO_ROUTING_CONFIG: AutoRoutingConfig = {
@@ -109,7 +248,217 @@ export const DEFAULT_AUTO_ROUTING_CONFIG: AutoRoutingConfig = {
   maxAttempts: 3,
   stickyMinutes: 30,
   prefer: 'balanced',
+  poolStrategies: [],
 }
+
+/**
+ * One named route the caller can ask for instead of a model.
+ *
+ * A route is a *request-time pool decision*, not a membership list: the pool is
+ * recomputed from the models that are served right now, then filtered by
+ * `poolStrategies` (an empty sequence is a no-op, so the pool is exactly what the
+ * user kept served). That is why adding a model needs no route edit, and why
+ * stopping one takes effect on the next request.
+ *
+ * `includeModels` / `excludeModels` are manual *overrides* on top of that
+ * decision, not membership: they exist so a wrong or missing model mark can be
+ * corrected by hand, and they never resurrect a model that is not served.
+ *
+ * Every per-route field reuses the normalisation the legacy `autoRouting` config
+ * already had (`store/autoRoutingConfig.ts`): `maxAttempts` clamped to 1-5,
+ * `stickyMinutes` to 0-1440, an unknown `prefer` falls back to `balanced`, unknown
+ * pool-strategy ids are dropped. Absent means "take the shipped default", never
+ * "treat as 0".
+ *
+ * `strategy` is the scoring profile - the same five values as
+ * `LoadBalanceStrategy` and `proxy/autoRouting.ts`'s `AutoRoutingStrategy` (the
+ * three unions are deliberately separate declarations; a shared type cannot import
+ * from `main/proxy`). It selects the scoring weights only; the account pick inside
+ * the chosen provider still follows the server-wide `loadBalanceStrategy`.
+ */
+export interface ModelRoute {
+  /** Canonical name (trim + lowercase, `[a-z0-9_-]{1,64}`); also the `routes` key. */
+  name: string
+  /** Disabled routes are neither advertised on `/v1/models` nor routable. */
+  enabled: boolean
+  /** Scoring profile used when ranking this route's pool. */
+  strategy: LoadBalanceStrategy
+  /** Optimisation target; `X-Auto-Prefer` still overrides it per request. */
+  prefer: AutoPreference
+  /** Candidate cap for one request through this route. */
+  maxAttempts: number
+  /** How long a conversation stays pinned; 0 disables stickiness for this route. */
+  stickyMinutes: number
+  /** Static pool filters, evaluated left to right; empty means no filtering. */
+  poolStrategies: AutoPoolStrategy[]
+  /**
+   * Models force-added to this route's pool **after** `poolStrategies` ran.
+   *
+   * The manual correction for a wrong/missing mark: if a filter dropped a model
+   * that can actually serve, adding it here puts it back. It never bypasses the
+   * request-time hard filters (image → vision, context size) or the contract
+   * filter, because those protect correctness rather than convenience.
+   */
+  includeModels: RouteModelRef[]
+  /**
+   * Models always removed from this route's pool. Wins over `includeModels`, so
+   * a hand-broken config can never reintroduce a model the user removed.
+   */
+  excludeModels: RouteModelRef[]
+}
+
+/** How two adjacent pool strategies combine: intersect (`and`) or union (`or`). */
+export type AutoPoolStrategyOperator = 'and' | 'or'
+
+/**
+ * The 17 pool-strategy ids, in the order the settings UI lists them. The union is
+ * derived from this const array (not from a type that references AutoPoolStrategy,
+ * which would be circular); the metadata table below is the runtime source of
+ * truth and is filtered through this list.
+ */
+export const AUTO_POOL_STRATEGY_IDS = [
+  // 能力类（5）
+  'vision-capable',
+  'tools-capable',
+  'multimodal',
+  'reasoning',
+  'annotated-only',
+  // 成本类（4）
+  'free-only',
+  'low-weight',
+  'included-plan',
+  'cost-known',
+  // 上下文类（2）
+  'long-context',
+  'standard-context',
+  // 档位类（3）
+  'fast-tier',
+  'strong-tier',
+  'balanced-tier',
+  // 渠道类（3）
+  'aggregate-only',
+  'channel-only',
+  'builtin-only',
+] as const
+
+/** Every valid pool strategy id. */
+export type AutoPoolStrategyId = (typeof AUTO_POOL_STRATEGY_IDS)[number]
+
+/**
+ * One user-chosen pool filter. `operator` is how this entry combines with the
+ * result so far; the first entry's operator is ignored (nothing to combine with).
+ */
+export interface AutoPoolStrategy {
+  id: AutoPoolStrategyId
+  operator: AutoPoolStrategyOperator
+}
+
+/** Which family a pool strategy belongs to, for grouping in the settings UI. */
+export type AutoPoolStrategyCategory = 'capability' | 'cost' | 'context' | 'tier' | 'channel'
+
+/**
+ * Metadata for one pool strategy. The label/help live in the i18n catalogues
+ * (`proxy.autoRoutingPoolStrategy.<id>` / `.desc`); this table is the single
+ * list of what exists, so the settings UI and the normalisation filter both
+ * read it and a new strategy cannot silently render as `undefined`.
+ */
+export interface AutoPoolStrategyMeta {
+  id: AutoPoolStrategyId
+  category: AutoPoolStrategyCategory
+  /** The default combiner shown in the UI for this entry */
+  operator: AutoPoolStrategyOperator
+}
+
+/**
+ * The 17 pool strategies, in display order. Order is load-bearing only inside a
+ * preset (the sequence is written verbatim into `poolStrategies`); the display
+ * list is simply grouped by category.
+ */
+export const AUTO_POOL_STRATEGIES: readonly AutoPoolStrategyMeta[] = [
+  // 能力类（5）
+  { id: 'vision-capable', category: 'capability', operator: 'and' },
+  { id: 'tools-capable', category: 'capability', operator: 'and' },
+  { id: 'multimodal', category: 'capability', operator: 'and' },
+  { id: 'reasoning', category: 'capability', operator: 'and' },
+  { id: 'annotated-only', category: 'capability', operator: 'and' },
+  // 成本类（4）
+  { id: 'free-only', category: 'cost', operator: 'and' },
+  { id: 'low-weight', category: 'cost', operator: 'and' },
+  { id: 'included-plan', category: 'cost', operator: 'and' },
+  { id: 'cost-known', category: 'cost', operator: 'and' },
+  // 上下文类（2）
+  { id: 'long-context', category: 'context', operator: 'and' },
+  { id: 'standard-context', category: 'context', operator: 'and' },
+  // 档位类（3）
+  { id: 'fast-tier', category: 'tier', operator: 'and' },
+  { id: 'strong-tier', category: 'tier', operator: 'and' },
+  { id: 'balanced-tier', category: 'tier', operator: 'and' },
+  // 渠道类（3）
+  { id: 'aggregate-only', category: 'channel', operator: 'and' },
+  { id: 'channel-only', category: 'channel', operator: 'and' },
+  { id: 'builtin-only', category: 'channel', operator: 'and' },
+]
+
+export function isAutoPoolStrategyId(value: unknown): value is AutoPoolStrategyId {
+  return AUTO_POOL_STRATEGY_IDS.includes(value as AutoPoolStrategyId)
+}
+
+/**
+ * The five one-click presets. Clicking one writes its strategy sequence verbatim
+ * into `poolStrategies` (replacing whatever was selected). The first entry's
+ * operator is ignored by the evaluator, so it is written as `and` throughout.
+ */
+export interface AutoPoolPresetMeta {
+  id: AutoPoolPresetId
+  strategies: AutoPoolStrategy[]
+}
+
+export type AutoPoolPresetId =
+  | 'daily-free'
+  | 'vision-first'
+  | 'long-context'
+  | 'low-cost'
+  | 'strong-reasoning'
+
+export const AUTO_POOL_PRESETS: readonly AutoPoolPresetMeta[] = [
+  // 日常免费：免费（无运算符）＋ 已标注（且）→ 免费交集已标注
+  {
+    id: 'daily-free',
+    strategies: [
+      { id: 'free-only', operator: 'and' },
+      { id: 'annotated-only', operator: 'and' },
+    ],
+  },
+  // 视觉优先：视觉（无）＋ 多模态（或）→ 视觉并多模态
+  {
+    id: 'vision-first',
+    strategies: [
+      { id: 'vision-capable', operator: 'and' },
+      { id: 'multimodal', operator: 'or' },
+    ],
+  },
+  // 长上下文：仅长上下文一条
+  {
+    id: 'long-context',
+    strategies: [{ id: 'long-context', operator: 'and' }],
+  },
+  // 低成本：免费（无）＋ 低权重（或）→ 免费并低权重
+  {
+    id: 'low-cost',
+    strategies: [
+      { id: 'free-only', operator: 'and' },
+      { id: 'low-weight', operator: 'or' },
+    ],
+  },
+  // 强推理：推理（无）＋ 强档（且）→ 推理交集强档
+  {
+    id: 'strong-reasoning',
+    strategies: [
+      { id: 'reasoning', operator: 'and' },
+      { id: 'strong-tier', operator: 'and' },
+    ],
+  },
+]
 
 export type Theme = 'light' | 'dark' | 'system'
 
@@ -214,6 +563,12 @@ export interface AppConfig {
   requestLogConfig: RequestLogConfig
   requestTimeout: number
   retryCount: number
+  /**
+   * Output cap the anthropic wire sends when neither the client (under either
+   * spelling) nor a per-model parameter supplied one. Absent means the shipped
+   * default (`DEFAULT_MAX_OUTPUT_TOKENS`) - never a silent 4096 baked into code.
+   */
+  defaultMaxOutputTokens?: number
   apiKeys: ApiKey[]
   enableApiKey: boolean
   oauthProxyMode: 'system' | 'none'
@@ -222,7 +577,19 @@ export interface AppConfig {
   toolPromptConfig?: LegacyToolPromptConfig
   managementApi: ManagementApiConfig
   contextManagement?: unknown
+  /**
+   * Legacy single-`auto` routing config. Kept as the migration source and as the
+   * fallback for in-flight callers; the UI no longer exposes it once `routes` exists.
+   */
   autoRouting: AutoRoutingConfig
+  /**
+   * Named routes (`name -> route`). Optional **in the type on purpose**: the
+   * absence of the key on the *raw stored object* is the one-time migration gate
+   * (see `main/store/store.ts::normalizeConfig`), so `DEFAULT_CONFIG` must not
+   * preset it. Every read returns it filled - `getConfig().routes` is only
+   * `undefined` for a hand-built object that never went through the store.
+   */
+  routes?: Record<string, ModelRoute>
   compression: CompressionConfig
   outputSteering: OutputSteeringConfig
   language: 'zh-CN' | 'en-US'
@@ -396,7 +763,8 @@ export interface RequestLogEntry {
   reasoningEffort?: 'low' | 'medium' | 'high'
 
   /**
-   * Output cap the client asked for (`max_completion_tokens` first, then `max_tokens`).
+   * Output cap the client asked for, after the route entry folded `max_completion_tokens`
+   * into `max_tokens` (`normalizeOutputCap`).
    * Absent when the client sent neither - never defaulted here, since the upstream default is unknown.
    */
   maxTokens?: number
@@ -423,8 +791,9 @@ export interface RequestLogEntry {
   errorStack?: string
 
   /**
-   * Decision record for a request that asked for the virtual `auto` model.
-   * Absent for every other request; candidates are ranked display names, capped.
+   * Decision record for a request that asked for a route (`auto` and any route the
+   * user created). Absent for every other request; candidates are ranked display
+   * names, capped.
    */
   auto?: {
     prefer: AutoPreference
@@ -433,6 +802,12 @@ export interface RequestLogEntry {
     candidates: string[]
     /** Contracts that could not be met but the request was routed anyway */
     degraded?: string[]
+    /**
+     * Which route made this decision. Written only on the way in (`chat.ts`'s
+     * `autoLogRecord`); the sanitizer spreads the record verbatim, so a new
+     * sub-field cannot break a persisted row, and an old row simply has none.
+     */
+    route?: string
   }
 
   /**
@@ -483,6 +858,14 @@ export interface RequestLogEntry {
    * derived (no system prompt and no user message, or malformed content).
    */
   conversationTurn?: number
+  /**
+   * 调用方客户端（按 `User-Agent` 归类）。
+   *
+   * 只用于排障：同一路由下 Trae / WorkBuddy / Qoder / dsh 的失败形态不同，
+   * 看日志时先知道「谁发来的」比看模型名更省事。不参与路由决策。
+   * 老日志没有这个键照旧渲染。
+   */
+  client?: ClientIdentity
 }
 
 export interface RequestLogConfig {
@@ -671,6 +1054,8 @@ export interface ConfigUpdateRequest {
   toolPromptConfig?: LegacyToolPromptConfig
   managementApi?: ManagementApiConfig
   autoRouting?: Partial<AutoRoutingConfig>
+  /** Route table written as a whole through `PUT /v1/management/config/routes`. */
+  routes?: Record<string, ModelRoute>
 }
 
 export interface EffectiveModel {

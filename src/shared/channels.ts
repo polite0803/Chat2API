@@ -21,6 +21,24 @@ export interface ChannelDefinition {
   loginKind: ChannelLoginKind
   /** One-line description of what the account unlocks. */
   description: string
+  /**
+   * 该渠道上游对 `tools` 数量的硬上限；不设表示未知/不限制。
+   *
+   * 已知边界（用户报障 2026-10-30）：cline 上游走 Vercel AI Gateway，硬限
+   * `tools ≤ 128`，超限请求 400（且以 HTTP 200 的 SSE 流内错误帧浮现，换家
+   * 循环拦不到）。auto 选候选时按此跳过装不下的渠道，请求根本不发出去。
+   */
+  maxTools?: number
+  /**
+   * 渠道能力位（PLAN P1-4）。缺省字段 = 不限（fail-open）。
+   * - `tools: false`：渠道不支持原生工具调用，带工具的请求整个渠道跳过；
+   *   不带工具的请求照常路由（能力位只挡它描述的能力）。
+   * 盘点结论（2026-10-30）：12 个渠道适配器都原生支持工具调用，暂时没有
+   * 渠道需要标 false；将来实测发现某渠道不支持时，只改这里的目录数据。
+   */
+  capabilities?: {
+    tools?: boolean
+  }
 }
 
 /** One account inside a channel, as the pack reports it. */

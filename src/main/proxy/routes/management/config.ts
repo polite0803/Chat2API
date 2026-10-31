@@ -118,6 +118,8 @@ router.put('/', async (ctx: Context) => {
       return
     }
 
+    // routes 现在也在这道校验里（`ConfigManager.validate` → `validateRoutesForWrite`）：
+    // 脏表以前会被读取侧静默丢条目，现在改成 400 + 逐条原因。
     const validation = ConfigManager.validate(updates as Partial<AppConfig>)
 
     if (!validation.valid) {
@@ -159,6 +161,10 @@ router.get('/:key', async (ctx: Context) => {
 
     const config = ConfigManager.get()
 
+    // 这道门槛只拒绝「不是 AppConfig 的键」，不再拦得住 `routes`：
+    // `ConfigManager.get()` → `storeManager.getConfig()` → `normalizeConfig` **无条件**
+    // 输出 `routes` 键（store.ts::normalizeConfig），所以 `'routes' in config` 恒为真，
+    // 读与写都会走到 `ConfigManager.validate`，那里才是 routes 的校验点。
     if (!(key in config)) {
       ctx.status = 404
       ctx.body = {
@@ -210,6 +216,9 @@ router.put('/:key', async (ctx: Context) => {
 
     const config = ConfigManager.get()
 
+    // 同 `GET /:key`：`routes` 永远在归一后的配置里，所以这道门槛放行它，
+    // 由下面的 `ConfigManager.validate` 做名字/池策略校验（400 + 可读原因）。
+    // 落盘的是 `storeManager.updateConfig` 归一后的整表，与读取侧同形。
     if (!(key in config)) {
       ctx.status = 404
       ctx.body = {

@@ -1,35 +1,73 @@
 /**
- * Auto 模型路由器
+ * 路由执行器（多路由时代的 `auto` 路由器）
  *
- * 把 `auto` 这个虚拟模型解析成一串真实候选 (账号, 供应商, 模型)，
- * 决策逻辑在 autoRouting.ts 中，本文件只负责数据采集与冷却状态。
+ * 把**一条路由**解析成一串真实候选 (账号, 供应商, 模型)：路由表在
+ * `AppConfig.routes`，名字就是客户端请求里 `model` 填的那个数（legacy 的单
+ * `auto` 虚拟模型已降级成表里一条名为 `auto` 的普通路由）。
+ * 决策逻辑在 autoRouting.ts 中（纯函数、不认识路由概念），本文件只负责数据
+ * 采集、路由配置的读取与冷却/粘性状态。
+ *
+ * 一次 `select` 的全部可调参数都来自传入的那条 `route`；调用方不传时才回退
+ * legacy `config.autoRouting`（保证迁移期在途调用与既有单测不炸）。粘性表按
+ * 路由名分键，所以两条路由不会互相抢占同一个会话。
  */
 
 import { storeManager } from '../store/store'
-import type { Account, Provider } from '../store/types'
-import type { AutoPreference, ModelCapabilityHint } from '../../shared/types'
+import type { Account, Provider, UserModelMarks } from '../store/types'
+import type {
+  AutoPoolStrategyId,
+  AutoPreference,
+  ModelCapability,
+  ModelCapabilityHint,
+  ModelRoute,
+  RouteModelRef,
+  RoutePreviewModel,
+  RoutePreviewResult,
+  RoutePreviewSample,
+  RoutePreviewStatus,
+} from '../../shared/types'
 import type { ChatCompletionRequest } from './types'
 import { accountRuntime } from './accountRuntime'
+import { getChannelDefinition } from '../providers/accountChannels/catalogue'
 import {
+  advertisedContextFloorOf,
   applyContractFilter,
+  applyManualModelSelection,
+  applyPoolStrategiesWithTrace,
+  capabilityOfCandidate,
   contractNeeds,
   explainMissing,
   conversationKey,
+  hardFilterFailure,
+  mergedHintOf,
   profileRequest,
   providerMeetsContract,
   rankCandidates,
+  resolveCapabilityDetail,
   type AutoRoutingStrategy,
-  type RankCandidate,
+  type CapabilityLayers,
+  type MissingRequirement,
+  type PoolStrategyCandidate,
   type RequestProfile,
   type StickyHint,
 } from './autoRouting'
-import { quotaBlockReason } from './quota/gate.ts'
+import { quotaBlockReason, aggregateHeadroom } from './quota/gate.ts'
+import { aggregateBanditStats, banditKeyOf } from './autoBandit.ts'
+import { AUTO_RECOVERABLE_EXTRA_ATTEMPTS } from './failover.ts'
 import { aggregateContextWindow } from './modelCapabilities.ts'
+import { aggregateThirdPartyHint } from '../../shared/aggregateCapabilities.ts'
 import { costBucketOf, type CostBucket } from '../../shared/channels.ts'
-import { aggregateCostOf, costBucketOfAggregateClass } from '../../shared/aggregateCost.ts'
+import { aggregateCostOf, costBucketOfAggregateClass, type AggregateCostClass } from '../../shared/aggregateCost.ts'
 import { getAggregateEntry } from '../providers/aggregate/registry.ts'
 
-/** 对外暴露的虚拟模型 id，保留字：不能作为真实模型或映射名 */
+/**
+ * 对外暴露的虚拟模型 id，保留字：不能作为真实模型或映射名。
+ *
+ * 这里曾经还有一份 `AUTO_RESERVED_NAMES`，配合请求解析层的 `missing` 分支给
+ * 「路由不存在」的 404。那条分支已按拍板删除：删除 `auto` 之后 `model="auto"`
+ * 退回普通模型名解析，请求路径不再区分「保留虚拟名」（详见
+ * `store/modelRoutes.ts::resolveRouteRequest` 的注释）。
+ */
 export const AUTO_MODEL_ID = 'auto'
 
 /** 配置缺失时最多失败切换几次 */
@@ -51,10 +89,31 @@ export interface AutoRouteDecision {
   /** 会话指纹，成功后可交给 rememberRoute 固化本次选择 */
   conversationKey?: string
   /**
+   * 本次决策依据的路由。调用方没传 route 时为 undefined —— 那走的是 legacy
+   * `config.autoRouting`，响应头与日志里的路由名仍然是 `auto`。
+   */
+  route?: ModelRoute
+  /**
+   * 路由名（大小写不敏感的规范形）。请求头 `X-ModelPort-Route-Name` 与
+   * 请求日志 `auto.route` 用它；粘性表也以它为前缀，两条路由互不抢占会话。
+   */
+  routeName: string
+  /**
+   * 账号故障类换家的**基础上限**：随 decision 交给 forwarder，转发层不再自己
+   * 读全局 `autoRouting.maxAttempts`（那已经是 legacy 字段，逐路由值在 route 里）。
+   */
+  baseCap: number
+  /**
    * 本次为了路由成功而放宽的契约（`response_format`）。空数组表示候选
    * 完整满足；非空时路由层必须在响应头里写明，不能假装满足。
    */
   degraded: string[]
+  /**
+   * 前置剔除的候选及其原因（如 `cline:tools_limit`、`loomy/spark-x2.6:rpd_exhausted`）。
+   * 写进 `X-ModelPort-Auto-Skipped` 透出 —— 渠道没参与路由不能静默消失，
+   * 客户端 harness 要能解释「为什么没走某渠道」（PLAN P0-2）。
+   */
+  skipped: string[]
   /** 空候选时说明缺的到底是什么，供 503/400 的 details 使用 */
   missing: string[]
   /** 本次生效的优化目标（配置值或请求头覆盖） */
@@ -62,6 +121,15 @@ export interface AutoRouteDecision {
   /** 胜负原因：只有一个候选 / 命中会话粘性 / 综合分 */
   reason: 'only' | 'sticky' | 'score'
 }
+
+// 预览的 DTO 定义在 shared/types.ts：渲染进程要用同一份形状，而 renderer 不能
+// 从 main/proxy 取类型。这里只做再导出，保持既有的 import 路径可用。
+export type {
+  RoutePreviewModel,
+  RoutePreviewResult,
+  RoutePreviewSample,
+  RoutePreviewStatus,
+} from '../../shared/types'
 
 interface StickyRoute {
   hint: StickyHint
@@ -84,9 +152,23 @@ function costBucketFor(
   actualModelId: string,
   hint: ModelCapabilityHint | undefined
 ): CostBucket {
+  return costSignalFor(provider, actualModelId, hint).bucket
+}
+
+/**
+ * 一次算出成本档与（聚合的）原始消耗分类。`costBucket` 把套餐内折成免费
+ * （请求时刻现金支出都是 0，保持打分口径不变），而 `costClass` 保留未折叠
+ * 的 `included`，供策略筛选区分「订阅额度内」与「完全免费」。非聚合候选没有
+ * 分类（undefined）。
+ */
+function costSignalFor(
+  provider: Provider,
+  actualModelId: string,
+  hint: ModelCapabilityHint | undefined
+): { bucket: CostBucket; costClass?: AggregateCostClass } {
   const free = hint?.free === true
-  if (free) return 'free'
-  if (hint?.weight !== undefined) return costBucketOf(hint.weight, free)
+  if (free) return { bucket: 'free' }
+  if (hint?.weight !== undefined) return { bucket: costBucketOf(hint.weight, free) }
 
   if (provider.type === 'aggregate') {
     const entry = getAggregateEntry(provider.aggregateId ?? provider.id)
@@ -96,15 +178,11 @@ function costBucketFor(
         modelId: actualModelId,
         ...(entry.freeModelsHint ? { freeModelsHint: entry.freeModelsHint } : {}),
       })
-      return costBucketOfAggregateClass(signal.class)
+      return { bucket: costBucketOfAggregateClass(signal.class), costClass: signal.class }
     }
   }
 
-  return 'unknown'
-}
-
-function isAutoModel(model: unknown): boolean {
-  return typeof model === 'string' && model.trim().toLowerCase() === AUTO_MODEL_ID
+  return { bucket: 'unknown' }
 }
 
 function candidateKey(providerId: string, accountId: string, displayName: string): string {
@@ -112,48 +190,143 @@ function candidateKey(providerId: string, accountId: string, displayName: string
 }
 
 /**
- * 一个模型的标注来源：供应商记录里的（账号渠道同步、内置同步写入）优先，
- * 聚合再用额度旁表里的上下文窗口补齐。都没有就是未知，不填默认值。
+ * 粘性表的分键：`${路由名}|${会话指纹}`。
+ *
+ * 会话指纹只由消息内容算出，与「用哪条路由跑」无关，所以不加前缀的话，同一句
+ * 对话先走 `fast` 再走 `cheap` 时后一条会把前一条钉住的目标抢走（两条路由互相
+ * 覆盖），路由配置里的 `stickyMinutes` 也就成了全局的。分开键以后各自独立，
+ * 过期清理与容量淘汰照旧（淘汰的是最旧插入的一条，不区分路由）。
  */
-function capabilityHintFor(provider: Provider, displayName: string, actualModelId: string): ModelCapabilityHint | undefined {
-  const stored = provider.modelCapabilities?.[displayName]
-  const aggregate = provider.type === 'aggregate'
-    ? aggregateContextWindow(provider.aggregateId ?? provider.id, actualModelId)
-    : undefined
+function stickyMapKey(routeName: string, conversationKey: string): string {
+  return `${routeName}|${conversationKey}`
+}
 
-  if (stored === undefined && aggregate === undefined) return undefined
+/** 没传路由时（legacy 路径）在粘性表与响应头里使用的名字：就是那个虚拟模型名。 */
+const LEGACY_ROUTE_NAME = AUTO_MODEL_ID
+
+/**
+ * 一个模型的四层标注。分层只为**取值的优先级**与**来源展示**：手工 > 供应商记录
+ * > 聚合官方 > 第三方，缺席的层不参与。
+ *
+ * 供应商记录来自账号渠道/内置同步（最接近真相的动态数据）；聚合官方是额度旁表里
+ * 的上下文窗口；第三方是 models.dev 旁表。三层都不填默认值。
+ */
+interface CandidateHints {
+  record?: ModelCapabilityHint
+  official?: ModelCapabilityHint
+  thirdParty?: ModelCapabilityHint
+  manual?: ModelCapabilityHint
+}
+
+/**
+ * 收集一个模型全部标注层。`marks` 是本次决策一次性读出的手工标注表 ——
+ * 逐候选读 store 会让一次 `select` 读几十次盘上对象。
+ */
+function capabilityHintsFor(
+  provider: Provider,
+  displayName: string,
+  actualModelId: string,
+  marks: UserModelMarks
+): CandidateHints {
+  const record = provider.modelCapabilities?.[displayName]
+  const aggregateId = provider.type === 'aggregate' ? (provider.aggregateId ?? provider.id) : undefined
+  const contextWindow = aggregateId === undefined
+    ? undefined
+    : aggregateContextWindow(aggregateId, actualModelId)
+  const thirdParty = aggregateId === undefined
+    ? undefined
+    : aggregateThirdPartyHint(aggregateId, actualModelId)
+  const manual = marks[provider.id]?.[displayName]
+
   return {
-    ...(aggregate === undefined ? {} : { contextTokens: aggregate }),
-    ...stored,
+    ...(record === undefined ? {} : { record }),
+    ...(contextWindow === undefined ? {} : { official: { contextTokens: contextWindow } }),
+    ...(thirdParty === undefined ? {} : { thirdParty }),
+    ...(manual === undefined ? {} : { manual }),
+  }
+}
+
+/** 四层标注 → `resolveCapabilityDetail` 的入参；口径只在 autoRouting 里定义一次 */
+function capabilityLayersOfHints(hints: CandidateHints): CapabilityLayers {
+  return {
+    ...(hints.manual === undefined ? {} : { manual: hints.manual }),
+    ...(hints.record === undefined ? {} : { record: hints.record }),
+    ...(hints.official === undefined ? {} : { aggregateOfficial: hints.official }),
+    ...(hints.thirdParty === undefined ? {} : { thirdParty: hints.thirdParty }),
   }
 }
 
 
 class AutoRouter {
   private seed = 0
-  /** 会话指纹 -> 上次成功的候选，用于多轮粘性 */
+  /**
+   * `${路由名}|${会话指纹}` -> 上次成功的候选，用于多轮粘性。
+   *
+   * ⚠️ 陈旧态边界一：`expiresAt` 在**写入时**按当时那条路由的 `stickyMinutes`
+   * 烘焙成绝对时间戳，所以改路由的粘性时长只影响**之后**写入的记录，已经在期的
+   * 那条会按旧时长走完 —— 配置本身是每次请求现读的（`getConfig()`），唯独这个
+   * 进程内 Map 不是。把 stickyMinutes 改成 0 也不会立刻清空旧记录（下次命中时
+   * 判定过期才删）。代理重启（`reset()`）才彻底归零。
+   */
   private sticky = new Map<string, StickyRoute>()
 
   /**
-   * 为本次请求选出有序候选列表；空数组表示没有可用目标
+   * `/v1/models` 的 `auto` 条目所用的窗口：现在在服务的候选里最小的那个。
+   *
+   * 候选来源与 `select` 一致（启用的供应商 + 有活跃账号 + 在服务的模型），但**不**扣
+   * 冷却、额度与当日用量 —— 那三样每个请求都在变，广告一个随后会变小的数，等于让
+   * 客户端按它拿不到的上界安排字节。全库没有任何标注时按 64000 参与（与放行判据同源）。
    */
-  select(
-    request: ChatCompletionRequest,
-    strategy: AutoRoutingStrategy = 'round-robin',
-    preferOverride?: AutoPreference
-  ): AutoRouteDecision {
-    const profile = profileRequest(request)
+  advertisedContextFloor(): number | undefined {
+    const windows: (number | undefined)[] = []
+    const marks = storeManager.getUserModelMarks()
+
+    for (const provider of storeManager.getProviders().filter(p => p.enabled)) {
+      const accounts = storeManager
+        .getAccountsByProviderId(provider.id, true)
+        .filter(account => account.status === 'active')
+      if (accounts.length === 0) continue
+
+      for (const model of storeManager.getEffectiveModels(provider.id)) {
+        // 通配符名不是上游真实模型，不能作候选，也就不该决定这个下界
+        if (model.displayName.endsWith('*')) continue
+        windows.push(
+          resolveCapabilityDetail(
+            provider.id,
+            model.displayName,
+            capabilityLayersOfHints(
+              capabilityHintsFor(provider, model.displayName, model.actualModelId, marks)
+            )
+          ).contextTokens
+        )
+      }
+    }
+
+    return advertisedContextFloorOf(windows)
+  }
+
+  /**
+   * 采集本次请求的全部 (账号, 模型) 候选，并完成与请求无关的前置剔除
+   * （渠道工具上限、账号当日上限、额度账本打满、通配符名）。
+   *
+   * `select` 与 `preview` 必须共用这一份，否则预览会显示一批实际路由拿不到的
+   * 模型，用户照着修配置反而越修越错。
+   */
+  private collectCandidates(request: ChatCompletionRequest, now: number): {
+    rankInputs: PoolStrategyCandidate[]
+    candidatesByKey: Map<string, AutoCandidate>
+    skipped: Set<string>
+  } {
     const providers = storeManager.getProviders().filter(provider => provider.enabled)
-    const now = Date.now()
-
-    const autoConfig = storeManager.getConfig().autoRouting
-    const maxAttempts = autoConfig?.maxAttempts ?? AUTO_MAX_ATTEMPTS
-    const stickyMinutes = autoConfig?.stickyMinutes ?? 0
-    const prefer = preferOverride ?? autoConfig?.prefer ?? 'balanced'
-
-    const rankInputs: RankCandidate[] = []
-    const candidatesByKey = new Map<string, AutoCandidate>()
     const needs = contractNeeds(request)
+    const marks = storeManager.getUserModelMarks()
+    const rankInputs: PoolStrategyCandidate[] = []
+    const candidatesByKey = new Map<string, AutoCandidate>()
+    // 前置剔除的候选及原因（Set 去重：同一模型多账号命中同一原因只记一条）
+    const skipped = new Set<string>()
+    // Bandit 实时战绩（PLAN P2-5 第一步）：从请求日志内存副本滚动 24h 聚合。
+    // 每请求一次、单遍 O(n)，n 受 requestLogs.maxEntries 上限约束。
+    const bandit = aggregateBanditStats(storeManager.getRequestLogs(), now)
 
     for (const provider of providers) {
       const accounts = storeManager
@@ -161,6 +334,25 @@ class AutoRouter {
         .filter(account => account.status === 'active')
 
       if (accounts.length === 0) {
+        continue
+      }
+
+      // 渠道能力前置过滤（PLAN P1-4，与 maxTools 同一循环）：请求带工具而渠道
+      // 声明不支持原生工具调用时整个渠道不进候选。fail-open：缺省（undefined）
+      // = 不限；盘点结论（2026-10-30）：12 个渠道适配器都原生支持工具调用
+      // （vendor 里唯一的 delete body.tools 是 tool_choice:'none' 归一化），
+      // 所以目录里暂时没有渠道需要标 false。
+      const toolCount = Array.isArray(request.tools) ? request.tools.length : 0
+      const channelDefinition = provider.type === 'account'
+        ? getChannelDefinition(provider.id)
+        : undefined
+      const channelMaxTools = channelDefinition?.maxTools
+      if (channelMaxTools !== undefined && toolCount > channelMaxTools) {
+        skipped.add(`${provider.id}:tools_limit`)
+        continue
+      }
+      if (channelDefinition?.capabilities?.tools === false && toolCount > 0) {
+        skipped.add(`${provider.id}:tools_unsupported`)
         continue
       }
 
@@ -178,29 +370,55 @@ class AutoRouter {
           }
 
           // 额度已打满的候选根本不进排序，失败切换才不会浪费一次上游请求
-          if (quotaBlockReason(provider, account.id, model.actualModelId)) {
+          const quotaBlocked = quotaBlockReason(provider, account.id, model.actualModelId)
+          if (quotaBlocked !== undefined) {
+            skipped.add(`${provider.id}/${model.displayName}:${quotaBlocked}`)
             continue
           }
 
           const runtime = accountRuntime.snapshot(account.id, now)
           const key = candidateKey(provider.id, account.id, model.displayName)
-          const capabilityHint = capabilityHintFor(provider, model.displayName, model.actualModelId)
-          rankInputs.push({
+          const hints = capabilityHintsFor(provider, model.displayName, model.actualModelId, marks)
+          // 配额余量（PLAN P1-3）：只对聚合目录候选计算 —— 账号渠道的帽在渠道
+          // worker 内部，本地账本没有官方帽可对照，硬算只是噪声。函数自带
+          // fail-open（读不到给 0.5 中性）。
+          const quotaHeadroom = provider.type === 'aggregate'
+            ? aggregateHeadroom(provider.id, model.actualModelId)
+            : undefined
+          // Bandit 战绩（PLAN P2-5）：查不到 = 冷启动，不携带（乐观先验）。
+          const live = bandit.get(banditKeyOf(provider.id, model.actualModelId))
+          // 成本档与聚合原始分类一次算出：bucket 进打分，costClass 留给策略筛选
+          // 区分「套餐内」与「完全免费」。成本读手工/记录/第三方合并后的标注，
+          // 手工把某模型改成免费后，打分与 `free-only` 策略同时跟上。
+          const costSignal = costSignalFor(
+            provider,
+            model.actualModelId,
+            mergedHintOf({ manualHint: hints.manual, capabilityHint: hints.record, thirdPartyHint: hints.thirdParty })
+          )
+          const candidate: PoolStrategyCandidate = {
             providerId: provider.id,
             providerName: provider.name,
             displayName: model.displayName,
             actualModelId: model.actualModelId,
             accountId: account.id,
+            providerType: provider.type,
             todayUsed: account.todayUsed,
             dailyLimit: account.dailyLimit,
             lastUsed: account.lastUsed,
             inFlight: runtime.inFlight,
             rpmUsed: runtime.rpmUsed,
             coolingUntil: runtime.coolingUntil,
-            capabilityHint,
+            ...(hints.record === undefined ? {} : { capabilityHint: hints.record }),
+            ...(hints.manual === undefined ? {} : { manualHint: hints.manual }),
+            ...(hints.official === undefined ? {} : { officialHint: hints.official }),
+            ...(hints.thirdParty === undefined ? {} : { thirdPartyHint: hints.thirdParty }),
             contractCapable,
-            costBucket: costBucketFor(provider, model.actualModelId, capabilityHint),
-          })
+            costBucket: costSignal.bucket,
+            ...(costSignal.costClass === undefined ? {} : { costClass: costSignal.costClass }),
+            ...(quotaHeadroom === undefined ? {} : { quotaHeadroom }),
+            ...(live === undefined ? {} : { live }),
+          }
+          rankInputs.push(candidate)
           candidatesByKey.set(key, {
             account,
             provider,
@@ -211,38 +429,97 @@ class AutoRouter {
       }
     }
 
+    return { rankInputs, candidatesByKey, skipped }
+  }
+
+  /**
+   * 为本次请求选出有序候选列表；空数组表示没有可用目标
+   *
+   * `route` 是这次生效的路由（`AppConfig.routes` 里的一条）。可路由的每一项
+   * —— 打分口径 `strategy`、优化目标 `prefer`、基础上限 `maxAttempts`、
+   * 粘性时长 `stickyMinutes`、池策略 `poolStrategies` —— 都优先取它的值，
+   * 没传时才回退 legacy 全局 `config.autoRouting`（在途调用与既有单测的口径）。
+   * `preferOverride` 仍然高于两者：请求头 `X-Auto-Prefer` 是客户端的显式意图。
+   */
+  select(
+    request: ChatCompletionRequest,
+    strategy: AutoRoutingStrategy = 'round-robin',
+    preferOverride?: AutoPreference,
+    route?: ModelRoute
+  ): AutoRouteDecision {
+    const profile = profileRequest(request)
+    const now = Date.now()
+
+    const routeName = route?.name ?? LEGACY_ROUTE_NAME
+    // 路由名优先于位置参数：`select(request, config.loadBalanceStrategy, …, route)`
+    // 里的第二个参数是「没配路由时的全局口径」，一条明确配了 strategy 的路由
+    // 不该被它盖掉。两个联合是同五个字面量，所以这里不需要转换。
+    const effectiveStrategy = route?.strategy ?? strategy
+    const autoConfig = storeManager.getConfig().autoRouting
+    const maxAttempts = route?.maxAttempts ?? autoConfig?.maxAttempts ?? AUTO_MAX_ATTEMPTS
+    const stickyMinutes = route?.stickyMinutes ?? autoConfig?.stickyMinutes ?? 0
+    const prefer = preferOverride ?? route?.prefer ?? autoConfig?.prefer ?? 'balanced'
+
+    const { rankInputs, candidatesByKey, skipped } = this.collectCandidates(request, now)
+    const needs = contractNeeds(request)
+
+    // 策略筛选（静态、用户预设）：在候选池构建处、契约过滤之前生效。
+    // 策略针对模型而非账号——同一模型的多账号候选一起过滤。空数组 = 不过滤，
+    // 候选池与未配置策略时完全一致。过滤后为空则走下方契约/排序兜底（空池
+    // 时 explainMissing 自然返回空，不误报缺能力）。
+    const poolStrategies = route?.poolStrategies ?? autoConfig?.poolStrategies ?? []
+    const strategyOutcome = applyPoolStrategiesWithTrace(rankInputs, poolStrategies)
+
+    // 手动增删：策略之后、契约过滤之前。exclude 赢过 include，include 只能从
+    // 策略前就有资格的候选里取回模型 —— 不会复活停用的模型，也不会绕过下面
+    // 的契约过滤与排序阶段的硬过滤。
+    const manual = applyManualModelSelection(
+      strategyOutcome.kept,
+      rankInputs,
+      route?.includeModels ?? [],
+      route?.excludeModels ?? []
+    )
+    const pool = manual.kept
+
     // 契约过滤：有能满足的候选就只在它们里面挑；全都不满足时
     // `n > 1` 直接交给调用方报 400（内置供应商本来就这样拒绝），
     // `response_format` 则照常路由并标记降级——返回自由文本比拒绝可用。
-    const contract = applyContractFilter(rankInputs, needs)
-    const pool = contract.pool
+    const contract = applyContractFilter(pool, needs)
+    const contractPool = contract.pool
     const degraded = contract.degraded
-    const missing = contract.missing
+    const missing: string[] = contract.missing
+
+    // 空池要能区分「供应商没候选」和「配置把候选筛光了」：后两者指向用户
+    // 自己刚改的设置，归成前者会让人白查供应商。
+    if (pool.length === 0 && missing.length === 0 && rankInputs.length > 0) {
+      missing.push(strategyOutcome.kept.length === 0 ? 'pool_strategy' : 'manual_filter')
+    }
 
     const seed = this.seed++
     const key = conversationKey(request)
+    const stickyKey = key ? stickyMapKey(routeName, key) : ''
     let sticky: StickyHint | undefined
-    if (key && stickyMinutes > 0) {
-      const route = this.sticky.get(key)
-      if (route && route.expiresAt > now) {
-        sticky = route.hint
-      } else if (route) {
-        this.sticky.delete(key)
+    if (stickyKey && stickyMinutes > 0) {
+      const previous = this.sticky.get(stickyKey)
+      if (previous && previous.expiresAt > now) {
+        sticky = previous.hint
+      } else if (previous) {
+        this.sticky.delete(stickyKey)
       }
     }
 
-    const ranked = rankCandidates(profile, pool, {
+    const ranked = rankCandidates(profile, contractPool, {
       now,
-      limit: Math.max(maxAttempts, pool.length),
+      limit: Math.max(maxAttempts, contractPool.length),
       seed,
-      strategy,
+      strategy: effectiveStrategy,
       prefer,
       sticky,
     })
 
     // 候选池非空却排不出结果时，说明缺的是某种能力，而不是没有供应商
     if (ranked.length === 0 && missing.length === 0) {
-      missing.push(...explainMissing(profile, pool))
+      missing.push(...explainMissing(profile, contractPool))
     }
 
     const candidates: AutoCandidate[] = []
@@ -264,9 +541,19 @@ class AutoRouter {
 
     return {
       profile,
-      candidates: candidates.slice(0, maxAttempts),
+      route,
+      routeName,
+      // 换家的基础上限随 decision 交给 forwarder：转发层不许再自己去读
+      // legacy 全局 `autoRouting.maxAttempts`，那样逐路由的设置只对第一次
+      // 候选裁剪生效、对失败换家不生效。
+      baseCap: maxAttempts,
+      // 候选不只是 maxAttempts 家：尾部多带 AUTO_RECOVERABLE_EXTRA_ATTEMPTS 家，
+      // 供 forwardFirstReachable 在可恢复类失败（排队/额度/限流）时继续换家；
+      // 账号故障类（5xx/网络）仍然只消耗基础上限家数（分级收口在换家循环里）。
+      candidates: candidates.slice(0, maxAttempts + AUTO_RECOVERABLE_EXTRA_ATTEMPTS),
       conversationKey: key,
       degraded,
+      skipped: [...skipped],
       missing,
       prefer,
       reason: candidates.length <= 1 ? 'only' : stickyHit ? 'sticky' : 'score',
@@ -274,24 +561,135 @@ class AutoRouter {
   }
 
   /**
-   * 记录本次成功的路由，让同一会话在 stickyMinutes 内优先命中同一个模型。
+   * 路由池预览：按和生产请求同一条采集/策略/手动增删管线，回答「保存这条路由后，
+   * 哪些模型会真的被路由到、哪些被哪一步筛掉了」。
+   *
+   * 与 `select` 的差别只有两处：不扣冷却（进程内瞬时状态，与配置无关），也不做
+   * 契约过滤（`n` / `response_format` 是请求属性而不是路由配置）。因此预览结果
+   * 是「配置层面的候选」，不是某一次请求的最终候选。
+   */
+  preview(route: ModelRoute, sample: RoutePreviewSample = {}): RoutePreviewResult {
+    const profile: RequestProfile = {
+      needsVision: sample.needsVision === true,
+      needsTools: sample.needsTools === true,
+      estimatedTokens: Math.max(0, Math.round(sample.estimatedTokens ?? 0)),
+      complexity: 'standard',
+      stream: false,
+    }
+    // 只需要 `tools` 的长度来触发渠道能力前置过滤，内容不参与任何判定
+    const probe = {
+      messages: [],
+      ...(profile.needsTools ? { tools: [{ type: 'function', function: { name: 'probe' } }] } : {}),
+    } as unknown as ChatCompletionRequest
+
+    const { rankInputs, skipped } = this.collectCandidates(probe, Date.now())
+    const strategyOutcome = applyPoolStrategiesWithTrace(rankInputs, route.poolStrategies)
+    const manual = applyManualModelSelection(
+      strategyOutcome.kept,
+      rankInputs,
+      route.includeModels,
+      route.excludeModels
+    )
+
+    const modelKeyOf = (candidate: PoolStrategyCandidate): string =>
+      `${candidate.providerId}\u0000${candidate.displayName.trim().toLowerCase()}`
+    const keptKeys = new Set(manual.kept.map(modelKeyOf))
+    const includedKeys = new Set(manual.included.map(modelKeyOf))
+    const excludedKeys = new Set(manual.excluded.map(modelKeyOf))
+
+    const index = new Map<string, RoutePreviewModel>()
+    const models: RoutePreviewModel[] = []
+    for (const candidate of rankInputs) {
+      const key = modelKeyOf(candidate)
+      const existing = index.get(key)
+      if (existing !== undefined) {
+        existing.accountCount += 1
+        continue
+      }
+
+      const capability = capabilityOfCandidate(candidate)
+      const failure = hardFilterFailure(profile, capability)
+      let status: RoutePreviewStatus
+      let filteredBy: AutoPoolStrategyId | undefined
+      if (excludedKeys.has(key)) {
+        status = 'excluded'
+      } else if (failure !== undefined) {
+        status = 'unavailable'
+      } else if (includedKeys.has(key)) {
+        status = 'included'
+      } else if (keptKeys.has(key)) {
+        status = 'kept'
+      } else {
+        status = 'filtered'
+        filteredBy = strategyOutcome.droppedBy.get(candidate)
+      }
+
+      const row: RoutePreviewModel = {
+        providerId: candidate.providerId,
+        providerName: candidate.providerName,
+        displayName: candidate.displayName,
+        accountCount: 1,
+        status,
+        ...(filteredBy === undefined ? {} : { filteredBy }),
+        ...(failure === undefined ? {} : { unavailableReason: failure }),
+        capability,
+        ...(candidate.costBucket === undefined ? {} : { costBucket: candidate.costBucket }),
+        ...(candidate.costClass === undefined ? {} : { costClass: candidate.costClass }),
+      }
+      index.set(key, row)
+      models.push(row)
+    }
+
+    const missing: MissingRequirement[] = []
+    if (manual.kept.length === 0 && rankInputs.length > 0) {
+      missing.push(strategyOutcome.kept.length === 0 ? 'pool_strategy' : 'manual_filter')
+    }
+
+    return {
+      routeName: route.name,
+      profile,
+      strategies: strategyOutcome.steps,
+      models,
+      counts: {
+        candidates: models.length,
+        afterStrategies: new Set(strategyOutcome.kept.map(modelKeyOf)).size,
+        afterManual: new Set(manual.kept.map(modelKeyOf)).size,
+        unavailable: models.filter(model => model.status === 'unavailable').length,
+      },
+      manual: {
+        included: new Set(manual.included.map(modelKeyOf)).size,
+        excluded: new Set(manual.excluded.map(modelKeyOf)).size,
+        unresolved: manual.unresolved,
+      },
+      missing,
+      skipped: [...skipped],
+    }
+  }
+
+  /**
+   * 记录本次成功的路由，让同一会话在**这条路由**的 stickyMinutes 内优先命中同
+   * 一个模型。粘性时长按路由取（没传路由才回退 legacy 全局值），键带路由名前缀，
+   * 所以两条路由各钉各的、互不覆盖。
    * 被钉住的候选若因冷却/配额从候选池消失，会自然失效，不需要额外清理。
    */
-  rememberRoute(key: string | undefined, candidate: AutoCandidate): void {
+  rememberRoute(key: string | undefined, candidate: AutoCandidate, route?: ModelRoute): void {
     if (!key) return
 
-    const minutes = storeManager.getConfig().autoRouting?.stickyMinutes ?? 0
+    const minutes = route?.stickyMinutes
+      ?? storeManager.getConfig().autoRouting?.stickyMinutes
+      ?? 0
     if (minutes <= 0) return
 
     const now = Date.now()
-    for (const [stickyKey, route] of this.sticky) {
-      if (route.expiresAt <= now) {
-        this.sticky.delete(stickyKey)
+    for (const [existingKey, entry] of this.sticky) {
+      if (entry.expiresAt <= now) {
+        this.sticky.delete(existingKey)
       }
     }
 
-    this.sticky.delete(key)
-    this.sticky.set(key, {
+    const stickyKey = stickyMapKey(route?.name ?? LEGACY_ROUTE_NAME, key)
+    this.sticky.delete(stickyKey)
+    this.sticky.set(stickyKey, {
       hint: {
         providerId: candidate.provider.id,
         displayName: candidate.displayName,
@@ -330,5 +728,4 @@ class AutoRouter {
 }
 
 export const autoRouter = new AutoRouter()
-export { isAutoModel }
 export default autoRouter

@@ -10,6 +10,17 @@ export const IpcChannels = {
   CONFIG_UPDATE: 'config:update',
   CONFIG_CHANGED: 'config:changed',
 
+  // 多路由 CRUD（R2）。返回 `{ok:true,…} | {ok:false,error:{code,message}}`，
+  // 与 channels:* 系列同风格：错误必须原样到达 UI，不许在 IPC 层变成 undefined。
+  // `config:update` 依旧能整表写 routes，但那条通道不做名字校验。
+  ROUTES_LIST: 'routes:list',
+  ROUTES_CREATE: 'routes:create',
+  ROUTES_UPDATE: 'routes:update',
+  ROUTES_DELETE: 'routes:delete',
+  // 候选池预览：按路由配置跑一遍采集/策略/手动增删，返回逐模型状态与筛除原因。
+  // 只读，不写任何状态（不扣冷却、不请求上游）。
+  ROUTES_PREVIEW: 'routes:preview',
+
   STORE_GET: 'store:get',
   STORE_SET: 'store:set',
   STORE_DELETE: 'store:delete',
@@ -36,6 +47,9 @@ export const IpcChannels = {
   PROVIDERS_ADD_CUSTOM_MODEL: 'providers:addCustomModel',
   PROVIDERS_REMOVE_MODEL: 'providers:removeModel',
   PROVIDERS_RESET_MODELS: 'providers:resetModels',
+  // 手工能力标注（vision/tools/reasoning/context/...），优先级高于所有自动标注
+  PROVIDERS_GET_MODEL_MARKS: 'providers:getModelMarks',
+  PROVIDERS_SET_MODEL_MARK: 'providers:setModelMark',
 
   AGGREGATE_LIST: 'aggregate:list',
   AGGREGATE_DETAIL: 'aggregate:detail',

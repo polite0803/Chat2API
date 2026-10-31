@@ -14,6 +14,7 @@ import type {
   ModelsFetchFailure,
   ModelsFetchResult,
   AutoRoutingConfig,
+  ModelRoute,
   AggregateWire,
   ModelCapabilityHint,
   CompressionConfig,
@@ -300,6 +301,13 @@ export interface AppConfig {
   requestTimeout: number
   /** Retry count */
   retryCount: number
+  /**
+   * Output cap the anthropic wire sends when neither the client (under either
+   * spelling) nor a per-model parameter supplied one. Absent means
+   * `DEFAULT_MAX_OUTPUT_TOKENS`; declared twice with `shared/types.ts` (no wiring
+   * between them), so both copies must carry it.
+   */
+  defaultMaxOutputTokens?: number
   /** API Key list */
   apiKeys: ApiKey[]
   /** Whether to enable API Key authentication */
@@ -316,12 +324,33 @@ export interface AppConfig {
   managementApi: ManagementApiConfig
   /** Context management configuration */
   contextManagement: ContextManagementConfig
-  /** Virtual `auto` model routing configuration */
+  /**
+   * Legacy single-`auto` routing configuration. Retired from the UI but kept as
+   * the migration source and as the fallback for callers that have no route in
+   * hand (`autoRouter.select()` without a route, and the aggregate bare-name chain
+   * never reads it - see `forwarder.ts`).
+   */
   autoRouting: AutoRoutingConfig
+  /**
+   * Named routes, keyed by canonical name.
+   *
+   * Optional **in the type because `DEFAULT_CONFIG` deliberately omits the key**:
+   * `normalizeConfig()` judges "legacy data" by `hasOwnProperty('routes')` on the
+   * *raw stored object*, and a `DEFAULT_CONFIG` that carried `routes: {}` would
+   * make that gate read "already migrated" for every fresh install and every
+   * `|| DEFAULT_CONFIG` fallback (there are four). A read always returns the field
+   * filled - see `normalizeConfig()` in `store.ts` for the migration itself.
+   */
+  routes?: Record<string, ModelRoute>
   /** Live-zone context compression (off by default) */
   compression: CompressionConfig
   /** Output-side verbosity steering (off by default) */
   outputSteering: OutputSteeringConfig
+  /**
+   * 免验证（keyless）聚合条目的自动开通黑名单：用户显式删除过的条目 id 记在这里，
+   * 启动期自动开通不再复活它们。
+   */
+  dismissedAutoProviders?: string[]
 }
 
 /**
@@ -628,6 +657,21 @@ export interface ProviderModelOverrides {
 export type UserModelOverrides = Record<string, ProviderModelOverrides>
 
 /**
+ * Manual capability marks: `providerId -> displayName -> hint`.
+ *
+ * Deliberately NOT part of {@link UserModelOverrides}: the model-list sync
+ * (`resetModels`, online refresh, channel catalogue refresh) rewrites overrides,
+ * while a manual correction to a wrong or missing capability mark must survive
+ * that. Routing merges these on top of every automatic source.
+ *
+ * Absent means "no manual correction" — never "everything unknown" — so a mark
+ * that only sets `vision` leaves tools/context on the automatic path.
+ */
+export type UserModelMarks = Record<string, Record<string, ModelCapabilityHint>>
+
+export const DEFAULT_USER_MODEL_MARKS: UserModelMarks = {}
+
+/**
  * Effective Model Information
  * Defined once in shared/types, shared with preload and the renderer
  */
@@ -661,6 +705,8 @@ export interface StoreSchema {
   tokenUsage: Record<string, DayTokenBucket>
   /** User model overrides for built-in providers */
   userModelOverrides: UserModelOverrides
+  /** Manual capability corrections; merged on top of every automatic mark */
+  userModelMarks: UserModelMarks
 }
 
 /**
@@ -720,7 +766,9 @@ export const DEFAULT_REQUEST_LOG_CONFIG: RequestLogConfig = {
   enabled: true,
   maxEntries: 200,
   includeBodies: false,
-  maxBodyChars: 8000,
+  // 与 requestLogs/types.ts 的 DEFAULT_MAX_BODY_CHARS 同值（避免反向 import
+  // 成环）；存量配置里停留在旧值 8000 的由 normalizeRequestLogConfig 迁移。
+  maxBodyChars: 200_000,
   redactSensitiveData: true,
 }
 
@@ -773,8 +821,15 @@ export const DEFAULT_CONFIG: AppConfig = {
   managementApi: DEFAULT_MANAGEMENT_API_CONFIG,
   contextManagement: DEFAULT_CONTEXT_MANAGEMENT_CONFIG,
   autoRouting: DEFAULT_AUTO_ROUTING_CONFIG,
+  // ⚠️ 这里**不能**写 `routes: {}`。`normalizeConfig()` 用「原始存储对象上有没有
+  // routes 这个键」判断是不是旧数据（一次性迁移的判据），键存在（哪怕是 `{}`）就
+  // 永不迁移 —— 这条判据正是「用户删光路由后 `auto` 不会在下次读取时复活」的前提。
+  // 而 `DEFAULT_CONFIG` 是四处 `|| DEFAULT_CONFIG` 兜底与 `resetConfig()` 落盘的对象，
+  // 一旦它预置了这个键，全新安装与重置都会被判成「已迁移」，谁也不会再建 auto 路由。
+  // 于是新装/重置走「键不存在」分支：用 legacy `autoRouting` 生成一条名为 `auto` 的路由。
   compression: DEFAULT_COMPRESSION_CONFIG,
   outputSteering: DEFAULT_OUTPUT_STEERING_CONFIG,
+  dismissedAutoProviders: [],
 }
 
 /**

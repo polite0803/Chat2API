@@ -44,7 +44,7 @@ import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { providerCatalogVisible } from './account-pool.js'
 import { RemoteCatalogGate } from './remote-catalog-gate.js'
 import type { AccountPool } from './account-pool.js'
-import { httpErrorCode, collectImages } from './openai-compat.js'
+import { httpErrorCode, collectImages, requiredArgsToolsOption } from './openai-compat.js'
 import { MINIMAX, MINIMAX_INFER_PATH, type MinimaxProduct } from './minimax-product.js'
 import { minimaxInferHeaders } from './minimax.js'
 import {
@@ -454,7 +454,13 @@ export class MinimaxAdapter extends LlmAdapter {
       throw new LlmError('minimax: 响应缺少 body', 'EMPTY_RESPONSE')
     }
 
-    yield* consumeMinimaxSse({ body: response.body, signal: options.signal })
+    // 「必填参数工具 + 零参数」判据：finish 报 max-tokens 丢弃重试，
+    // 不放行 `{}` 伪合法调用（2026-10-31 用户报障，见 openai-compat.ts）。
+    yield* consumeMinimaxSse({
+      body: response.body,
+      signal: options.signal,
+      ...requiredArgsToolsOption(options.tools),
+    })
   }
 
   /**

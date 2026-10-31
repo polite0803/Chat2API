@@ -41,7 +41,7 @@ export function DataManagement() {
     enabled: true,
     maxEntries: 200,
     includeBodies: false,
-    maxBodyChars: 8000,
+    maxBodyChars: 200_000,
     redactSensitiveData: true,
   }
 

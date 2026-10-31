@@ -15,6 +15,7 @@ import {
 } from './types'
 import { proxyStatusManager } from './status'
 import { storeManager } from '../store/store'
+import { DEFAULT_AUTO_ROUTING_CONFIG } from '../../shared/types'
 import { wrapStreamWithPlan } from './toolCalling/streamPlanWrapper'
 import { OpencodeAdapter, buildCompletion, createDeferredCompletionStream } from './adapters/opencode'
 import { AnthropicAdapter } from './adapters/anthropic'
@@ -32,9 +33,21 @@ export interface ChainCandidate {
   displayName: string
   actualModel: string
 }
+
+/**
+ * 换家循环的预算：随**本次决策**传入，不在循环里读全局配置。
+ *
+ * `baseCap` 是账号故障类（5xx/网络）的尝试上限。auto 路径由命中的那条路由给出，
+ * 没有路由上下文的裸名链由调用方给出厂默认 —— 两者的取值口径都写在各自入口的
+ * 注释里，不共用一个「读 config」的暗通道。
+ */
+export interface FailoverBudget {
+  baseCap: number
+}
 import { accountRuntime } from './accountRuntime'
 import { planForwardRetries } from './retryPolicy'
 import { stripUnsupportedForBuiltin } from './parameterPolicy'
+import { ensureAnthropicOutputCap, outputCapFallbackOf } from './utils/outputCap.ts'
 import { createContextManagementService, SummaryGenerator } from './services/contextManagementService'
 import { accountChannelManager } from '../providers/accountChannels/manager'
 import { getAggregateEntry } from '../providers/aggregate/registry'
@@ -53,7 +66,16 @@ import { recordConversationTurn, recordConversationTurnForRequest } from './comp
 // 换家判据与流首事件等待：本体与测试在 failover.ts（forwarder 背着 electron
 // 依赖，node --test 拉不动，见该模块头注释）。isFailoverEligibleStatus 从这里
 // 再导出，chat 路由的既有 import 路径不变。
-import { firstStreamEvent, isFailoverEligibleStatus, isToolOverflowError } from './failover.ts'
+import {
+  AUTO_WALL_CLOCK_BUDGET_MS,
+  FIRST_EVENT_TIMEOUT_MS,
+  firstStreamEvent,
+  isFailoverEligibleStatus,
+  isRecoverableChannelFailure,
+  isToolOverflowError,
+  probeSseHead,
+  shouldTryNextAutoCandidate,
+} from './failover.ts'
 export { isFailoverEligibleStatus }
 
 function shouldDeleteSession(): boolean {
@@ -235,6 +257,13 @@ export class RequestForwarder {
     // 每模型参数覆盖：在丢弃内建默认参数之后应用，配置的值不会被丢弃策略吞掉，
     // 并覆盖客户端传来的同名字段（保留字段 model/messages/stream 不允许覆盖）。
     request = this.applyModelParameters(request, provider, actualModel)
+    // anthropic wire 的 max_tokens 必填：客户端与每模型参数都没给时，补设置里的
+    // `defaultMaxOutputTokens`（可改，不是代码常量），免得代理自己造一个截断上限。
+    request = ensureAnthropicOutputCap(
+      request,
+      provider.wire,
+      outputCapFallbackOf(config.defaultMaxOutputTokens)
+    )
 
     // 跨轮重复度测量：纯观测，一个字节都不改。与 compression 开关无关 —— 它存在的
     // 目的就是在"要不要做去重"还没有依据时先拿到依据。单轮请求在这里只花一次长度
@@ -414,13 +443,19 @@ export class RequestForwarder {
    *
    * 每次尝试把 request.model 替换为候选的显示名，与普通映射请求的上下文一致：
    * forwarder 之后会以 actualModel 作为上游模型、显示名作为 originalModel 传给 adapter。
+   *
+   * `budget.baseCap` 是**这条路由**的账号故障类换家上限（取自
+   * `autoRouter.select()` 返回的 decision，见 AutoRouteDecision.baseCap）。转发层
+   * 不许再自己去读全局 `config.autoRouting.maxAttempts`：那是 legacy 字段，逐路由
+   * 设置落在它上面读就等于「候选裁剪按路由、失败换家按全局」的口径分裂。
    */
   async forwardAutoCompletion(
     request: ChatCompletionRequest,
     candidates: AutoCandidate[],
-    context: ProxyContext
+    context: ProxyContext,
+    budget: FailoverBudget
   ): Promise<{ result: ForwardResult; candidate: AutoCandidate; attempts: number } | null> {
-    return this.forwardFirstReachable(request, candidates, context)
+    return this.forwardFirstReachable(request, candidates, context, budget)
   }
 
   /**
@@ -432,18 +467,50 @@ export class RequestForwarder {
     candidates: ChainCandidate[],
     context: ProxyContext
   ): Promise<{ result: ForwardResult; candidate: ChainCandidate; attempts: number } | null> {
-    return this.forwardFirstReachable(request, candidates, context)
+    // 聚合裸名链与同供应商换 Key 都**没有路由上下文**：请求里那个模型名就是它自己，
+    // 表里没有哪一条配置可查。这里用出厂默认，而不是 legacy `config.autoRouting`
+    // 的 maxAttempts —— 迁移之后那个字段只是「`auto` 路由当年的值」，用户改任何
+    // 一条路由都不会再动它，读它等于读一份永远不会被写的新旧混杂配置。
+    return this.forwardFirstReachable(
+      request,
+      candidates,
+      context,
+      { baseCap: DEFAULT_AUTO_ROUTING_CONFIG.maxAttempts }
+    )
   }
 
   private async forwardFirstReachable<T extends ChainCandidate>(
     request: ChatCompletionRequest,
     candidates: T[],
-    context: ProxyContext
+    context: ProxyContext,
+    budget: FailoverBudget
   ): Promise<{ result: ForwardResult; candidate: T; attempts: number } | null> {
     let last: { result: ForwardResult; candidate: T; attempts: number } | null = null
     let attempts = 0
+    // 账号故障类（5xx/网络）失败计数：达到基础上限就停手 —— 积分账号每次失败
+    // 都可能烧钱，5xx 通常意味着系统性问题，多试只是多烧（PLAN P0-1）。
+    let accountFailures = 0
+    // 墙钟预算基线：context.startTime 是整个请求的起点（含预检与已完成候选的
+    // 耗时），换家循环每轮对照预算检查，超了就不再继续换家。
+    const budgetStart = context.startTime ?? Date.now()
+    // 账号故障类的尝试上限：由调用方随本次决策传入（auto 走命中的那条路由，
+    // 无路由的裸名链走出厂默认），见 forwardAutoCompletion 的注释。
+    const baseCap = budget.baseCap
 
     for (const candidate of candidates) {
+      // 分级尝试上限 + 墙钟预算（分级判据本体与测试在 failover.ts；候选列表
+      // 已由 autoRouter.select 裁剪为「基础上限 + 可恢复余量」家）。
+      if (attempts > 0 && !shouldTryNextAutoCandidate({
+        attempts,
+        accountFailures,
+        baseCap,
+        extendedCap: candidates.length,
+        elapsedMs: Date.now() - budgetStart,
+        budgetMs: AUTO_WALL_CLOCK_BUDGET_MS,
+      })) {
+        break
+      }
+
       const attemptRequest: ChatCompletionRequest = {
         ...request,
         model: candidate.displayName,
@@ -477,6 +544,13 @@ export class RequestForwarder {
       if (!toolOverflow) {
         if (!this.isFailoverEligible(result.status)) {
           return last
+        }
+
+        // 分级：429 / 排队 / 额度类失败是「渠道暂时不可服务」，请求在生成之前
+        // 就被拒绝（几乎不烧积分），换下一家值得多试 —— 不占账号故障类的上限；
+        // 5xx / 网络错误才是账号故障，累计撞满基础上限后由循环头的分级检查收口。
+        if (result.status !== 429 && !isRecoverableChannelFailure(result.error)) {
+          accountFailures += 1
         }
 
         // 429 的冷却已由 forwardChatCompletion 记录，这里只补记 5xx / 网络错误
@@ -545,6 +619,19 @@ export class RequestForwarder {
       // 这里等首个事件：有首块才算成功（首块原样补发），首错转成普通
       // ForwardResult 失败，交给既有的换家 / 错误映射逻辑。
       const first = await firstStreamEvent(upstream)
+      if (first.kind === 'timeout') {
+        // 等首事件超时：渠道假死（HTTP 200 但零字节，无首块也无首错 —— 实测
+        // qoder 挂过 165s/285s/625s）。墙钟预算只在尝试之间检查，单次悬挂时
+        // 它永远等不到检查点，所以超时必须在这里兑现：销毁源流触发 openStream
+        // 的 close → cancel，渠道 worker 才会中止上游请求；504 参与换家。
+        upstream.destroy()
+        return {
+          success: false,
+          status: 504,
+          error: `渠道 ${Math.round(FIRST_EVENT_TIMEOUT_MS / 1000)}s 内未产出任何首块（疑似假死），已中止并换下一家`,
+          latency: Date.now() - startTime,
+        }
+      }
       if (first.kind === 'error') {
         const failure = first.error as { message?: string; status?: number }
         return {
@@ -567,7 +654,24 @@ export class RequestForwarder {
         }
       }
       const stream = new PassThrough()
-      stream.write(first.chunk)
+      // 头部嗅探：cline 类上游是 HTTP 200 的 SSE 流，工具数超限的 400 以流内
+      // 错误帧浮现（用户报障 2026-10-30 二次反馈「错误依旧」的直接原因——首块
+      // 到达即记 success，auto 换家依旧看不到失败）。在转发前按帧解析头部：
+      // 错误帧 → 转成普通失败参与换家；实质内容帧 → 把嗅探期间缓冲的块原样
+      // 补发后 pipe 接管（正常流第一帧就是 role delta，零额外延迟）。
+      const probe = await probeSseHead(upstream, first.chunk)
+      if (probe.kind === 'error') {
+        upstream.destroy()
+        return {
+          success: false,
+          status: isToolOverflowError(probe.message) ? 400 : 502,
+          error: probe.message,
+          latency: Date.now() - startTime,
+        }
+      }
+      for (const chunk of probe.buffered) {
+        stream.write(chunk)
+      }
       upstream.pipe(stream)
       // 源流错误 → 包装流：chat 路由在包装流上挂了自己的 error 处理（回流内
       // 错误帧 + [DONE]），转发时绝不能走 destroy(error) —— destroy 会先把

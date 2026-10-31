@@ -7,6 +7,8 @@ export interface ProxyConfig {
   host: string
   timeout: number
   retryCount: number
+  /** Absent = 代理内置默认（anthropic wire 必填的 max_tokens 兜底） */
+  defaultMaxOutputTokens?: number
   enableCors: boolean
   corsOrigin: string
   maxConnections: number
@@ -178,6 +180,7 @@ export const useProxyStore = create<ProxyState>((set, get) => ({
             host: config.proxyHost || '127.0.0.1',
             timeout: config.requestTimeout,
             retryCount: config.retryCount,
+            defaultMaxOutputTokens: config.defaultMaxOutputTokens,
           },
         })
       }
@@ -262,5 +265,17 @@ export const useProxyStore = create<ProxyState>((set, get) => ({
     }
   },
 }))
+
+// CONFIG_CHANGED → 保持 `appConfig` 这份镜像新鲜。
+// 没有这条订阅时 `fetchAppConfig` 只在页面挂载时跑一次（ProxySettings 的 hasLoadedRef
+// 守卫），于是「开代理设置 → 新建路由（routes:create 落盘）→ 改别的设置 → 保存」会拿
+// 挂载那一刻的整份镜像去写 `store:set('config')`。主进程的 `setConfig` 如今把 routes 键
+// 收归专用通道（盘上现表说了算），本订阅再把其余字段也对齐盘上真值：陈旧镜像既删不掉
+// 路由，也不会再把别的配置写回旧值。载荷是主进程归一后的完整 AppConfig，与盘上同形。
+if (typeof window !== 'undefined') {
+  window.electronAPI?.config?.onConfigChanged?.((config) => {
+    useProxyStore.setState({ appConfig: config })
+  })
+}
 
 export default useProxyStore

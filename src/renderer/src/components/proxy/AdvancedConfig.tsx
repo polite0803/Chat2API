@@ -16,6 +16,7 @@ interface AdvancedConfigProps {
 interface FormErrors {
   timeout?: string
   retryCount?: string
+  outputCap?: string
 }
 
 export function AdvancedConfig({ onConfigChange }: AdvancedConfigProps) {
@@ -26,11 +27,13 @@ export function AdvancedConfig({ onConfigChange }: AdvancedConfigProps) {
   const initialFormDataRef = useRef({
     timeout: (proxyConfig.timeout / 1000).toString(),
     retryCount: proxyConfig.retryCount.toString(),
+    outputCap: proxyConfig.defaultMaxOutputTokens?.toString() ?? '',
   })
 
   const [formData, setFormData] = useState({
     timeout: (proxyConfig.timeout / 1000).toString(),
     retryCount: proxyConfig.retryCount.toString(),
+    outputCap: proxyConfig.defaultMaxOutputTokens?.toString() ?? '',
   })
   
   const [errors, setErrors] = useState<FormErrors>({})
@@ -40,6 +43,7 @@ export function AdvancedConfig({ onConfigChange }: AdvancedConfigProps) {
     const newFormData = {
       timeout: (proxyConfig.timeout / 1000).toString(),
       retryCount: proxyConfig.retryCount.toString(),
+      outputCap: proxyConfig.defaultMaxOutputTokens?.toString() ?? '',
     }
     setFormData(newFormData)
     initialFormDataRef.current = newFormData
@@ -75,14 +79,34 @@ export function AdvancedConfig({ onConfigChange }: AdvancedConfigProps) {
     onConfigChange?.()
   }
 
+  // 空 = 不写入这个键，代理回落到内置默认（4096）。留一个 UI 侧的默认数字就等于
+  // 再抄一遍权威值：那边改了，这里会把旧值当默认存进库里。
+  const validateOutputCap = (value: string): string | undefined => {
+    if (value.trim() === '') return undefined
+    const cap = Number(value)
+    if (!Number.isSafeInteger(cap)) return t('proxy.outputCapMustBeInteger')
+    if (cap < 1 || cap > 1_000_000) return t('proxy.outputCapRangeError')
+    return undefined
+  }
+
+  const handleOutputCapChange = (value: string) => {
+    setFormData(prev => ({ ...prev, outputCap: value }))
+    const error = validateOutputCap(value)
+    setErrors(prev => ({ ...prev, outputCap: error }))
+    setHasChanges(true)
+    onConfigChange?.()
+  }
+
   const handleSave = async () => {
     const timeoutError = validateTimeout(formData.timeout)
     const retryError = validateRetryCount(formData.retryCount)
+    const capError = validateOutputCap(formData.outputCap)
 
-    if (timeoutError || retryError) {
+    if (timeoutError || retryError || capError) {
       setErrors({
         timeout: timeoutError,
         retryCount: retryError,
+        outputCap: capError,
       })
       toast({
         title: t('proxy.validationFailed'),
@@ -92,9 +116,12 @@ export function AdvancedConfig({ onConfigChange }: AdvancedConfigProps) {
       return
     }
 
+    const outputCap = formData.outputCap.trim() === '' ? undefined : Number(formData.outputCap)
+
     const newProxyConfig = {
       timeout: parseInt(formData.timeout, 10) * 1000,
       retryCount: parseInt(formData.retryCount, 10),
+      defaultMaxOutputTokens: outputCap,
     }
 
     setProxyConfig(newProxyConfig)
@@ -102,6 +129,7 @@ export function AdvancedConfig({ onConfigChange }: AdvancedConfigProps) {
     const success = await saveAppConfig({
       requestTimeout: newProxyConfig.timeout,
       retryCount: newProxyConfig.retryCount,
+      defaultMaxOutputTokens: outputCap,
     })
 
     if (success) {
@@ -125,7 +153,7 @@ export function AdvancedConfig({ onConfigChange }: AdvancedConfigProps) {
     setHasChanges(false)
   }
 
-  const isValid = !errors.timeout && !errors.retryCount
+  const isValid = !errors.timeout && !errors.retryCount && !errors.outputCap
 
   return (
     <Card>
@@ -197,6 +225,32 @@ export function AdvancedConfig({ onConfigChange }: AdvancedConfigProps) {
               />
               <p className="text-xs text-muted-foreground">
                 {t('proxy.retryCountHelp')}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="outputCap" className="flex items-center gap-2">
+                {t('proxy.outputCapFallback')}
+                {errors.outputCap && (
+                  <span className="text-destructive text-xs flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    {errors.outputCap}
+                  </span>
+                )}
+                {!errors.outputCap && formData.outputCap && (
+                  <CheckCircle2 className="h-3 w-3 text-success" />
+                )}
+              </Label>
+              <Input
+                id="outputCap"
+                type="number"
+                placeholder="4096"
+                value={formData.outputCap}
+                onChange={(e) => handleOutputCapChange(e.target.value)}
+                className={errors.outputCap ? 'border-destructive' : ''}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('proxy.outputCapFallbackHelp')}
               </p>
             </div>
           </div>

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   applyContractFilter,
+  applyPoolStrategies,
   contractNeeds,
   conversationKey,
   explainMissing,
@@ -10,9 +11,18 @@ import {
   providerMeetsContract,
   rankCandidates,
   resolveCapability,
+  STRATEGY_PREDICATES,
   UNANNOTATED_CONTEXT_FLOOR,
+  type PoolStrategyCandidate,
   type RankCandidate,
 } from '../../src/main/proxy/autoRouting.ts'
+import {
+  AUTO_POOL_STRATEGY_IDS,
+  DEFAULT_AUTO_ROUTING_CONFIG,
+  type AutoPoolStrategy,
+  type AutoPoolStrategyId,
+} from '../../src/shared/types.ts'
+import { normalizeAutoRoutingConfig } from '../../src/main/store/autoRoutingConfig.ts'
 
 const NOW = 1_800_000_000_000
 
@@ -84,6 +94,80 @@ test('profileRequest escalates long text with tools and high reasoning effort', 
 
   assert.equal(profile.needsTools, true)
   assert.equal(profile.complexity, 'complex')
+})
+
+test('profileRequest counts a large system prompt toward complexity', () => {
+  const profile = profileRequest({
+    model: 'auto',
+    messages: [
+      { role: 'system', content: 's'.repeat(16000) },
+      { role: 'user', content: 'read the file' },
+    ],
+    tools: [{ type: 'function', function: { name: 'read_file' } }],
+  })
+
+  assert.equal(profile.needsTools, true)
+  assert.ok(profile.estimatedTokens >= 4000)
+  assert.equal(profile.complexity, 'standard')
+})
+
+test('profileRequest accepts camelCase reasoningEffort', () => {
+  const profile = profileRequest(textRequest('x'.repeat(1500), {
+    tools: [{ type: 'function', function: { name: 'read_file' } }],
+    reasoningEffort: 'high',
+  }))
+
+  assert.equal(profile.complexity, 'complex')
+})
+
+test('profileRequest counts tool schemas in the token estimate', () => {
+  const withoutTools = profileRequest(textRequest('hi'))
+  const withTools = profileRequest(textRequest('hi', {
+    tools: [{
+      type: 'function',
+      function: {
+        name: 'read_file',
+        description: '读取文件内容',
+        parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+      },
+    }],
+  }))
+
+  // agent 客户端每轮重发完整 tools schema；漏算会让 auto 把请求路由到窗口不够的模型
+  assert.equal(withTools.needsTools, true)
+  assert.ok(
+    withTools.estimatedTokens > withoutTools.estimatedTokens,
+    'tools schema 必须计入 estimatedTokens'
+  )
+})
+
+test('profileRequest counts assistant tool-call arguments in the token estimate', () => {
+  const withoutArgs = profileRequest({
+    model: 'auto',
+    messages: [{ role: 'user', content: '改一下这个文件' }],
+  })
+  const withArgs = profileRequest({
+    model: 'auto',
+    messages: [
+      { role: 'user', content: '改一下这个文件' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: 'call_1',
+          type: 'function',
+          function: { name: 'write_file', arguments: JSON.stringify({ content: 'x'.repeat(40_000) }) },
+        }],
+      } as never,
+      { role: 'tool', tool_call_id: 'call_1', content: 'ok' },
+    ],
+  })
+
+  // tool_calls 的 arguments 不在 content 里；IDE 客户端把整段文件写在这里
+  assert.ok(
+    withArgs.estimatedTokens > withoutArgs.estimatedTokens + 5_000,
+    `工具参数必须计入估算，实际 ${withArgs.estimatedTokens}`
+  )
 })
 
 test('resolveCapability knows shipped models and falls back to name heuristics', () => {
@@ -310,6 +394,24 @@ test('the preference overrides the target tier for every complexity', () => {
   assert.equal(rankCandidates(profile, pool, { now: NOW, prefer: 'strong' })[0].accountId, 'strong')
 })
 
+test('tool-using requests prefer a strong model even when cost is the preference', () => {
+  const profile = {
+    ...profileRequest(textRequest('hi', {
+      tools: [{ type: 'function', function: { name: 'read_file' } }],
+    })),
+    complexity: 'standard' as const,
+  }
+  const pool = [
+    candidate({ accountId: 'free-balanced', displayName: 'Qwen3.6', costBucket: 'free' }),
+    candidate({ accountId: 'paid-strong', displayName: 'Qwen3.7-Max', costBucket: 'base' }),
+  ]
+
+  // 旧逻辑下 cheap 会把免费的 balanced 模型顶到第一；工具请求应为稳定性
+  // 上浮档位并压低成本权重，避免 agent 跑到容易思考循环的快模型上。
+  const ranked = rankCandidates(profile, pool, { now: NOW, prefer: 'cheap' })
+  assert.equal(ranked[0].accountId, 'paid-strong')
+})
+
 test('a sticky hint promotes the previous candidate but never hard-pins it', () => {
   const profile = profileRequest(textRequest('hi'))
   const pool = [
@@ -522,4 +624,262 @@ test('conversationKey returns undefined without a user message', () => {
     }),
     undefined
   )
+})
+
+// ── 候选池策略筛选 ─────────────────────────────────────────────────────────
+
+/**
+ * 构造一个策略候选。providerType 是策略筛选区别于硬过滤的关键字段：
+ * 渠道类策略要按供应商类型过滤。
+ */
+function poolCandidate(overrides: Partial<PoolStrategyCandidate>): PoolStrategyCandidate {
+  return {
+    providerId: 'qwen',
+    providerName: 'Qwen',
+    displayName: 'Qwen3.7-Max',
+    actualModelId: 'qwen3.7-max',
+    accountId: 'account-a',
+    providerType: 'aggregate',
+    ...overrides,
+  }
+}
+
+/** 策略筛选测试用的常量阈值 */
+const LONG_CONTEXT = 128000
+const STANDARD_CONTEXT = 32000
+
+test('STRATEGY_PREDICATES covers all 17 strategy ids exactly once', () => {
+  assert.deepEqual(Object.keys(STRATEGY_PREDICATES).sort(), [...AUTO_POOL_STRATEGY_IDS].sort())
+  for (const id of AUTO_POOL_STRATEGY_IDS) {
+    assert.equal(typeof STRATEGY_PREDICATES[id], 'function')
+  }
+})
+
+test('capability predicates read resolved capability, unknown stays unknown', () => {
+  const visionYes = poolCandidate({ providerId: 'glm', displayName: 'GLM-5.3', capabilityHint: { vision: 'yes' } })
+  const visionNo = poolCandidate({ providerId: 'kimi', displayName: 'Kimi / Instant', capabilityHint: { vision: 'no' } })
+  const visionUnknown = poolCandidate({ providerId: 'custom', displayName: 'mystery', capabilityHint: {} })
+
+  assert.equal(STRATEGY_PREDICATES['vision-capable'](visionYes), true)
+  assert.equal(STRATEGY_PREDICATES['vision-capable'](visionNo), false)
+  assert.equal(STRATEGY_PREDICATES['vision-capable'](visionUnknown), false)
+
+  const toolsYes = poolCandidate({ capabilityHint: { tools: 'yes' } })
+  const toolsNo = poolCandidate({ capabilityHint: { tools: 'no' } })
+  assert.equal(STRATEGY_PREDICATES['tools-capable'](toolsYes), true)
+  assert.equal(STRATEGY_PREDICATES['tools-capable'](toolsNo), false)
+})
+
+test('multimodal is approximated by vision=yes until a dedicated field exists', () => {
+  const visionYes = poolCandidate({ capabilityHint: { vision: 'yes' } })
+  const visionNo = poolCandidate({ capabilityHint: { vision: 'no' } })
+  assert.equal(STRATEGY_PREDICATES['multimodal'](visionYes), true)
+  assert.equal(STRATEGY_PREDICATES['multimodal'](visionNo), false)
+})
+
+test('reasoning requires strong tier AND a reason/thinking name (case-insensitive)', () => {
+  const strongReason = poolCandidate({ displayName: 'GPT-Reason', capabilityHint: { tier: 'strong' } })
+  const strongThinking = poolCandidate({ displayName: 'o3-Thinking', capabilityHint: { tier: 'strong' } })
+  const strongNoReason = poolCandidate({ displayName: 'GPT-4o', capabilityHint: { tier: 'strong' } })
+  const weakReason = poolCandidate({ displayName: 'GPT-Reason', capabilityHint: { tier: 'fast' } })
+
+  assert.equal(STRATEGY_PREDICATES['reasoning'](strongReason), true)
+  assert.equal(STRATEGY_PREDICATES['reasoning'](strongThinking), true)
+  assert.equal(STRATEGY_PREDICATES['reasoning'](strongNoReason), false)
+  // tier strong 是必要条件：名字命中但档位不够也算 false
+  assert.equal(STRATEGY_PREDICATES['reasoning'](weakReason), false)
+})
+
+test('annotated-only passes when any of vision/tools/contextTokens is defined', () => {
+  const visionOnly = poolCandidate({ capabilityHint: { vision: 'yes' } })
+  const toolsOnly = poolCandidate({ capabilityHint: { tools: 'no' } })
+  const contextOnly = poolCandidate({ capabilityHint: { contextTokens: 32000 } })
+  const allUnknown = poolCandidate({ capabilityHint: {} })
+
+  assert.equal(STRATEGY_PREDICATES['annotated-only'](visionOnly), true)
+  assert.equal(STRATEGY_PREDICATES['annotated-only'](toolsOnly), true)
+  assert.equal(STRATEGY_PREDICATES['annotated-only'](contextOnly), true)
+  assert.equal(STRATEGY_PREDICATES['annotated-only'](allUnknown), false)
+})
+
+test('cost predicates distinguish free, included, known and unknown', () => {
+  const free = poolCandidate({ costBucket: 'free' })
+  const included = poolCandidate({ costBucket: 'free', costClass: 'included' })
+  const aboveBase = poolCandidate({ costBucket: 'above-base' })
+  const unknown = poolCandidate({ costBucket: 'unknown' })
+  const missing = poolCandidate({})
+
+  assert.equal(STRATEGY_PREDICATES['free-only'](free), true)
+  assert.equal(STRATEGY_PREDICATES['free-only'](included), true) // costBucket 仍是 free
+  assert.equal(STRATEGY_PREDICATES['free-only'](aboveBase), false)
+
+  assert.equal(STRATEGY_PREDICATES['included-plan'](included), true)
+  assert.equal(STRATEGY_PREDICATES['included-plan'](free), false) // 完全免费不是套餐内
+  assert.equal(STRATEGY_PREDICATES['included-plan'](unknown), false)
+
+  assert.equal(STRATEGY_PREDICATES['cost-known'](free), true)
+  assert.equal(STRATEGY_PREDICATES['cost-known'](aboveBase), true)
+  assert.equal(STRATEGY_PREDICATES['cost-known'](unknown), false)
+  assert.equal(STRATEGY_PREDICATES['cost-known'](missing), false) // 缺失不等于已知
+})
+
+test('low-weight requires an annotated weight ≤ 1, never treats missing as 0', () => {
+  const low = poolCandidate({ capabilityHint: { weight: 0.5 } })
+  const exactlyOne = poolCandidate({ capabilityHint: { weight: 1 } })
+  const high = poolCandidate({ capabilityHint: { weight: 4 } })
+  const missing = poolCandidate({ capabilityHint: {} })
+
+  assert.equal(STRATEGY_PREDICATES['low-weight'](low), true)
+  assert.equal(STRATEGY_PREDICATES['low-weight'](exactlyOne), true)
+  assert.equal(STRATEGY_PREDICATES['low-weight'](high), false)
+  // weight 缺失就是缺失，不能当 0（0 会通过，但缺失必须不通过）
+  assert.equal(STRATEGY_PREDICATES['low-weight'](missing), false)
+})
+
+test('context predicates use explicit thresholds and never default a missing window', () => {
+  const long = poolCandidate({ capabilityHint: { contextTokens: LONG_CONTEXT } })
+  const standard = poolCandidate({ capabilityHint: { contextTokens: STANDARD_CONTEXT } })
+  const between = poolCandidate({ capabilityHint: { contextTokens: 64000 } })
+  const missing = poolCandidate({ capabilityHint: {} })
+
+  assert.equal(STRATEGY_PREDICATES['long-context'](long), true)
+  assert.equal(STRATEGY_PREDICATES['long-context'](standard), false)
+  assert.equal(STRATEGY_PREDICATES['standard-context'](long), true)
+  assert.equal(STRATEGY_PREDICATES['standard-context'](standard), true)
+  assert.equal(STRATEGY_PREDICATES['standard-context'](between), true)
+  // contextTokens 缺失就是 undefined，不能填默认值
+  assert.equal(STRATEGY_PREDICATES['long-context'](missing), false)
+  assert.equal(STRATEGY_PREDICATES['standard-context'](missing), false)
+})
+
+test('tier predicates match the resolved tier exactly', () => {
+  const fast = poolCandidate({ capabilityHint: { tier: 'fast' } })
+  const strong = poolCandidate({ capabilityHint: { tier: 'strong' } })
+  const balanced = poolCandidate({ capabilityHint: { tier: 'balanced' } })
+
+  assert.equal(STRATEGY_PREDICATES['fast-tier'](fast), true)
+  assert.equal(STRATEGY_PREDICATES['fast-tier'](strong), false)
+  assert.equal(STRATEGY_PREDICATES['strong-tier'](strong), true)
+  assert.equal(STRATEGY_PREDICATES['strong-tier'](balanced), false)
+  assert.equal(STRATEGY_PREDICATES['balanced-tier'](balanced), true)
+  assert.equal(STRATEGY_PREDICATES['balanced-tier'](fast), false)
+})
+
+test('channel predicates filter by provider type', () => {
+  const aggregate = poolCandidate({ providerType: 'aggregate' })
+  const account = poolCandidate({ providerType: 'account' })
+  const builtin = poolCandidate({ providerType: 'builtin' })
+  const custom = poolCandidate({ providerType: 'custom' })
+
+  assert.equal(STRATEGY_PREDICATES['aggregate-only'](aggregate), true)
+  assert.equal(STRATEGY_PREDICATES['aggregate-only'](account), false)
+  assert.equal(STRATEGY_PREDICATES['channel-only'](account), true)
+  assert.equal(STRATEGY_PREDICATES['channel-only'](aggregate), false)
+  assert.equal(STRATEGY_PREDICATES['builtin-only'](builtin), true)
+  assert.equal(STRATEGY_PREDICATES['builtin-only'](custom), false)
+})
+
+test('applyPoolStrategies returns candidates untouched when no strategies are set', () => {
+  const candidates = [
+    poolCandidate({ accountId: 'a' }),
+    poolCandidate({ accountId: 'b' }),
+  ]
+  const result = applyPoolStrategies(candidates, [])
+  assert.deepEqual(result, candidates)
+  // 不改动传入的数组
+  assert.equal(candidates.length, 2)
+})
+
+test('applyPoolStrategies combines and/or strictly left to right', () => {
+  // A: vision=yes ; B: tools=yes ; C: neither ; D: both
+  const a = poolCandidate({ accountId: 'a', capabilityHint: { vision: 'yes' } })
+  const b = poolCandidate({ accountId: 'b', capabilityHint: { tools: 'yes' } })
+  const c = poolCandidate({ accountId: 'c', capabilityHint: {} })
+  const d = poolCandidate({ accountId: 'd', capabilityHint: { vision: 'yes', tools: 'yes' } })
+  const candidates = [a, b, c, d]
+
+  // 第一个策略无条件生效，其 operator 被忽略
+  const firstOnly = applyPoolStrategies(candidates, [{ id: 'vision-capable', operator: 'or' as const }])
+  assert.deepEqual(firstOnly.map(c => c.accountId), ['a', 'd'])
+
+  // 且（交集）：vision 且 tools → 只有 d
+  const andCase = applyPoolStrategies(candidates, [
+    { id: 'vision-capable', operator: 'and' },
+    { id: 'tools-capable', operator: 'and' },
+  ])
+  assert.deepEqual(andCase.map(c => c.accountId), ['d'])
+
+  // 或（并集）：vision 或 tools → a、b、d（c 两个都不满足）
+  const orCase = applyPoolStrategies(candidates, [
+    { id: 'vision-capable', operator: 'and' },
+    { id: 'tools-capable', operator: 'or' },
+  ])
+  assert.deepEqual(orCase.map(c => c.accountId), ['a', 'b', 'd'])
+})
+
+test('applyPoolStrategies preserves candidate order and does not mutate input', () => {
+  const a = poolCandidate({ accountId: 'a', capabilityHint: { vision: 'yes' } })
+  const b = poolCandidate({ accountId: 'b', capabilityHint: { tools: 'yes' } })
+  const c = poolCandidate({ accountId: 'c', capabilityHint: {} })
+  const snapshot = [a, b, c]
+
+  const result = applyPoolStrategies(snapshot, [
+    { id: 'vision-capable', operator: 'and' },
+    { id: 'tools-capable', operator: 'or' },
+  ])
+
+  // 结果按原序重建：a、b（c 被两个都不满足）
+  assert.deepEqual(result.map(x => x.accountId), ['a', 'b'])
+  // 输入数组与对象引用未变
+  assert.deepEqual(snapshot, [a, b, c])
+  assert.equal(snapshot[0], a)
+  assert.equal(snapshot[2], c)
+})
+
+test('applyPoolStrategies skips unknown strategy ids without dropping candidates', () => {
+  const a = poolCandidate({ accountId: 'a' })
+  const b = poolCandidate({ accountId: 'b' })
+  // 未知 id 被跳过（fail-open），已知 id 正常过滤
+  const result = applyPoolStrategies([a, b], [
+    { id: 'not-a-real-id' as AutoPoolStrategyId, operator: 'and' },
+    { id: 'builtin-only', operator: 'and' },
+  ])
+  // builtin-only 过滤掉 aggregate 类型的候选，未知 id 不影响
+  assert.deepEqual(result, [])
+})
+
+test('normalizeAutoRoutingConfig drops invalid ids, keeps valid ones, falls back operator', () => {
+  const normalized = normalizeAutoRoutingConfig({
+    poolStrategies: [
+      { id: 'free-only', operator: 'and' },
+      { id: 'not-real', operator: 'and' }, // 非法 id → 剔除
+      { id: 'long-context', operator: 'bogus' as AutoPoolStrategy['operator'] }, // 非法 operator → and
+    ],
+  })
+  assert.deepEqual(normalized.poolStrategies, [
+    { id: 'free-only', operator: 'and' },
+    { id: 'long-context', operator: 'and' },
+  ])
+})
+
+test('normalizeAutoRoutingConfig keeps a valid or operator and first-entry operator verbatim', () => {
+  const normalized = normalizeAutoRoutingConfig({
+    poolStrategies: [
+      { id: 'vision-capable', operator: 'or' }, // 第一个 operator 保留原值（求值时被忽略）
+      { id: 'multimodal', operator: 'or' },
+    ],
+  })
+  assert.deepEqual(normalized.poolStrategies, [
+    { id: 'vision-capable', operator: 'or' },
+    { id: 'multimodal', operator: 'or' },
+  ])
+})
+
+test('normalizeAutoRoutingConfig returns empty poolStrategies when none are supplied', () => {
+  const normalized = normalizeAutoRoutingConfig({})
+  assert.deepEqual(normalized.poolStrategies, [])
+  assert.deepEqual(normalized, {
+    ...DEFAULT_AUTO_ROUTING_CONFIG,
+    poolStrategies: [],
+  })
 })

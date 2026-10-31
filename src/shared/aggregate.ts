@@ -63,6 +63,12 @@ export interface AggregateEntry {
   /** Ids the upstream project marks as free on a shared pool */
   freeModelsHint?: string[]
   /**
+   * 免验证条目的自动开通标记。为 true 且 authKind 为 'none' 的条目在启动期
+   * 自动创建聚合记录并启用（免 key 本就无凭据可填），随后并入上游模型清单；
+   * 用户在界面上删过的条目记入 `dismissedAutoProviders`，不再复活。
+   */
+  autoProvision?: boolean
+  /**
    * 请求体字段剥离规则，供 schema 比 OpenAI 更严的上游使用。
    *
    * 形态只有三种：

@@ -441,10 +441,12 @@ export async function toGenerateOptions(
     : typeof body.temperature === 'number' && Number.isFinite(body.temperature) ? body.temperature
       : (() => { throw new OpenAiGatewayError('temperature must be a finite number') })()
 
-  const tools = convertTools(body.tools)
-  if (body.tool_choice === 'none' && tools !== undefined && tools.length > 0) {
-    throw new OpenAiGatewayError('tool_choice none with tools cannot be represented by DSH', 400, 'unsupported_parameter', 'unsupported_parameter')
-  }
+  // tool_choice:'none' + tools 是 OpenAI 规范里的**合法**组合（工具在上下文、
+  // 但本轮禁止调用），Qoder 等客户端对摘要/命名类子请求就会这么发。DSH 的
+  // GenerateOptions 没有 tool_choice 字段，唯一忠实的表达是丢弃 tools ——
+  // 模型本就不许调用，可观察行为不变。回 400 会让客户端整轮报废
+  // （trae.ts 的 normalizeToolChoice 同判据：none → 删 tools）。
+  const tools = body.tool_choice === 'none' ? undefined : convertTools(body.tools)
   // ⚠️ 这里用 `!== undefined` 而**不是** `??`：三态必须区分开。
   // - `undefined`：调用方没给（未传）→ 回退到 body 里的值（直连调用的老行为）；
   // - `null`：调用方**明确决定不下发**（模型未声明思考档位）→ 必须原样保留，
