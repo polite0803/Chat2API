@@ -71,6 +71,7 @@ import {
   FIRST_EVENT_TIMEOUT_MS,
   firstStreamEvent,
   isFailoverEligibleStatus,
+  isMissingReasoningHistoryError,
   isRecoverableChannelFailure,
   isToolOverflowError,
   probeSseHead,
@@ -538,10 +539,12 @@ export class RequestForwarder {
         return last
       }
 
-      // 工具数超限是「渠道装不下」而非账号故障：换下一家继续试，但**不记冷却
-      // 也不计账号失败** —— 账号本身是健康的，小工具请求不该被连坐。
-      const toolOverflow = isToolOverflowError(result.error)
-      if (!toolOverflow) {
+      // 「渠道能力不匹配」类 400（工具数超限、历史缺 reasoning_content）是
+      // 「换一家就能成」而非账号故障：换下一家继续试，但**不记冷却也不计账号
+      // 失败** —— 账号本身是健康的，小工具请求/无思考历史的会话不该被连坐。
+      const capabilityMismatch = isToolOverflowError(result.error)
+        || isMissingReasoningHistoryError(result.error)
+      if (!capabilityMismatch) {
         if (!this.isFailoverEligible(result.status)) {
           return last
         }
@@ -664,7 +667,9 @@ export class RequestForwarder {
         upstream.destroy()
         return {
           success: false,
-          status: isToolOverflowError(probe.message) ? 400 : 502,
+          status: isToolOverflowError(probe.message) || isMissingReasoningHistoryError(probe.message)
+            ? 400
+            : 502,
           error: probe.message,
           latency: Date.now() - startTime,
         }

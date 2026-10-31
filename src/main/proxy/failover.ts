@@ -30,10 +30,39 @@ export function isToolOverflowError(message: string | undefined): boolean {
 }
 
 /**
+ * 「历史 assistant 消息缺 reasoning_content」类 400 的识别（用户报障 2026-10-31）。
+ *
+ * ## 为什么这类 400 也要允许「换下一家」
+ *
+ * cline 背后的 Vercel AI Gateway 对部分推理模型（`reflection/beam-free`）强制
+ * 校验：多轮对话的**每一条历史 assistant 消息**都必须回传当轮的思考内容，缺任一
+ * 即 400：`Missing required parameter: 'messages[6].reasoning_content'. This
+ * model needs the reasoning of every earlier assistant message…`。
+ *
+ * 历史里之所以会缺，是无解的：思考内容由**上一轮响应方**产出，客户端不存
+ * （reasoning_content 是 DeepSeek 风格的非标字段，多数客户端不回传）、上一轮由
+ * 非推理模型/其它渠道响应、或思考被 max_tokens 截断 —— 任何一种都凑不齐
+ * beam-free 要的全套历史。重试同一家只会原样再撞一次，上游自己也只能建议
+ * 「consider starting a new session」。
+ *
+ * 这是**模型特性与客户端历史的不匹配**（与工具数超限同类：换一家没有该要求的
+ * 渠道就能成），不是账号故障：不记冷却、不计账号失败，换下一家继续试。
+ *
+ * ⚠️ 识别口径必须**窄**：要求文案同时出现 `reasoning_content` 字段名与
+ * `Missing required parameter` 短语 —— 正常正文不会同时带这两者。
+ */
+export function isMissingReasoningHistoryError(message: string | undefined): boolean {
+  if (!message) return false
+  return /reasoning_content/i.test(message)
+    && /missing required parameter/i.test(message)
+}
+
+/**
  * 429 / 5xx / 无状态码（网络错误、超时）才值得换目标；4xx 换目标没有意义。
  *
- * 唯一例外是工具数超限（见上）：那类 400 由调用方在状态码判定**之前**单独
- * 放行（forwarder.ts 的 `forwardFirstReachable`），本函数保持纯状态码语义。
+ * 例外是「渠道能力不匹配」类 400（工具数超限、历史缺 reasoning_content）：那类
+ * 400 由调用方在状态码判定**之前**单独放行（forwarder.ts 的
+ * `forwardFirstReachable`），本函数保持纯状态码语义。
  */
 export function isFailoverEligibleStatus(status?: number): boolean {
   if (status === undefined) return true

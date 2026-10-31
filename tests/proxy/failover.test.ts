@@ -7,6 +7,10 @@
  * 1. 账号渠道流式路径等「首块 vs 首错」，建流阶段的失败转成普通 ForwardResult；
  * 2. 工具数超限类 400 判为可换家（渠道装不下，账号本身无过）。
  *
+ * 缺 reasoning 历史的 400（用户报障 2026-10-31，cline / reflection/beam-free）：
+ * 6. 历史 assistant 消息缺 reasoning_content 的 400 同判可换家 —— 推理模型的
+ *    历史校验与客户端历史形状不匹配，重试同一家只会原样再撞。
+ *
  * PLAN-auto-routing-freellmapi P0-1/P0-2 追加：
  * 3. 换家按错误类分级（账号故障类 3 家封顶；排队/额度/限流类放宽到 6 家）；
  * 4. 换家有墙钟总预算（90s），预算耗尽返回最后失败；
@@ -23,6 +27,7 @@ import {
   FIRST_EVENT_TIMEOUT_MS,
   firstStreamEvent,
   isFailoverEligibleStatus,
+  isMissingReasoningHistoryError,
   isRecoverableChannelFailure,
   isToolOverflowError,
   probeSseHead,
@@ -52,6 +57,31 @@ test('工具数超限识别：窄口径，无关 400 不得误判', () => {
   assert.equal(isToolOverflowError("Invalid value for 'tools': schema is invalid"), false)
   // 普通业务错误不算
   assert.equal(isToolOverflowError('model not found'), false)
+})
+
+test('缺 reasoning 历史识别：命中用户报障的上游原文（2026-10-31 beam-free）', () => {
+  // 用户报障原文（cline / Vercel AI Gateway 400 的 error.message 片段）
+  assert.ok(isMissingReasoningHistoryError(
+    "Missing required parameter: 'messages[6].reasoning_content'. This model needs the "
+    + "reasoning of every earlier assistant message: send back the 'reasoning_content' "
+    + "returned with that message. If 'reasoning_content' is not available, consider "
+    + 'starting a new session or conversation history.',
+  ))
+  // 字段名在 param 路径里、message 措辞变体也要认
+  assert.ok(isMissingReasoningHistoryError(
+    "Missing required parameter: 'messages[2].reasoning_content'",
+  ))
+})
+
+test('缺 reasoning 历史识别：窄口径，无关 400 不得误判', () => {
+  assert.equal(isMissingReasoningHistoryError(undefined), false)
+  assert.equal(isMissingReasoningHistoryError(''), false)
+  // 缺别的参数（如 messages 缺 role）不算
+  assert.equal(isMissingReasoningHistoryError("Missing required parameter: 'messages[6].role'"), false)
+  // 提到 reasoning_content 但不是「缺参数」语义（如值非法）不算
+  assert.equal(isMissingReasoningHistoryError("Invalid value for 'reasoning_content': must be a string"), false)
+  // 普通业务错误不算
+  assert.equal(isMissingReasoningHistoryError('model not found'), false)
 })
 
 test('firstStreamEvent：建流失败在首块之前到达时，以 error 浮现并带上状态码', () => {
@@ -223,11 +253,18 @@ test('worker 的 model.rateLimits rpc 必须剥 provider 前缀再查限流键',
 })
 
 test('forwarder 的换家判据必须接上：超限 400 参与换家，普通 400 仍然直接失败', () => {
-  // 钉调用点：forwardFirstReachable 在 4xx 判定之前先查工具超限
+  // 钉调用点：forwardFirstReachable 在 4xx 判定之前先查「渠道能力不匹配」
+  // （工具数超限 + 历史缺 reasoning_content，两类都是换一家就能成的 400）
   assert.match(
     forwarderSource,
-    /const toolOverflow = isToolOverflowError\(result\.error\)/,
-    'forwardFirstReachable must consult isToolOverflowError before rejecting failover',
+    /const capabilityMismatch = isToolOverflowError\(result\.error\)\s*\n\s*\|\| isMissingReasoningHistoryError\(result\.error\)/,
+    'forwardFirstReachable must consult capability-mismatch 400s before rejecting failover',
+  )
+  // probe 错误帧映射：能力不匹配类 400 保持 400（换取「不计账号失败」的换家语义）
+  assert.match(
+    forwarderSource,
+    /isToolOverflowError\(probe\.message\) \|\| isMissingReasoningHistoryError\(probe\.message\)\s*\n\s*\? 400\s*\n\s*: 502/,
+    'probe error frames must keep capability-mismatch 400s at 400 so they fail over without account-failure penalty',
   )
   // 钉不变量：普通 4xx（非超限）依旧不可换家 —— 这条语义不许被顺手改掉
   assert.equal(isFailoverEligibleStatus(400), false)
