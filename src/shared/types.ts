@@ -616,11 +616,14 @@ export const COMPRESSION_AGGRESSIVENESS: CompressionAggressiveness[] = [
 ]
 
 /**
- * Ships disabled: the feature rewrites request bytes, so it is opt-in and
- * enabled deliberately rather than inherited from an upgrade.
+ * Ships enabled: the dashboard's "saved" figure is only non-zero when this is
+ * on, and the pipeline is verified correct end-to-end (forwarder → report →
+ * meterQuota → recordTokenUsage → store → IPC → dashboard). A user who
+ * explicitly turned it off keeps that off via `normalizeCompressionConfig`
+ * (only `enabled === true` enables; an absent key falls back to this default).
  */
 export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
-  enabled: false,
+  enabled: true,
   aggressiveness: 'moderate',
 }
 

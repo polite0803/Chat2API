@@ -5,10 +5,12 @@ import { normalizeCompressionConfig } from '../../src/main/store/compressionConf
 import { normalizeOutputSteeringConfig } from '../../src/main/store/outputSteeringConfig.ts'
 import { DEFAULT_COMPRESSION_CONFIG, DEFAULT_OUTPUT_STEERING_CONFIG } from '../../src/shared/types.ts'
 
-test('an install from before the feature reads as disabled', () => {
+test('an install from before the feature inherits the shipped default', () => {
   // `data.json` written by a release that had no `compression` key at all.
+  // It reads as the shipped default, whatever that is; an explicit
+  // `enabled: false` below stays off regardless of the default.
   assert.deepEqual(normalizeCompressionConfig(undefined), { ...DEFAULT_COMPRESSION_CONFIG })
-  assert.equal(normalizeCompressionConfig(null).enabled, false)
+  assert.equal(normalizeCompressionConfig(null).enabled, DEFAULT_COMPRESSION_CONFIG.enabled)
 })
 
 test('only an explicit true enables compression', () => {
