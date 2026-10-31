@@ -36,6 +36,7 @@ import { RemoteCatalogGate } from './remote-catalog-gate.js'
 import { settingsNamespaceFor } from './settings-compat.js'
 import { nextUtc8DayStartMs } from './model-queue.js'
 import { isRaccoonExpired, type RaccoonCredential } from './raccoon.js'
+import { isRaccoonRateLimitError, RACCOON_RATE_LIMIT_COOLDOWN_MS } from './raccoon-rate-limit.js'
 import {
   RACCOON,
   RACCOON_DEFAULT_EFFORT,
@@ -502,9 +503,26 @@ export class RaccoonAdapter extends LlmAdapter {
           const errorText = await response.text().catch(() => '')
           let quota = response.status === 402
           try { quota ||= isQuotaError(JSON.parse(errorText)) } catch {}
+          if (quota) {
+            throw new LlmError(
+              `raccoon: ${errorDetail(errorText)}`,
+              'QUOTA_EXCEEDED',
+              { status: response.status },
+            )
+          }
+          // 频率超限伪装成 5xx/4xx：改判 RATE_LIMIT 并把对客户端的状态码
+          // 校正为 429 —— 让客户端退避重试，而不是把 502 当可重试故障硬撞
+          //（主进程垫片注释同款哲学：确定性失败必须给准确状态码）。
+          if (isRaccoonRateLimitError(response.status, errorText)) {
+            throw new LlmError(
+              `raccoon: ${errorDetail(errorText)}`,
+              'RATE_LIMIT',
+              { status: 429 },
+            )
+          }
           throw new LlmError(
             `raccoon: ${errorDetail(errorText)}`,
-            quota ? 'QUOTA_EXCEEDED' : httpErrorCode(response.status),
+            httpErrorCode(response.status),
             { status: response.status },
           )
         }
@@ -523,9 +541,17 @@ export class RaccoonAdapter extends LlmAdapter {
         }
         return
       } catch (error) {
-        if (options.signal?.aborted || !(error instanceof LlmError) || error.code !== 'QUOTA_EXCEEDED') throw error
+        // 额度耗尽与频率超限都触发「标记 + 换号」：前者标到当日 24:00
+        //（积分不自行恢复），后者只做 60 秒短冷却（稍等即恢复）。
+        // 未覆盖前，频率超限被当 SERVER 直接抛出 —— 同一账号被硬撞到底。
+        if (options.signal?.aborted || !(error instanceof LlmError)) throw error
+        if (error.code !== 'QUOTA_EXCEEDED' && error.code !== 'RATE_LIMIT') throw error
         if (accountId) {
-          await this.options.accountPool?.updateModelRateLimit(accountId, options.model, nextUtc8DayStartMs())
+          await this.options.accountPool?.updateModelRateLimit(
+            accountId,
+            options.model,
+            error.code === 'QUOTA_EXCEEDED' ? nextUtc8DayStartMs() : Date.now() + RACCOON_RATE_LIMIT_COOLDOWN_MS,
+          )
         }
         // A new SSE consumer starts block indices at zero; never replay after output.
         if (emitted || attempt === 2 || this.options.nextAccount === undefined) throw error

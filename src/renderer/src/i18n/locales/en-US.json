@@ -270,7 +270,12 @@
     "updateModelsEmptyDesc": "The list response contained no usable model entries",
     "updateModelsShapeDesc": "Unrecognised response shape, nothing was stored: {{detail}}",
     "updateModelsNetworkDesc": "Requesting the upstream list failed: {{detail}}",
-    "updateModelsInvalidKeyDesc": "Every stored key was rejected by the model list endpoint: {{detail}}"
+    "updateModelsInvalidKeyDesc": "Every stored key was rejected by the model list endpoint: {{detail}}",
+    "never": "Never",
+    "nearLimit": "Remaining quota is near its limit",
+    "providerNameRequired": "Name is required",
+    "apiEndpointRequired": "API endpoint is required",
+    "apiEndpointInvalid": "API endpoint is invalid"
   },
   "opencode": {
     "name": "OpenCode",
@@ -1167,6 +1172,20 @@
     "configSaved": "Compression settings saved",
     "configSaveFailed": "Failed to save compression settings"
   },
+  "outputSteering": {
+    "title": "Output verbosity",
+    "enable": "Enable output verbosity control",
+    "enableHint": "Affects the model's output only: appends a fixed instruction block to the tail of the system prompt to skip preambles and postambles and stop restating code or tool output. The block text is fixed per level, so it never breaks the upstream prompt cache; with it off, requests are byte-for-byte unchanged.",
+    "level": "Strength",
+    "levelHint": "Higher levels are stricter. No level ever drops what the task needs to be correct (negations, conditions, constraints) — it only shortens how it is said.",
+    "levels": {
+      "1": "Light",
+      "2": "Standard",
+      "3": "Max"
+    },
+    "configSaved": "Output verbosity settings saved",
+    "configSaveFailed": "Failed to save output verbosity settings"
+  },
   "contextManagement": {
     "title": "Context Management",
     "enableContextManagement": "Enable Context Management",
@@ -1422,6 +1441,8 @@
         "tested": "Tests finished: {{ok}} working, {{failed}} failed",
         "testing": "Testing {{count}} models…",
         "synced": "Sync finished: {{fetched}} upstream, {{added}} new, {{total}} total",
+        "syncedNoChange": "Every upstream model is already listed; nothing new",
+        "syncedFromModelsDev": "The upstream list endpoint answered nothing usable, so this sync used the models.dev catalogue instead (it may lag slightly behind upstream)",
         "testOk": "Endpoint reachable, returned {{count}} models"
       }
     }
@@ -1513,5 +1534,35 @@
   "autoCheckin": {},
   "loginKind": {},
   "login": {},
-  "hint": {}
+  "hint": {},
+  "loginGuide": {
+    "openWebsite": "Open the {{provider}} website",
+    "paste": "Paste",
+    "openBrowserFailedDesc": "Could not open the browser; open this URL manually: {{url}}",
+    "pasteFailedDesc": "Could not read the clipboard; paste it manually",
+    "fillRequiredFields": "Please fill in all required fields",
+    "addFailed": "Failed to add",
+    "addSuccess": "Added successfully",
+    "accountAddedDesc": "{{provider}} account added",
+    "done": "Done",
+    "getToken": "How to get your {{provider}} token",
+    "getTokenDesc": "Follow the steps to copy the token, paste it into the field below, then confirm.",
+    "steps": "Steps",
+    "confirmAdd": "Confirm add"
+  },
+  "qwen": {
+    "name": "Qwen"
+  },
+  "qwen-ai": {
+    "name": "Qwen (International)"
+  },
+  "glm": {
+    "name": "GLM (Zhipu)"
+  },
+  "minimax": {
+    "name": "MiniMax"
+  },
+  "zai": {
+    "name": "Z.ai"
+  }
 }

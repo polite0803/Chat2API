@@ -270,7 +270,12 @@
     "updateModelsEmptyDesc": "清单响应里没有可识别的模型条目",
     "updateModelsShapeDesc": "响应结构不认识，未写入任何清单：{{detail}}",
     "updateModelsNetworkDesc": "请求上游清单失败：{{detail}}",
-    "updateModelsInvalidKeyDesc": "已存的所有 Key 都被清单接口拒绝：{{detail}}"
+    "updateModelsInvalidKeyDesc": "已存的所有 Key 都被清单接口拒绝：{{detail}}",
+    "never": "从未",
+    "nearLimit": "剩余额度接近上限",
+    "providerNameRequired": "请输入名称",
+    "apiEndpointRequired": "请输入 API 地址",
+    "apiEndpointInvalid": "API 地址无效"
   },
   "opencode": {
     "name": "OpenCode",
@@ -1167,6 +1172,20 @@
     "configSaved": "压缩配置已保存",
     "configSaveFailed": "保存压缩配置失败"
   },
+  "outputSteering": {
+    "title": "输出精简",
+    "enable": "启用输出精简",
+    "enableHint": "只影响模型的输出：在系统提示词末尾追加一段固定的精简指令，跳过开场白和收尾复述、不再重抄代码或工具结果。指令内容按档位固定不变，不会打掉上游前缀缓存；关闭后请求逐字节恢复原样。",
+    "level": "精简力度",
+    "levelHint": "档位越高要求越严格。任何档位都不会省略让任务正确的信息（否定词、条件、约束），只是把话说短。",
+    "levels": {
+      "1": "轻度",
+      "2": "标准",
+      "3": "最强"
+    },
+    "configSaved": "输出精简配置已保存",
+    "configSaveFailed": "保存输出精简配置失败"
+  },
   "contextManagement": {
     "title": "上下文管理",
     "enableContextManagement": "启用上下文管理",
@@ -1422,6 +1441,8 @@
         "tested": "测试完成：{{ok}} 个可用，{{failed}} 个失败",
         "testing": "正在测试 {{count}} 个模型…",
         "synced": "同步完成：上游 {{fetched}} 个，新增 {{added}} 个，现有 {{total}} 个",
+        "syncedNoChange": "上游清单里的模型都已在列，没有新增",
+        "syncedFromModelsDev": "上游没有返回模型清单，本次由 models.dev 目录补充（可能比上游略有滞后）",
         "testOk": "端点可用，返回 {{count}} 个模型"
       }
     }
@@ -1513,5 +1534,35 @@
   "autoCheckin": {},
   "loginKind": {},
   "login": {},
-  "hint": {}
+  "hint": {},
+  "loginGuide": {
+    "openWebsite": "打开 {{provider}} 官网",
+    "paste": "粘贴",
+    "openBrowserFailedDesc": "无法打开浏览器，请手动访问：{{url}}",
+    "pasteFailedDesc": "读取剪贴板失败，请手动粘贴",
+    "fillRequiredFields": "请填写所有必填项",
+    "addFailed": "添加失败",
+    "addSuccess": "添加成功",
+    "accountAddedDesc": "{{provider}} 账号已添加",
+    "done": "完成",
+    "getToken": "如何获取 {{provider}} 的令牌",
+    "getTokenDesc": "按以下步骤复制令牌，粘贴到下方输入框，然后点击确认添加。",
+    "steps": "获取步骤",
+    "confirmAdd": "确认添加"
+  },
+  "qwen": {
+    "name": "通义千问"
+  },
+  "qwen-ai": {
+    "name": "通义千问（国际版）"
+  },
+  "glm": {
+    "name": "智谱 GLM"
+  },
+  "minimax": {
+    "name": "MiniMax 海螺"
+  },
+  "zai": {
+    "name": "Z.ai"
+  }
 }
